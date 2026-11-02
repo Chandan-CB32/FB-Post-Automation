@@ -185,5 +185,23 @@
     - Token estimation calibrated based on PRD Section 2 & 14.3 (Short: 500, Standard: 800, Long: 1500, Story: 3500, Epic: 7500 tokens per post).
   - **Known limitations:**
     - Provider health checks and the quality benchmarking tool are implemented in Step 3.3.
-- [ ] **Step 3.3: Provider Health Checks & Quality Benchmarking**
+- [x] **Step 3.3: Provider Health Checks & Quality Benchmarking**
+  - **What was built:**
+    - `ProviderHealthChecker` in `worker/src/router/health-checker.ts` providing lightweight status pings across active providers and key pools with latency measurement and error reporting.
+    - `QualityBenchRunner` in `worker/src/router/bench-runner.ts` executing side-by-side prompt comparisons across multiple providers for text and image models.
+    - Automatic chain order suggestion (`calculateSuggestedOrder`) ranking providers based on success rates and fastest latency.
+  - **Tests run & results:**
+    - `pnpm test`: 95/95 tests passed across 15 test suites.
+    - 5 new unit tests in `tests/health-bench.test.ts` verifying health checks, inactive provider handling, multi-model text benchmarking, image benchmarking, and suggested chain ordering.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Benchmarking executes providers in parallel via `Promise.all` to provide immediate comparative metrics.
+  - **Known limitations:**
+    - The settings hierarchy and prompt engine will be built in Milestone 4.
+
+---
+
+### Milestone 4: Settings Resolver & Prompt Engine
+- [ ] **Step 4.1: Settings Resolver (Global → Profile → Page → Post)**
+- [ ] **Step 4.2: Prompt Template Engine & Safety Baseline Injection**
 

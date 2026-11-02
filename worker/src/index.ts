@@ -5,6 +5,8 @@ export { workerState, startHealthServer, stopHealthServer } from './server.js';
 export * from './router/strategies.js';
 export * from './router/provider-router.js';
 export * from './router/quota-tracker.js';
+export * from './router/health-checker.js';
+export * from './router/bench-runner.js';
 export * from './schedulers/daily-planner.js';
 
 export function getWorkerStatus() {
