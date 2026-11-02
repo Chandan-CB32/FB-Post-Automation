@@ -68,3 +68,4 @@ describe('Database Schema & Migration Validation', () => {
     expect(seedSql).toContain('Pollinations AI');
   });
 });
+

@@ -66,5 +66,31 @@
     - Concurrency queue mechanism formalized via Postgres RPC (`claim_next_post_job`) per DEC-002.
   - **Known limitations:**
     - Applying migration to a live cloud Supabase instance requires user's project connection, which can be run via Supabase SQL Editor.
-- [ ] **Step 1.4: Worker Skeleton & Heartbeat Engine**
+- [x] **Step 1.4: Worker Skeleton & Heartbeat Engine**
+  - **What was built:**
+    - Supabase client factory with cached singleton in `packages/core/src/db/client.ts`.
+    - Native Node.js HTTP health & metrics server in `worker/src/server.ts` serving `/health` and authenticated `/trigger` endpoint (authorized via Bearer `WORKER_SECRET`).
+    - 24x7 background worker process in `worker/src/index.ts` with configurable loop interval (`WORKER_LOOP_SECONDS`), graceful shutdown (`SIGINT`/`SIGTERM`), and heartbeat recording to the database.
+    - One-shot execution support via `node worker/dist/index.js --once` (`npm run worker:once`).
+  - **Tests run & results:**
+    - `pnpm test`: 27/27 tests passed across 5 test suites (`worker.test.ts`, `migrations.test.ts`, `crypto.test.ts`, `schemas.test.ts`, `workspace.test.ts`).
+    - `pnpm run build` and `pnpm run type-check`: 0 errors.
+    - Live execution tests:
+      - Ran one-shot mode: `node worker/dist/index.js --once` ran cycle #1 and exited with code 0.
+      - Ran live background process and queried `http://localhost:8080/health`: verified 200 OK with `status: "healthy"`, `loopCount: 1`, `uptimeSeconds`, and `version`.
+  - **Issues found & fixed:**
+    - *Issue:* `getWorkerStatus` was missing from `worker/src/index.ts` exports after refactoring to full runner.
+      *Fix:* Added `getWorkerStatus` back and re-exported `workerState` and `createHealthServer`.
+  - **Decisions made:**
+    - Built health server using Node's zero-dependency `node:http` module to keep the worker image lean and memory-efficient.
+  - **Known limitations:**
+    - Pipeline stages (Milestones 6-10) will be plugged into `runWorkerCycle()` as they are built.
+
+---
+
+### Milestone 2: Generic Provider Framework & Adapters
+- [ ] **Step 2.1: Provider Adapter Interface & OpenAI-Compatible Chat Adapter**
+- [ ] **Step 2.2: Native Adapters (Gemini, Cloudflare Workers AI, Pollinations)**
+- [ ] **Step 2.3: Custom HTTP Template Adapter with SSRF Protection**
+- [ ] **Step 2.4: Provider Key Pool & Presets**
 

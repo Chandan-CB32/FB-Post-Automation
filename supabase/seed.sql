@@ -82,3 +82,4 @@ VALUES
         false
     )
 ON CONFLICT (name) DO NOTHING;
+
