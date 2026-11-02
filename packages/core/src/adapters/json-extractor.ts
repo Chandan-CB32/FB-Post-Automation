@@ -4,7 +4,7 @@ import { ProviderError } from './types.js';
  * Robust JSON parser and extractor for LLM text responses.
  * Handles markdown fences, preambles, trailing text, and relaxed formatting.
  */
-export function extractJsonFromText(rawText: string): unknown {
+export function extractJsonFromText<T = unknown>(rawText: string): T {
   if (!rawText || typeof rawText !== 'string') {
     throw new ProviderError('LLM response text is empty or invalid.', 'invalid_output');
   }

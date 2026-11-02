@@ -8,6 +8,7 @@ export * from './router/quota-tracker.js';
 export * from './router/health-checker.js';
 export * from './router/bench-runner.js';
 export * from './schedulers/daily-planner.js';
+export * from './stages/test-run-runner.js';
 
 export function getWorkerStatus() {
   return {

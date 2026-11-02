@@ -256,5 +256,32 @@
     - Interactive rule stripping removes conversational setup rules preceding the first markdown horizontal rule (`---`) to ensure prompt execution in worker batches without stalls.
   - **Known limitations:**
     - Test Run Runner for simulating full multi-stage pipeline generation will be implemented in Step 5.2.
-- [ ] **Step 5.2: Test Run Runner (Pipeline Simulation without Posting)**
+- [x] **Step 5.2: Test Run Runner (Pipeline Simulation without Posting)**
+  - **What was built:**
+    - `TestRunRunner` class in `worker/src/stages/test-run-runner.ts` powering the Prompt Studio test execution:
+      - Simulates the full multi-stage pipeline without saving to the live database or publishing to Facebook:
+        1. **Effective Settings**: Resolves settings across the 4 tiers (Global Defaults → Profile → Page Overrides → Post Overrides) with provenance tracking.
+        2. **Stage 1 (Topic Selection)**: Handles user-provided manual test topics or auto-proposes high-engagement topics from profile categories via the ProviderRouter.
+        3. **Stage 2 (Outline or Fact Extraction)**: Extracts factual bullet points for `factual`/`true_story` profiles, or generates narrative beats/hook points for `fiction` profiles.
+        4. **Stage 3 (Caption Writing & Polishing)**: Writes full story posts meeting word count bounds, injecting voice/POV/audience parameters, and extracting hashtags and fiction disclaimers.
+        5. **Stage 4 (QA & Safety Scoring)**: Audits length, quality, and platform safety baseline compliance using secondary evaluation models, returning structured QA score (0-100) and sensitivity flags.
+        6. **Stage 5 (Image Generation)**: Formulates image prompt with mandatory visual safety directives, calls image providers with target aspect ratio, and returns generated image URLs/buffers.
+      - Tracks and returns granular stage metadata: prompts, raw outputs, parsed JSON, token metrics, execution latencies, and overall post summaries.
+      - Graceful error containment: Catches router errors or format discrepancies and reports structured failure summaries without worker crashes.
+    - Added generic type parsing to `extractJsonFromText<T>` and expanded `PromptContext` in `packages/core`.
+  - **Tests run & results:**
+    - `pnpm test`: 120/120 tests passed across 19 test suites.
+    - Added 5 unit tests in `tests/test-run-runner.test.ts` verifying full fiction pipeline simulation, manual topic overrides, factual profile fact extraction without fiction disclaimers, page override inheritance, and router error containment.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors across all workspace packages.
+  - **Decisions made:**
+    - Test Run operates completely in-memory and sandboxed, never triggering database inserts into `posts` or Facebook Graph API calls per PRD specifications.
+  - **Known limitations:**
+    - Production batch execution stages (RSS feeds, dedup window, slot planning) are built in Milestones 6 through 10.
+
+---
+
+### Milestone 6: Research, Idea & Topic Selection Engine
+- [ ] **Step 6.1: Research Collector & Feed Fetcher**
+- [ ] **Step 6.2: Idea Generator & Owner Topic Queue**
+- [ ] **Step 6.3: Topic Selector, Category Weights & Dedup**
 

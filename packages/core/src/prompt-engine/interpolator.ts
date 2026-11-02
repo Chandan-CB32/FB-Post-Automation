@@ -6,7 +6,9 @@ export interface PromptContext {
   topic?: string;
   topic_title?: string;
   category?: string;
+  categories?: string | string[];
   facts?: string | string[];
+  outline?: string | string[];
   sources?: string | string[];
   title?: string;
   caption?: string;
@@ -19,6 +21,7 @@ export interface PromptContext {
   word_min?: number | string;
   word_max?: number | string;
   word_target?: number | string;
+  word_count?: number | string;
   hashtag_count?: number | string;
   story_so_far?: string;
   series_bible?: string;
@@ -78,7 +81,9 @@ export function interpolatePrompt(
     topic: formatValue(context.topic),
     topic_title: formatValue(context.topic_title || context.topic),
     category: formatValue(context.category),
+    categories: formatValue(context.categories),
     facts: formatValue(context.facts),
+    outline: formatValue(context.outline),
     sources: formatValue(context.sources),
     title: formatValue(context.title),
     caption: formatValue(context.caption),
@@ -89,6 +94,7 @@ export function interpolatePrompt(
     word_min: formatValue(context.word_min),
     word_max: formatValue(context.word_max),
     word_target: formatValue(context.word_target),
+    word_count: formatValue(context.word_count),
     hashtag_count: formatValue(context.hashtag_count || 5),
     story_so_far: formatValue(context.story_so_far),
     series_bible: formatValue(context.series_bible),
@@ -128,4 +134,10 @@ export function interpolatePrompt(
     unresolvedVariables: Array.from(unresolved),
   };
 }
+
+export const PromptInterpolator = {
+  interpolate: (template: string, context: PromptContext, options?: InterpolateOptions) =>
+    interpolatePrompt(template, context, options).prompt,
+  interpolateWithResult: interpolatePrompt,
+};
 
