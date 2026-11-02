@@ -42,5 +42,6 @@ export * from './adapters/cloudflare.js';
 export * from './adapters/pollinations.js';
 export * from './adapters/custom-http.js';
 
-// Validation Schemas
+// Validation Schemas & Caption Validator
 export * from './validation/schemas.js';
+export * from './validation/caption-validator.js';

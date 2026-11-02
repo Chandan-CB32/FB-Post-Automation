@@ -394,6 +394,26 @@
     - Preserves consistent provider within a post run, providing running summaries across section calls to prevent drift or disjointed transitions.
   - **Known limitations:**
     - Programmatic caption validators and secondary QA safety audits are built in Steps 7.3 and 7.4.
-- [ ] **Step 7.3: Programmatic Caption Validators (Lengths, Sentences, Hooks, Emojis, Disclaimers)**
+- [x] **Step 7.3: Programmatic Caption Validators (Lengths, Sentences, Hooks, Emojis, Disclaimers)**
+  - **What was built:**
+    - Pure deterministic caption validator in `packages/core/src/validation/caption-validator.ts`:
+      - `validateCaption`: Rapid zero-token compliance auditing across 7 critical constraints:
+        1. **Length Boundaries**: Bounds word count or character count strictly within `[min, max]` settings.
+        2. **Opening Hook Check**: Rejects conversational opening greetings ("Hello everyone", "Hey guys", "In this post", "Buckle up") to protect the scroll-stopping hook before Facebook's "...See more" fold.
+        3. **Paragraph Length**: Enforces mobile readability standards, flagging wall-of-text paragraphs exceeding `maxSentencesPerParagraph` (default 3 sentences).
+        4. **Emoji Policy**: Enforces `none` (0 emojis), `minimal` (max 2 emojis), or `moderate` (max 1 per paragraph) policies via Unicode property analysis.
+        5. **Banned Phrases**: Searches for forbidden cliches or buzzwords configured in profile/page settings.
+        6. **Required Phrases**: Verifies presence of mandatory call-to-action phrases.
+        7. **Fiction Disclaimer**: Enforces mandatory disclosure on creative fiction profiles.
+      - Calculates deterministic compliance score (0–100) and actionable fix suggestions.
+      - `repairCaption`: Auto-repair utility that strips emojis under `none` policy, splits bloated paragraphs at sentence boundaries, and appends missing fiction disclaimers.
+  - **Tests run & results:**
+    - `pnpm test`: 169/169 tests passed across 25 test suites.
+    - Added 13 unit tests in `tests/caption-validator.test.ts` verifying min/max lengths, greeting hook rejections, paragraph sentence checks, emoji policies, banned/required phrases, fiction disclaimer checks, and auto-repair routines.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - All programmatic formatting checks run locally in memory without invoking LLMs, ensuring sub-millisecond execution and zero token cost.
+  - **Known limitations:**
+    - Secondary LLM QA scoring and sensitive-content classification are implemented in Step 7.4.
 - [ ] **Step 7.4: QA Scoring & Content Safety Classifier (Secondary Model Audit)**
 
