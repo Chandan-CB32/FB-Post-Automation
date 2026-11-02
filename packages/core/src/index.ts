@@ -13,6 +13,9 @@ export * from './db/client.js';
 export * from './adapters/types.js';
 export * from './adapters/json-extractor.js';
 export * from './adapters/openai-chat.js';
+export * from './adapters/gemini.js';
+export * from './adapters/cloudflare.js';
+export * from './adapters/pollinations.js';
 
 // Validation Schemas
 export * from './validation/schemas.js';

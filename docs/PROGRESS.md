@@ -103,7 +103,19 @@
     - Error classification structure standardizes error recovery and chain failover decisions for Milestone 3.
   - **Known limitations:**
     - Native adapters for Gemini, Cloudflare, and Pollinations are implemented in Step 2.2.
-- [ ] **Step 2.2: Native Adapters (Gemini, Cloudflare Workers AI, Pollinations)**
+- [x] **Step 2.2: Native Adapters (Gemini, Cloudflare Workers AI, Pollinations)**
+  - **What was built:**
+    - `GeminiNativeAdapter` in `packages/core/src/adapters/gemini.ts` with multimodal contents mapping, `systemInstruction`, Google Search grounding support (`tools: [{ google_search: {} }]`), and safety block interception.
+    - `CloudflareWorkersAIAdapter` in `packages/core/src/adapters/cloudflare.ts` implementing both text completions (Llama 3.1) and binary image stream processing (FLUX.1-schnell 1080×1350 PNG) with account ID resolution.
+    - `PollinationsImageAdapter` in `packages/core/src/adapters/pollinations.ts` with watermark disabling (`nologo=true`), custom dimensions, seed support, and optional Bearer auth.
+  - **Tests run & results:**
+    - `pnpm test`: 49/49 tests passed across 8 test suites.
+    - 9 new unit tests in `tests/native-adapters.test.ts` validating search grounding, safety filters, quota errors, FLUX arraybuffer parsing, and Pollinations query parameters.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Cloudflare adapter handles both `TextProviderAdapter` and `ImageProviderAdapter` interfaces in a single class to unify Cloudflare API token and account management.
+  - **Known limitations:**
+    - Custom HTTP template adapter and SSRF protection will be built in Step 2.3.
 - [ ] **Step 2.3: Custom HTTP Template Adapter with SSRF Protection**
 - [ ] **Step 2.4: Provider Key Pool & Presets**
 

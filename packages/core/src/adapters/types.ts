@@ -89,3 +89,4 @@ export interface ImageProviderAdapter {
   readonly id: string;
   generateImage(options: ImageGenerateOptions): Promise<ImageGenerateResult>;
 }
+

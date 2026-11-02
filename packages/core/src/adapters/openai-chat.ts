@@ -186,3 +186,4 @@ export class OpenAIChatAdapter implements TextProviderAdapter {
     throw new ProviderError(`Provider request failed (${status}): ${errorMessage}`, 'invalid_output', status, undefined, parsedBody);
   }
 }
+

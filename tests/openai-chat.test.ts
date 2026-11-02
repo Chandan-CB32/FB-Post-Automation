@@ -204,3 +204,4 @@ describe('OpenAIChatAdapter', () => {
     });
   });
 });
+
