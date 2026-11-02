@@ -236,3 +236,4 @@ describe('Native Provider Adapters', () => {
     });
   });
 });
+

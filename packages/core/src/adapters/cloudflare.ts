@@ -168,3 +168,4 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
     return response;
   }
 }
+

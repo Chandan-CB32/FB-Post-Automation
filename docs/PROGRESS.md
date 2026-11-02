@@ -116,6 +116,19 @@
     - Cloudflare adapter handles both `TextProviderAdapter` and `ImageProviderAdapter` interfaces in a single class to unify Cloudflare API token and account management.
   - **Known limitations:**
     - Custom HTTP template adapter and SSRF protection will be built in Step 2.3.
-- [ ] **Step 2.3: Custom HTTP Template Adapter with SSRF Protection**
+- [x] **Step 2.3: Custom HTTP Template Adapter with SSRF Protection**
+  - **What was built:**
+    - SSRF protection engine in `packages/core/src/security/ssrf.ts` enforcing `https://`, blocking credentials in userinfo, resolving all DNS A/AAAA records, and rejecting private RFC 1918 subnets, loopbacks, link-local, and cloud metadata (`169.254.169.254`).
+    - `ssrfSafeFetch` with pre-connection DNS validation and safe manual redirect following up to `maxRedirects`.
+    - Zero-eval JSONPath extractor in `packages/core/src/adapters/jsonpath.ts` supporting nested dot notation and array indexes (`choices[0].message.content`, `data[0].url`) with prototype pollution hardening.
+    - Generic `CustomHttpAdapter` in `packages/core/src/adapters/custom-http.ts` supporting arbitrary text and image HTTP APIs with sandboxed template substitution (`{{prompt}}`, `{{model}}`, `{{key}}`, `{{width}}`, `{{height}}`), and response extraction from JSONPath text, base64 data, image URLs, or raw binary streams.
+  - **Tests run & results:**
+    - `pnpm test`: 62/62 tests passed across 10 test suites.
+    - 6 new unit tests in `tests/ssrf.test.ts` and 7 new unit tests in `tests/custom-http.test.ts`.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Implemented strict pre-connection DNS IP validation and manual redirect tracking (`redirect: 'manual'`) per DEC-005.
+  - **Known limitations:**
+    - Provider key pooling, rotation, and database presets will be implemented in Step 2.4.
 - [ ] **Step 2.4: Provider Key Pool & Presets**
 

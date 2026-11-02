@@ -191,3 +191,4 @@ export class GeminiNativeAdapter implements TextProviderAdapter {
     throw new ProviderError(`Gemini API error (${status}): ${message}`, 'invalid_output', status, undefined, parsed);
   }
 }
+
