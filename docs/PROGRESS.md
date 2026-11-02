@@ -435,7 +435,28 @@
 ---
 
 ### Milestone 8: Image Pipeline & Sharp Compositing
-- [ ] **Step 8.1: Key Scene Extractor & Image Prompt Template Builder**
+- [x] **Step 8.1: Key Scene Extractor & Image Prompt Template Builder**
+  - **What was built:**
+    - Key Scene extraction engine in `worker/src/stages/06-image-prompt.ts`:
+      - `extractKeySceneFromProse`: Extracts the central visual scene across 4 configurable modes:
+        - `opening`: Setting and atmospheric visual hook from the first 1–2 sentences.
+        - `climax`: Pivotal dramatic revelation or confrontation from the narrative's climax (60%–80% story mark).
+        - `mood`: Environmental tone, weather, lighting, and textural atmosphere.
+        - `character`: Central figure, expression, attire, and immediate surroundings.
+        - Direct seed override: Prioritizes explicit visual concepts generated in earlier pipeline stages when available.
+    - Image prompt template builder in `worker/src/stages/06-image-prompt.ts`:
+      - `executeImagePromptStage`: Interpolates templates with visual styles (`cinematic`, `photorealistic`, `vintage`, etc.).
+      - Mandates non-bypassable image safety directives (`IMAGE_SAFETY_BASELINE`: SFW, no gore, no blood, no text inside image, no living persons' likenesses).
+      - Consolidates and deduplicates negative prompts.
+      - Calculates dimensions based on target aspect ratio (`4:5` -> 1080×1350, `1:1` -> 1080×1080, `16:9` -> 1920×1080).
+  - **Tests run & results:**
+    - `pnpm test`: 182/182 tests passed across 27 test suites.
+    - Added 8 unit tests in `tests/image-prompt.test.ts` verifying scene extraction for opening, climax, mood, and character modes, seed concept priority, safety baseline injection, negative prompt deduplication, and aspect ratio dimension calculation.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Extracted scene descriptions are stripped of transitional dialogue and filler to keep diffusion model prompts dense with visual descriptors.
+  - **Known limitations:**
+    - Image QA (blank / solid color checks, perceptual hashing) and Sharp headline compositing are implemented in Steps 8.2 and 8.3.
 - [ ] **Step 8.2: Image QA, Uniformity / Blank Check & Perceptual Hashing (pHash)**
 - [ ] **Step 8.3: Sharp Headline Panel Renderer & Aspect Ratio Composition**
 
