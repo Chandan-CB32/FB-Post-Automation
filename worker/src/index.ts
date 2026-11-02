@@ -9,6 +9,9 @@ export * from './router/health-checker.js';
 export * from './router/bench-runner.js';
 export * from './schedulers/daily-planner.js';
 export * from './stages/test-run-runner.js';
+export * from './research/rss-fetcher.js';
+export * from './research/collector.js';
+export * from './stages/02-research-idea.js';
 
 export function getWorkerStatus() {
   return {

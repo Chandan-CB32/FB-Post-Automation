@@ -281,7 +281,28 @@
 ---
 
 ### Milestone 6: Research, Idea & Topic Selection Engine
-- [ ] **Step 6.1: Research Collector & Feed Fetcher**
+- [x] **Step 6.1: Research Collector & Feed Fetcher**
+  - **What was built:**
+    - SSRF-safe RSS 2.0, RSS 1.0 (RDF), and Atom feed parser in `worker/src/research/rss-fetcher.ts`:
+      - Validates feed URLs against loopback, private subnets (RFC 1918), and cloud metadata (`169.254.169.254`) via `ssrfSafeFetch`.
+      - Extracts clean titles, URLs, and pubDates across CDATA blocks and standard XML tags without XXE exposure.
+      - `stripHtml`: Sanitizes HTML markup, scripts, style blocks, and decodes HTML entities into clean plain text.
+      - `truncateExcerpt`: Bounds excerpt text cleanly at word boundaries to ~2,000 characters.
+      - `generateContentHash`: Computes deterministic SHA-256 hashes (`title|url/excerpt`) for deduplication.
+    - Research ingestion engine in `worker/src/research/collector.ts`:
+      - `ResearchCollector` tracking active sources, interval-based polling schedules (`isSourceDue`), and database/in-memory deduplication.
+      - Automatic ingestion of fresh articles into Supabase `research_items` and updates `last_fetched_at` on `research_sources`.
+    - Stage 02 Research & Idea module in `worker/src/stages/02-research-idea.ts`:
+      - Feeds research items into factual / true_story post candidate pipelines.
+      - Generates creative story premises via LLM for fiction profiles adhering to tone, genre, and series continuity.
+  - **Tests run & results:**
+    - `pnpm test`: 130/130 tests passed across 20 test suites.
+    - Added 10 unit tests in `tests/research-collector.test.ts` covering HTML stripping, excerpt truncation, SHA-256 hashing, RSS/Atom feed parsing, SSRF URL blocking, source polling intervals, deduplication skipping, and stage execution.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - XML feed parser parses feeds directly using safe RegExp matching without DTD entity expansion, ensuring 100% XXE immunity and eliminating external XML parsing dependencies.
+  - **Known limitations:**
+    - Owner topic queue management (CSV/paste import, random/ordered usage) and category-weighted topic selection will be implemented in Steps 6.2 and 6.3.
 - [ ] **Step 6.2: Idea Generator & Owner Topic Queue**
 - [ ] **Step 6.3: Topic Selector, Category Weights & Dedup**
 
