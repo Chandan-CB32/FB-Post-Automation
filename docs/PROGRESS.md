@@ -351,7 +351,26 @@
 ---
 
 ### Milestone 7: Write Pipeline, Long-Form Chunking & QA Validation
-- [ ] **Step 7.1: Fact Extraction Pipeline (Factual / True-Story)**
+- [x] **Step 7.1: Fact Extraction Pipeline (Factual / True-Story)**
+  - **What was built:**
+    - Dedicated Fact Extractor stage in `worker/src/stages/04-fact-extractor.ts`:
+      - Produces structured, verified `FactSheet` objects for `factual` and `true_story` profiles:
+        - `confirmedFacts`: Strict array of verified factual claims supported by research evidence or public records.
+        - `timeline`: Chronological event breakdown (`time` and `event`) for historical/true-crime narratives.
+        - `hypotheticalOrAlleged`: Explicitly tags unverified theories, disputed hypotheses, or allegations with cautious phrasing ("alleged", "claimed", "theorized").
+        - `sourceLine` / `sourceUrl`: Attribution line recording source provenance.
+        - `allFactBullets`: Clean flattened list of factual constraints supplied exclusively to downstream writing stages.
+      - Hallucination prevention: Strict instruction forbidding invented dates, numbers, quotes, or people.
+      - Fault-tolerant fallback: Gracefully converts plain-text or markdown bullet lists into structured fact sheets if secondary LLM returns unstructured text.
+      - Mandates safety baseline injection (`injectSafetyBaseline`).
+  - **Tests run & results:**
+    - `pnpm test`: 150/150 tests passed across 23 test suites.
+    - Added 3 unit tests in `tests/fact-extractor.test.ts` verifying confirmed facts extraction, timeline construction, cautious wording for true-crime, safety baseline presence, and unstructured markdown bullet fallback.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Fact extractor enforces JSON output mode and aggregates facts, timeline items, and alleged claims into `allFactBullets` to ensure writers only use verified material.
+  - **Known limitations:**
+    - Long-form writer chunking (outline → sections → stitch → polish) and length enforcement are built in Step 7.2.
 - [ ] **Step 7.2: Long-Form Writer & Chunker (Outline → Sections → Stitch → Polish)**
 - [ ] **Step 7.3: Programmatic Caption Validators (Lengths, Sentences, Hooks, Emojis, Disclaimers)**
 - [ ] **Step 7.4: QA Scoring & Content Safety Classifier (Secondary Model Audit)**
