@@ -7,6 +7,10 @@ import {
 } from '../packages/core/src/profiles/importer.js';
 import {
   getSeedProfiles,
+  getAllNicheProfiles,
+  getExtendedNicheProfiles,
+  createCustomNicheProfile,
+  getNicheCategoriesMap,
   createHorrorStoryProfile,
   createCrimeStoryProfile,
   createScienceStoryProfile,
@@ -122,5 +126,52 @@ CATEGORY A: DEEP SPACE
     for (const seed of allSeeds) {
       expect(() => ContentProfileSchema.parse(seed)).not.toThrow();
     }
+  });
+
+  it('creates custom niche profile dynamically for any user-typed niche', () => {
+    const custom = createCustomNicheProfile('Mechanical Watchmaking & Tourbillons', {
+      customType: 'factual',
+      captionSettings: {
+        unit: 'words',
+        min: 150,
+        target: 220,
+        max: 300,
+        hookRule: true,
+        maxSentencesPerParagraph: 3,
+        voice: {
+          tone: 'luxurious, precision-focused',
+          pov: 'third-person',
+          emojiPolicy: 'minimal',
+          bannedPhrases: ['cheap watches'],
+          requiredPhrases: [],
+        },
+        endingStyle: 'question',
+        includeQuestion: true,
+        formatSourceLine: false,
+      },
+    });
+
+    expect(custom.name).toBe('Mechanical Watchmaking & Tourbillons');
+    expect(custom.type).toBe('factual');
+    expect(custom.templates.captionPrompt).toContain('Mechanical Watchmaking & Tourbillons');
+    expect(custom.templates.imagePromptTemplate).toContain('Mechanical Watchmaking & Tourbillons');
+    expect(custom.hashtagSettings.fixedHashtags).toEqual(
+      expect.arrayContaining(['#MechanicalWatchmakingTourbillons'])
+    );
+    expect(() => ContentProfileSchema.parse(custom)).not.toThrow();
+  });
+
+  it('loads 27 total niche profiles with extended library and categorizes into groups', () => {
+    const allNiches = getAllNicheProfiles(promptsDir);
+    expect(allNiches.length).toBe(27);
+
+    for (const niche of allNiches) {
+      expect(() => ContentProfileSchema.parse(niche)).not.toThrow();
+    }
+
+    const categoriesMap = getNicheCategoriesMap(allNiches);
+    expect(Object.keys(categoriesMap).length).toBeGreaterThanOrEqual(5);
+    expect(categoriesMap['🚀 Science, Space & Future Tech'].length).toBeGreaterThanOrEqual(4);
+    expect(categoriesMap['🏎️ Luxury, Engineering & Mechanics'].length).toBeGreaterThanOrEqual(4);
   });
 });

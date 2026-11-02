@@ -311,3 +311,14 @@ export function getSeedProfiles(promptsDir?: string): ContentProfile[] {
     createScienceStoryProfile(),
   ];
 }
+
+export * from './extended-niches.js';
+
+import { getExtendedNicheProfiles } from './extended-niches.js';
+
+/**
+ * Loads all seed profiles PLUS the expanded catalog of 20+ viral niches.
+ */
+export function getAllNicheProfiles(promptsDir?: string): ContentProfile[] {
+  return [...getSeedProfiles(promptsDir), ...getExtendedNicheProfiles()];
+}

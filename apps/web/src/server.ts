@@ -13,6 +13,9 @@ try {
 import {
   CORE_VERSION,
   getSeedProfiles,
+  getAllNicheProfiles,
+  getNicheCategoriesMap,
+  createCustomNicheProfile,
   resolveSettings,
   createScienceStoryProfile,
   createHorrorStoryProfile,
@@ -29,7 +32,21 @@ import { getDashboardOverviewMetrics } from './index.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const store = SystemStore.getInstance();
-const seedProfiles = getSeedProfiles();
+const seedProfiles: ContentProfile[] = getAllNicheProfiles();
+
+function renderNicheSelectOptions(allProfiles: ContentProfile[], selectedId?: string): string {
+  const categories = getNicheCategoriesMap(allProfiles);
+  let html = `<option value="__custom__">✨ Custom / Type Your Own Niche...</option>`;
+  for (const [categoryName, profs] of Object.entries(categories)) {
+    html += `<optgroup label="${categoryName}">`;
+    for (const p of profs) {
+      const isSelected = p.id === selectedId || p.name === selectedId ? 'selected' : '';
+      html += `<option value="${p.id}" ${isSelected}>${p.name} (${p.type})</option>`;
+    }
+    html += `</optgroup>`;
+  }
+  return html;
+}
 
 export function createDashboardServer(): http.Server {
   return http.createServer(async (req, res) => {
@@ -91,9 +108,31 @@ export function createDashboardServer(): http.Server {
       return sendJson(metrics);
     }
 
-    // 2. API: Profiles list
+    // 2. API: Profiles list & Custom Profile creation
     if (url.pathname === '/api/profiles') {
-      return sendJson(seedProfiles);
+      if (req.method === 'GET') {
+        return sendJson(seedProfiles);
+      }
+      if (req.method === 'POST') {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            if (!data.name) return sendJson({ error: 'Niche name is required.' }, 400);
+            const customProfile = createCustomNicheProfile(data.name, {
+              customType: data.type || 'factual',
+              audience: data.audience,
+              description: data.description,
+            });
+            seedProfiles.unshift(customProfile);
+            return sendJson({ success: true, profile: customProfile }, 201);
+          } catch (e: any) {
+            return sendJson({ error: e.message }, 500);
+          }
+        });
+        return;
+      }
     }
 
     // 2b. API: Facebook Accounts / Identities CRUD
@@ -252,12 +291,24 @@ export function createDashboardServer(): http.Server {
               );
             }
 
+            let resolvedProfileId = data.profile_id || 'science_space';
+            if (data.profile_id === '__custom__' || data.custom_niche_name) {
+              const customNicheName = (data.custom_niche_name || 'Custom Niche').trim();
+              const customProfile = createCustomNicheProfile(customNicheName, {
+                customType: data.custom_niche_type || 'factual',
+                audience: data.custom_niche_audience,
+                description: data.custom_niche_description,
+              });
+              seedProfiles.unshift(customProfile);
+              resolvedProfileId = customProfile.id;
+            }
+
             const newPage = store.createPage({
               name: data.name,
               fb_account_id: data.fb_account_id,
               fb_page_id: data.fb_page_id,
               fb_page_token: data.fb_page_token,
-              profile_id: data.profile_id || 'science_space',
+              profile_id: resolvedProfileId,
               publishing_mode: data.publishing_mode || 'hybrid',
               hybrid_min_score: Number(data.hybrid_min_score) || 80,
               daily_cap: Number(data.daily_cap) || 3,
@@ -295,6 +346,17 @@ export function createDashboardServer(): http.Server {
             if (!data.id) {
               return sendJson({ error: 'Page ID is required for update.' }, 400);
             }
+
+            if ((data.profile_id === '__custom__' || data.custom_niche_name) && data.custom_niche_name) {
+              const customNicheName = data.custom_niche_name.trim();
+              const customProfile = createCustomNicheProfile(customNicheName, {
+                customType: data.custom_niche_type || 'factual',
+                audience: data.custom_niche_audience,
+              });
+              seedProfiles.unshift(customProfile);
+              data.profile_id = customProfile.id;
+            }
+
             const updated = store.updatePage(data.id, data);
             return sendJson({ success: true, page: updated });
           } catch (e: any) {
@@ -335,9 +397,10 @@ export function createDashboardServer(): http.Server {
       const profile =
         seedProfiles.find(
           (p) =>
+            p.id === page.profile_id ||
             p.name.toLowerCase().includes(page.profile_id.toLowerCase()) ||
             page.profile_id.toLowerCase().includes(p.name.toLowerCase())
-        ) || seedProfiles[0];
+        ) || createCustomNicheProfile(page.profile_id);
 
       const resolved = resolveSettings({
         profile,
@@ -436,29 +499,42 @@ export function createDashboardServer(): http.Server {
             seedProfiles.find(
               (p) =>
                 page &&
-                (p.name.toLowerCase().includes(page.profile_id.toLowerCase()) ||
+                (p.id === page.profile_id ||
+                  p.name.toLowerCase().includes(page.profile_id.toLowerCase()) ||
                   page.profile_id.toLowerCase().includes(p.name.toLowerCase()))
-            ) || seedProfiles[0];
+            ) || (page ? createCustomNicheProfile(page.profile_id) : seedProfiles[0]);
 
           const isHorror = profile.name.toLowerCase().includes('horror');
+          const isScience =
+            profile.name.toLowerCase().includes('science') ||
+            profile.name.toLowerCase().includes('space') ||
+            profile.name.toLowerCase().includes('astronomy');
 
-          const topicTitle = isHorror
-            ? 'The Whispering Clock of Hemlock Manor'
-            : 'Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b';
-
-          const topicCategory = isHorror ? 'Haunted Relics' : 'Exoplanet Atmospheres';
+          let topicTitle = `${profile.name}: The Groundbreaking Discovery`;
+          let topicCategory = profile.topicSettings?.categories?.[0]?.name || `${profile.name} Highlights`;
+          let keyScene = `High-detail visual exploring ${profile.name}, showcasing key elements with dramatic atmospheric lighting and cinematic framing.`;
+          let headline = `${profile.name.toUpperCase()}: THE UNSEEN REVELATION`;
+          const fixedTags = (profile.hashtagSettings?.fixedHashtags || []).slice(0, 5).join(' ') || `#${profile.name.replace(/\s+/g, '')}`;
 
           const captionPromptCustom = page?.custom_caption_prompt
             ? `\n\n[Page Override Applied: ${page.custom_caption_prompt}]`
             : '';
 
-          const generatedCaption = isHorror
-            ? `The grandfather clock in the study of Hemlock Manor had not been wound since 1894, yet every night at 3:17 AM, its brass pendulum swung into motion.\n\nLocal legend claimed that the clock did not mark the passage of hours, but the distance between our world and the darkness beneath the cellar stairs.\n\nWhat would you do if a broken clock in your house suddenly started chiming?${captionPromptCustom}\n\n#horror #spooky #creepypasta #mystery #ghoststory`
-            : `Astrophysicists analyzing spectroscopic transmission data from the James Webb Space Telescope have detected atmospheric methane and carbon dioxide in the habitable zone exoplanet K2-18b.\n\nThis finding supports the hypothesis that K2-18b could be a Hycean world—an ocean-covered planet beneath a hydrogen-rich atmosphere.\n\nDo you believe ocean worlds are our best chance of discovering microbial life outside the solar system?${captionPromptCustom}\n\n#space #astronomy #science #jwst #discovery`;
+          let generatedCaption = `In the world of ${profile.name}, groundbreaking insights continue to challenge everything we thought we knew.\n\nFrom unprecedented technical precision to stunning real-world revelations, the implications are captivating researchers and enthusiasts worldwide.\n\nWhat do you think is the most fascinating aspect of ${profile.name}?${captionPromptCustom}\n\n${fixedTags}`;
 
-          const headline = isHorror
-            ? 'THE CLOCK THAT TICKED WITHOUT TIME'
-            : 'WEBB TELESCOPE FINDS WATER VAPOR ON EXOPLANET';
+          if (isHorror) {
+            topicTitle = 'The Whispering Clock of Hemlock Manor';
+            topicCategory = 'Haunted Relics';
+            keyScene = 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.';
+            headline = 'THE CLOCK THAT TICKED WITHOUT TIME';
+            generatedCaption = `The grandfather clock in the study of Hemlock Manor had not been wound since 1894, yet every night at 3:17 AM, its brass pendulum swung into motion.\n\nLocal legend claimed that the clock did not mark the passage of hours, but the distance between our world and the darkness beneath the cellar stairs.\n\nWhat would you do if a broken clock in your house suddenly started chiming?${captionPromptCustom}\n\n#horror #spooky #creepypasta #mystery #ghoststory`;
+          } else if (isScience) {
+            topicTitle = 'Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b';
+            topicCategory = 'Exoplanet Atmospheres';
+            keyScene = 'A vibrant turquoise ocean planet viewed from low orbit with a luminous atmosphere glowing in infrared star light.';
+            headline = 'WEBB TELESCOPE FINDS WATER VAPOR ON EXOPLANET';
+            generatedCaption = `Astrophysicists analyzing spectroscopic transmission data from the James Webb Space Telescope have detected atmospheric methane and carbon dioxide in the habitable zone exoplanet K2-18b.\n\nThis finding supports the hypothesis that K2-18b could be a Hycean world—an ocean-covered planet beneath a hydrogen-rich atmosphere.\n\nDo you believe ocean worlds are our best chance of discovering microbial life outside the solar system?${captionPromptCustom}\n\n#space #astronomy #science #jwst #discovery`;
+          }
 
           const simOutput = {
             success: true,
@@ -473,9 +549,7 @@ export function createDashboardServer(): http.Server {
             caption: generatedCaption,
             wordCount: generatedCaption.trim().split(/\s+/).length,
             qaScore: 95,
-            keySceneExtracted: isHorror
-              ? 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.'
-              : 'A vibrant turquoise ocean planet viewed from low orbit with a luminous atmosphere glowing in infrared star light.',
+            keySceneExtracted: keyScene,
             imageDimensions: page?.overrides?.['image.aspectRatio'] === '1:1' ? '1080x1080 (1:1 Square)' : '1080x1350 (4:5 Portrait)',
             headlinePanel: {
               enabled: page?.overrides?.['image.headlinePanel.enabled'] ?? true,
@@ -1176,10 +1250,17 @@ function generateDashboardHtml(): string {
           <!-- Left Column: Caption Prompts -->
           <div>
             <div class="form-group">
-              <label>Base Content Niche / Profile</label>
-              <select id="editProfileSelect" class="form-control">
-                ${seedProfiles.map((pr) => `<option value="${pr.id}">${pr.name} (${pr.type})</option>`).join('')}
+              <label>Base Content Niche / Profile (25+ Presets or Type Custom Niche)</label>
+              <select id="editProfileSelect" class="form-control" onchange="toggleCustomNicheField(this.value, 'studioCustomNicheBox')">
+                ${renderNicheSelectOptions(seedProfiles)}
               </select>
+            </div>
+
+            <div id="studioCustomNicheBox" style="display: none; background: rgba(59, 130, 246, 0.08); border: 1px dashed #3b82f6; padding: 12px; border-radius: 8px; margin-bottom: 14px;">
+              <div style="font-size: 12px; font-weight: 600; color: #93c5fd; margin-bottom: 6px;">
+                ✨ Custom Content Niche Definition for this Page
+              </div>
+              <input type="text" id="editCustomNicheName" class="form-control" placeholder="Type your custom niche (e.g. Mechanical Watchmaking, Bonsai, Formula 1...)">
             </div>
 
             <div class="form-group">
@@ -1679,10 +1760,35 @@ function generateDashboardHtml(): string {
         </div>
 
         <div class="form-group">
-          <label>Base Content Niche / Profile</label>
-          <select id="newProfileId" class="form-control">
-            ${seedProfiles.map((pr) => `<option value="${pr.id}">${pr.name} (${pr.type})</option>`).join('')}
+          <label>Base Content Niche / Profile (25+ Categorized Presets or Type Custom Niche)</label>
+          <select id="newProfileId" class="form-control" onchange="toggleCustomNicheField(this.value, 'newCustomNicheBox')">
+            ${renderNicheSelectOptions(seedProfiles)}
           </select>
+        </div>
+
+        <div id="newCustomNicheBox" style="display: none; background: rgba(59, 130, 246, 0.08); border: 1px dashed #3b82f6; padding: 14px; border-radius: 8px; margin-bottom: 15px;">
+          <div style="font-size: 13px; font-weight: 600; color: #93c5fd; margin-bottom: 8px;">
+            ✨ Custom Niche Definition
+          </div>
+          <div class="form-group" style="margin-bottom: 10px;">
+            <label style="font-size: 12px;">Type Your Custom Niche Name *</label>
+            <input type="text" id="newCustomNicheName" class="form-control" placeholder="e.g. Bonsai Tree Cultivation, Supercar Aerodynamics, Ancient Stoic Wisdom...">
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label style="font-size: 12px;">Niche Content Style</label>
+              <select id="newCustomNicheType" class="form-control">
+                <option value="factual">Factual / Educational Insights</option>
+                <option value="fiction">Fiction / Storytelling</option>
+                <option value="evergreen">Evergreen / Mindset & Guides</option>
+                <option value="true_story">True Story / Historical Chronicles</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label style="font-size: 12px;">Target Audience (Optional)</label>
+              <input type="text" id="newCustomNicheAudience" class="form-control" placeholder="e.g. Passionate hobbyists and curious minds">
+            </div>
+          </div>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
@@ -2133,6 +2239,13 @@ function generateDashboardHtml(): string {
     }
 
     // --- Pages Management ---
+    function toggleCustomNicheField(val, elementId) {
+      const box = document.getElementById(elementId);
+      if (box) {
+        box.style.display = (val === '__custom__') ? 'block' : 'none';
+      }
+    }
+
     function openAddPageModal() {
       document.getElementById('addPageModal').classList.add('active');
     }
@@ -2148,6 +2261,15 @@ function generateDashboardHtml(): string {
       const fb_page_id = document.getElementById('newPageFbId').value;
       const fb_page_token = document.getElementById('newPageToken').value;
       const profile_id = document.getElementById('newProfileId').value;
+      const custom_niche_name = document.getElementById('newCustomNicheName') ? document.getElementById('newCustomNicheName').value.trim() : '';
+      const custom_niche_type = document.getElementById('newCustomNicheType') ? document.getElementById('newCustomNicheType').value : 'factual';
+      const custom_niche_audience = document.getElementById('newCustomNicheAudience') ? document.getElementById('newCustomNicheAudience').value.trim() : '';
+
+      if (profile_id === '__custom__' && !custom_niche_name) {
+        alert('Please type a name for your custom niche!');
+        return;
+      }
+
       const publishing_mode = document.getElementById('newPublishingMode').value;
       const daily_cap = parseInt(document.getElementById('newDailyCap').value, 10) || 3;
       const postingTimes = document.getElementById('newPostingTimes').value.split(',').map(s => s.trim()).filter(Boolean);
@@ -2162,6 +2284,9 @@ function generateDashboardHtml(): string {
           fb_page_id,
           fb_page_token,
           profile_id,
+          custom_niche_name,
+          custom_niche_type,
+          custom_niche_audience,
           publishing_mode,
           daily_cap,
           schedule: { postsPerDay: postingTimes.length, postingTimes, timezone: 'UTC' },
@@ -2204,7 +2329,25 @@ function generateDashboardHtml(): string {
       const page = pagesData.find(p => p.id === pageId) || pagesData[0];
       if (!page) return;
 
-      document.getElementById('editProfileSelect').value = page.profile_id;
+      const selectElem = document.getElementById('editProfileSelect');
+      let found = false;
+      for (let i = 0; i < selectElem.options.length; i++) {
+        if (selectElem.options[i].value === page.profile_id) {
+          selectElem.selectedIndex = i;
+          found = true;
+          break;
+        }
+      }
+      if (!found && page.profile_id) {
+        selectElem.value = '__custom__';
+        toggleCustomNicheField('__custom__', 'studioCustomNicheBox');
+        if (document.getElementById('editCustomNicheName')) {
+          document.getElementById('editCustomNicheName').value = page.profile_id;
+        }
+      } else {
+        toggleCustomNicheField(selectElem.value, 'studioCustomNicheBox');
+      }
+
       document.getElementById('editCaptionPrompt').value = page.custom_caption_prompt || '';
       document.getElementById('editCaptionMode').value = page.custom_caption_prompt_mode || 'append';
       document.getElementById('editImagePrompt').value = page.custom_image_prompt || '';
@@ -2229,6 +2372,13 @@ function generateDashboardHtml(): string {
       if (!page) return;
 
       const profile_id = document.getElementById('editProfileSelect').value;
+      const custom_niche_name = document.getElementById('editCustomNicheName') ? document.getElementById('editCustomNicheName').value.trim() : '';
+
+      if (profile_id === '__custom__' && !custom_niche_name) {
+        alert('Please enter a name for your custom niche!');
+        return;
+      }
+
       const custom_caption_prompt = document.getElementById('editCaptionPrompt').value;
       const custom_caption_prompt_mode = document.getElementById('editCaptionMode').value;
       const custom_image_prompt = document.getElementById('editImagePrompt').value;
@@ -2253,6 +2403,7 @@ function generateDashboardHtml(): string {
         body: JSON.stringify({
           id: pageId,
           profile_id,
+          custom_niche_name,
           custom_caption_prompt,
           custom_caption_prompt_mode,
           custom_image_prompt,

@@ -5,36 +5,36 @@
       "account_name": "Alex Morgan (Primary Creator)",
       "fb_user_id": "100084729104820",
       "email": "alex.creator@meta-media.io",
-      "user_access_token": "Eu8w2CkAt3ytkuID:w46hqq9gBGUV8EHO8vTxkA==:aQDBNeK5TrDmoGtRaxKaZX+Dvfwq//kU+z6yhFYminIOCZFD",
+      "user_access_token": "OHH+JZ1YlgNO96bX:VqLG5XmOI+AtsUF8Yr8H+A==:2IptiO/00pVti7iUgVl/LeFZy9vaRAN1zZoHmGHPXQsDT1Lw",
       "masked_token": "EAAB...9812",
       "token_status": "valid",
       "token_expires_at": "2026-12-31T23:59:59Z",
       "notes": "Personal Creator Identity managing Science & Technology channels",
-      "created_at": "2026-10-03T14:45:16.183Z"
+      "created_at": "2026-10-03T15:01:02.505Z"
     },
     {
       "id": "fb_acc_02",
       "account_name": "Apex Digital Media LLC (Business BM)",
       "fb_user_id": "200091827401928",
       "email": "admin@apexdigital.agency",
-      "user_access_token": "PCdM/WLziWzK8V+a:h1Fz/ztMWqoHlAqZw7bfYQ==:TBAEITkLmKtCLJUvy75vZQs2+iaJXNq6q63GAvw=",
+      "user_access_token": "IP3B2hv2vu+LE9dR:dFBlRgNF7IzqfTLTnSAd0Q==:eC0+ge0Pm0lsUXz0MVfG9MHYpNC1oI9kAseVGqQ=",
       "masked_token": "EAAB...7410",
       "token_status": "valid",
       "token_expires_at": "2027-01-15T00:00:00Z",
       "notes": "Meta Business Manager account managing Engineering, Automotive & Wellness",
-      "created_at": "2026-10-08T14:45:16.183Z"
+      "created_at": "2026-10-08T15:01:02.506Z"
     },
     {
       "id": "fb_acc_03",
       "account_name": "Viral Legends Media Lab",
       "fb_user_id": "300059182303819",
       "email": "publishing@virallegends.com",
-      "user_access_token": "lIiOOKshfjurBelh:++SSPL8CtzGqtwPdsgFNHg==:jhiGSlpiDpGARDmXSkJ1BLkuvb3lni1YHsifqxU=",
+      "user_access_token": "1iKP/yWkRiYezMzO:5LvqwKwFcqUvTxyFWfoGsA==:fK27NM9PYMxElhsoYIu36H5N7EDI8aniTIKEOeQ=",
       "masked_token": "EAAB...3219",
       "token_status": "valid",
       "token_expires_at": "2026-11-28T12:00:00Z",
       "notes": "Publisher identity for Gothic Horror and Cold Case True Crime channels",
-      "created_at": "2026-10-13T14:45:16.183Z"
+      "created_at": "2026-10-13T15:01:02.506Z"
     }
   ],
   "providers": [
@@ -122,7 +122,7 @@
       "fb_account_id": "fb_acc_01",
       "name": "Cosmic Horizons & Science Daily",
       "fb_page_id": "109283746501",
-      "fb_page_token": "u2+wkDyDM5/DpAG6:FvQygfqfUSjAY2iOgfyk+w==:Z1HHdauEU9YnZtJo7mJ39DvuyfG11enpESF/Elk=",
+      "fb_page_token": "PCN0+0ROWGkwu9dH:AGLzEbIhTc4ZSJ8Q/olOsQ==:1PoZc+K5gmvcDaCQpMnavzPc2PQlTAI6/Im5leY=",
       "token_status": "valid",
       "profile_id": "science_space",
       "publishing_mode": "hybrid",
@@ -154,15 +154,15 @@
         "image.headlinePanel.textColor": "#FFFFFF",
         "image.headlinePanel.heightPercent": 26
       },
-      "created_at": "2026-10-30T14:45:16.183Z",
-      "updated_at": "2026-11-02T14:45:16.183Z"
+      "created_at": "2026-10-30T15:01:02.506Z",
+      "updated_at": "2026-11-02T15:01:02.506Z"
     },
     {
       "id": "page_horror_02",
       "fb_account_id": "fb_acc_03",
       "name": "Midnight Crypt Stories",
       "fb_page_id": "209384756102",
-      "fb_page_token": "j2wJVdcwBalTZ+/D:KoZyIu5K734xQ6gWf/rUmw==:DxLJRBnsIWsYLyrq7TY2o2QFvWItFmh3wbIwDw==",
+      "fb_page_token": "kU+yL+VL8/8DpQkE:CdavTPrhln6MOyRceq7qqw==:q1zWV/Piu0sTXmxv1Elm4FSv95atXr2jbDITmQ==",
       "token_status": "valid",
       "profile_id": "horror_story",
       "publishing_mode": "review",
@@ -191,15 +191,15 @@
         "image.aspectRatio": "4:5",
         "image.headlinePanel.enabled": false
       },
-      "created_at": "2026-10-31T14:45:16.183Z",
-      "updated_at": "2026-11-02T14:45:16.183Z"
+      "created_at": "2026-10-31T15:01:02.506Z",
+      "updated_at": "2026-11-02T15:01:02.506Z"
     },
     {
       "id": "page_crime_03",
       "fb_account_id": "fb_acc_03",
       "name": "Untold Cold Cases & Forensic Files",
       "fb_page_id": "309485761033",
-      "fb_page_token": "r1u5glRaC99zXmmi:y4y6jaVTe3VszdiiG9FYnA==:eeVS0nH9OM5OfOrluBshzrLRuHpu4/UALVM=",
+      "fb_page_token": "1ALJKzpmdDl7SkUj:I2SZzzVFGR21Osh3SB5wMA==:mYZRmHxm1TSdToEkXbm/UvEslgI3TD3BGZE=",
       "token_status": "valid",
       "profile_id": "crime_story",
       "publishing_mode": "auto",
@@ -231,15 +231,15 @@
         "image.headlinePanel.textColor": "#FCA5A5",
         "image.headlinePanel.heightPercent": 24
       },
-      "created_at": "2026-10-29T14:45:16.184Z",
-      "updated_at": "2026-11-02T14:45:16.184Z"
+      "created_at": "2026-10-29T15:01:02.506Z",
+      "updated_at": "2026-11-02T15:01:02.506Z"
     },
     {
       "id": "page_auto_04",
       "fb_account_id": "fb_acc_02",
       "name": "Apex Supercars & Hyper-Engineering",
       "fb_page_id": "409586771044",
-      "fb_page_token": "rjaVhV4GfFaiMA3H:fqcwr5XmCO9xXvSI8eTIqQ==:itnPh2Yxllpp80dn8tNlvnHA0UAAnEzpXA==",
+      "fb_page_token": "H4Xhp9+UH4XFeiT9:U/NfgwdzKtAPkBpmW+IFNA==:aOlL+RQbPnpiJVBh5JGGTjrPal6dNbN2Sw==",
       "token_status": "valid",
       "profile_id": "science_space",
       "publishing_mode": "hybrid",
@@ -271,15 +271,15 @@
         "image.headlinePanel.textColor": "#60A5FA",
         "image.headlinePanel.heightPercent": 25
       },
-      "created_at": "2026-10-28T14:45:16.184Z",
-      "updated_at": "2026-11-02T14:45:16.184Z"
+      "created_at": "2026-10-28T15:01:02.506Z",
+      "updated_at": "2026-11-02T15:01:02.506Z"
     },
     {
       "id": "page_health_05",
       "fb_account_id": "fb_acc_02",
       "name": "Mind & Vitality Longevity Protocol",
       "fb_page_id": "509687881055",
-      "fb_page_token": "qzzSONKnKaTaq5a1:HLZXkzqe3KZNHTtgRB0bSQ==:DGcSEY/YvoPNoDa31VJ/Rq08QKtYBDcv",
+      "fb_page_token": "XWSbYFCGnACdkz+z:PrQVCHV8QDti+/5VWJc8Ow==:crP6KTDKPIohMNngMSqCN9VOx7g+DgnM",
       "token_status": "valid",
       "profile_id": "science_space",
       "publishing_mode": "review",
@@ -310,8 +310,38 @@
         "image.headlinePanel.textColor": "#34D399",
         "image.headlinePanel.heightPercent": 25
       },
-      "created_at": "2026-10-27T14:45:16.184Z",
-      "updated_at": "2026-11-02T14:45:16.184Z"
+      "created_at": "2026-10-27T15:01:02.506Z",
+      "updated_at": "2026-11-02T15:01:02.506Z"
+    },
+    {
+      "id": "page_1793632087921_j4ez2",
+      "name": "Bonsai Art & Botanical Science",
+      "fb_page_id": "page_bonsai_7788",
+      "fb_page_token": "+w16DXX3E31V6F+9:6MMMjzkRqj0niE8hoeyUOA==:h/jyWSlTq2QgNC5KmpvuE97OWA+7zg5rOMr1Uw==",
+      "token_status": "valid",
+      "profile_id": "3d2c0c5b-3a60-41ee-9d52-a90190e3181e",
+      "publishing_mode": "hybrid",
+      "hybrid_min_score": 80,
+      "daily_cap": 3,
+      "active": true,
+      "schedule": {
+        "postsPerDay": 3,
+        "postingTimes": [
+          "10:00",
+          "15:00",
+          "20:00"
+        ],
+        "timezone": "UTC"
+      },
+      "custom_caption_prompt": "",
+      "custom_caption_prompt_mode": "append",
+      "custom_image_prompt": "",
+      "custom_image_prompt_mode": "append",
+      "first_comment_enabled": true,
+      "first_comment_prompt": "",
+      "overrides": {},
+      "created_at": "2026-11-02T15:08:07.921Z",
+      "updated_at": "2026-11-02T15:08:07.921Z"
     }
   ],
   "posts": [
@@ -319,8 +349,8 @@
       "id": "post_rev_001",
       "page_id": "page_science_01",
       "fb_account_id": "fb_acc_01",
-      "status": "pending_review",
-      "review_state": "pending",
+      "status": "skipped",
+      "review_state": "rejected",
       "title": "James Webb Detects Ocean Atmosphere on K2-18b",
       "headline": "NEW MOLECULAR EVIDENCE OF WATER VAPOR ON TEMPERATE EXOPLANET",
       "caption": "Astronomers analyzing spectroscopic transmission data from the James Webb Space Telescope have identified atmospheric methane and carbon dioxide in the habitable-zone sub-Neptune K2-18b.\n\nThis discovery marks one of the most promising candidates for a hycean world—an ocean-covered planet beneath a hydrogen-rich atmosphere.\n\nWhat kind of life forms do you think could thrive in deep alien oceans?\n\n#space #astronomy #science #jwst #exoplanet",
@@ -338,14 +368,15 @@
       "qa_score": 94,
       "sensitive_flags": [],
       "image_phash": "0123456789abcdef",
-      "content_hash": "9f837261a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8"
+      "content_hash": "9f837261a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8",
+      "review_note": "brer"
     },
     {
       "id": "post_rev_002",
       "page_id": "page_horror_02",
       "fb_account_id": "fb_acc_03",
-      "status": "pending_review",
-      "review_state": "pending",
+      "status": "skipped",
+      "review_state": "rejected",
       "title": "The Tallow Candle of Blackwood Chapel",
       "headline": "THE WICK THAT REFUSED TO BE EXTINGUISHED",
       "caption": "For two centuries, the solitary tallow candle upon the altar of Blackwood Chapel burned with an unearthly violet flame. The caretakers were warned never to snuff it out, for it was not lit to bring light, but to keep the darkness trapped within the crypt below.\n\nTonight, a sudden winter gale forced the iron latch open.\n\n#horror #creepypasta #gothic #ghoststory #mystery",
@@ -363,14 +394,15 @@
       "qa_score": 91,
       "sensitive_flags": [],
       "image_phash": "fedcba9876543210",
-      "content_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b"
+      "content_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
+      "review_note": "fvefve"
     },
     {
       "id": "post_rev_005",
       "page_id": "page_crime_03",
       "fb_account_id": "fb_acc_03",
-      "status": "pending_review",
-      "review_state": "pending",
+      "status": "skipped",
+      "review_state": "rejected",
       "title": "The 1974 Lake Geneva Cipher Mystery",
       "headline": "DECIPHERING THE 50-YEAR UNBROKEN CODE OF THE VAUD NOTEBOOK",
       "caption": "In autumn 1974, an abandoned leather briefcase recovered near the shore of Lake Geneva contained a 48-page handwritten notebook encoded in an intricate geometric substitution cipher.\n\nDespite decades of analysis by forensic linguists, only four lines have ever yielded plaintext—hinting at a clandestine cold-war exchange that never occurred.\n\n#truecrime #coldcase #forensics #history #mystery",
@@ -388,14 +420,15 @@
       "qa_score": 88,
       "sensitive_flags": [],
       "image_phash": "5a4b3c2d1e0f9a8b",
-      "content_hash": "7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d"
+      "content_hash": "7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d",
+      "review_note": "dvdvev"
     },
     {
       "id": "post_rev_006",
       "page_id": "page_health_05",
       "fb_account_id": "fb_acc_02",
-      "status": "pending_review",
-      "review_state": "pending",
+      "status": "skipped",
+      "review_state": "rejected",
       "title": "Mitochondrial Biogenesis & Cold Thermogenesis",
       "headline": "HOW 3 MINUTES OF COLD STIMULATES PGC-1ALPHA AND BROWN ADIPOSE TISSUE",
       "caption": "Groundbreaking metabolic research reveals that controlled acute cold exposure triggers the expression of PGC-1alpha, the master transcriptional coactivator regulating mitochondrial biogenesis.\n\nBy activating non-shivering thermogenesis in brown adipose tissue, cellular energy efficiency and insulin sensitivity rise dramatically within hours.\n\n#longevity #biohacking #health #mitochondria #vitality",
@@ -413,7 +446,8 @@
       "qa_score": 93,
       "sensitive_flags": [],
       "image_phash": "8b7a6c5d4e3f2a1b",
-      "content_hash": "3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e"
+      "content_hash": "3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e",
+      "review_note": "vvre"
     },
     {
       "id": "post_sched_003",
@@ -588,6 +622,14 @@
     }
   ],
   "auditLogs": [
+    {
+      "id": "log_1793632087922_4h92",
+      "timestamp": "2026-11-02T15:08:07.922Z",
+      "level": "info",
+      "category": "publish",
+      "message": "Page added: Bonsai Art & Botanical Science (FB ID: page_bonsai_7788) under account Direct",
+      "page_id": "page_1793632087921_j4ez2"
+    },
     {
       "id": "log_1793630760704_ffko",
       "timestamp": "2026-11-02T14:46:00.704Z",
