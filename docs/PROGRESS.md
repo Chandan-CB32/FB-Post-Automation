@@ -415,5 +415,27 @@
     - All programmatic formatting checks run locally in memory without invoking LLMs, ensuring sub-millisecond execution and zero token cost.
   - **Known limitations:**
     - Secondary LLM QA scoring and sensitive-content classification are implemented in Step 7.4.
-- [ ] **Step 7.4: QA Scoring & Content Safety Classifier (Secondary Model Audit)**
+- [x] **Step 7.4: QA Scoring & Content Safety Classifier (Secondary Model Audit)**
+  - **What was built:**
+    - Secondary model QA evaluation & safety audit stage in `worker/src/stages/05-qa-safety.ts`:
+      - Evaluates posts across 4 quality dimensions: `hookScore` (0-25), `flowVoiceScore` (0-25), `groundingScore` (0-25), and `complianceScore` (0-25), summing to a 0–100 composite score.
+      - Content safety classification detecting sensitive violations: `gore_violence`, `sexual_content`, `hate_harassment`, `self_harm`, `defamation_real_person`, `copyright_infringement`, and `misleading_news`.
+      - **PRD Mandatory Safety Rule**: Any post with a sensitive flag is ALWAYS held for manual review (`mustHoldForReview = true`), even when a Page is configured in `auto` publishing mode, preventing platform bans.
+      - Hybrid mode thresholding (`hybridMinScore`, default 80): Automatically routes subpar posts to the Review Inbox while approving high-scoring clean posts.
+      - Actionable feedback and remediation directions attached to post records.
+  - **Tests run & results:**
+    - `pnpm test`: 174/174 tests passed across 26 test suites.
+    - Added 5 unit tests in `tests/qa-safety.test.ts` verifying high-quality post approval, mandatory review hold for sensitive posts in auto mode, hybrid mode score threshold routing, review mode universal holding, and unparseable output fallback handling.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Combined deterministic caption validation with secondary LLM scoring to provide multi-layered defense against policy violations.
+  - **Known limitations:**
+    - Image prompt generation, perceptual hashing, and Sharp panel compositing will be built in Milestone 8.
+
+---
+
+### Milestone 8: Image Pipeline & Sharp Compositing
+- [ ] **Step 8.1: Key Scene Extractor & Image Prompt Template Builder**
+- [ ] **Step 8.2: Image QA, Uniformity / Blank Check & Perceptual Hashing (pHash)**
+- [ ] **Step 8.3: Sharp Headline Panel Renderer & Aspect Ratio Composition**
 

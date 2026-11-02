@@ -19,6 +19,7 @@ export interface PromptContext {
   pov?: string;
   audience?: string;
   language?: string;
+  profile_type?: string;
   count?: number | string;
   word_min?: number | string;
   word_max?: number | string;
@@ -78,6 +79,7 @@ export function interpolatePrompt(
     date: context.date || now.toISOString().split('T')[0],
     language: context.language || 'English',
     audience: context.audience || 'General Facebook English-speaking audience',
+    profile_type: formatValue(context.profile_type),
     page_name: formatValue(context.page_name),
     niche: formatValue(context.niche),
     topic: formatValue(context.topic),
