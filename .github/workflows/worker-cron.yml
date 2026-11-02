@@ -48,3 +48,4 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
         run: node -e "console.log('Worker cron heartbeat cycle executed at', new Date().toISOString());"
+

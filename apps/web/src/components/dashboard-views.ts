@@ -112,3 +112,4 @@ export function formatProviderViewModel(provider: any, keys: any[] = []): Provid
     quotaPercentUsed: Math.min(Math.round(((provider.used_today || 0) / (provider.daily_limit || 1000)) * 100), 100),
   };
 }
+

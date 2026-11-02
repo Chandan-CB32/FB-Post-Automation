@@ -49,3 +49,4 @@ EXPOSE 3000
 
 # Default entrypoint runs the autonomous worker
 CMD ["node", "worker/dist/index.js"]
+

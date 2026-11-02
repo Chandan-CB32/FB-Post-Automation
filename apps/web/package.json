@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "type-check": "tsc --noEmit",
-    "build": "echo 'apps/web scaffold ready for milestone 11'"
+    "build": "tsc -b",
+    "start": "node dist/server.js",
+    "dev": "node dist/server.js"
   },
   "dependencies": {
     "@fb-auto/core": "workspace:*"
