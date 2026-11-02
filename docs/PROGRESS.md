@@ -504,7 +504,31 @@
 ---
 
 ### Milestone 9: Facebook Graph API Integration & Publishing
-- [ ] **Step 9.1: Facebook Graph API Client & Token Management**
+- [x] **Step 9.1: Facebook Graph API Client & Token Management**
+  - **What was built:**
+    - Official Facebook Graph API client in `packages/core/src/facebook/client.ts` targeting Graph API `v21.0`:
+      - `FacebookGraphClient`: Handles GET, POST, and DELETE with automatic query formatting, Bearer token authorization, and abort timeouts.
+      - Error classification in `FacebookGraphError`:
+        - `isAuthError`: Code 190 (expired/revoked session, invalid token).
+        - `isRateLimit`: Codes 4, 17, 32, 368 (user/app/business rate limits and action spam protection).
+        - `isPermissionError`: Codes 10, 200–299 (missing scopes or non-admin roles).
+        - `isRetryable`: Network errors, server 5xx errors, codes 1, 2, 500, and rate limits with exponential backoff and jitter.
+      - Usage telemetry tracking for `x-app-usage` and `x-page-usage` headers with 80% capacity warning detection.
+      - `debugToken` & `inspectTokenHealth`: Evaluates token validity, expiration timestamps (recognizing permanent Page tokens with `expires_at === 0`), and verifies granted vs missing required scopes (`pages_show_list`, `pages_read_engagement`, `pages_manage_posts`).
+      - `verifyPagePermissions`: Verifies administrative and publishing tasks (`CREATE_CONTENT` / `MANAGE`) on target Page IDs.
+    - Encrypted token management in `packages/core/src/facebook/tokens.ts`:
+      - `encryptPageToken` & `decryptPageToken`: Authenticated AES-256-GCM encryption for stored Page tokens.
+      - `maskFacebookToken`: Safe logging mask (`EAABcd...1234`).
+      - `exchangeForLongLivedUserToken`: Exchanges short-lived OAuth tokens for 60-day user tokens.
+      - `fetchManagedPages`: Retrieves all managed Pages with permanent Page access tokens and tasks.
+  - **Tests run & results:**
+    - `pnpm test`: 222/222 tests passed across 30 test suites.
+    - Added 13 unit tests in `tests/facebook-client.test.ts` verifying API request construction, error categorization, retry backoff on transient errors, permanent page token inspection, expired token rejection, missing scope detection, page task verification, AES-256-GCM token encryption roundtrips, and long-lived token exchange.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Treated `expires_at: 0` as permanent (never-expiring) per Facebook Graph API specifications for Page access tokens generated from long-lived user tokens.
+  - **Known limitations:**
+    - Photo upload and feed scheduling will be implemented in Step 9.2.
 - [ ] **Step 9.2: Photo Scheduling & Publishing Engine**
 - [ ] **Step 9.3: Publishing Status Reconciliation & Error Retries**
 

@@ -177,3 +177,4 @@ describe('Sharp Headline Panel Renderer & Aspect Ratio Compositor (Step 8.3)', (
     });
   });
 });
+
