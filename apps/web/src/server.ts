@@ -81,12 +81,11 @@ export function createDashboardServer(): http.Server {
             timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
           },
         ],
-        providerDailyUsage: [
-          { provider_id: 'gemini', requests_count: 520, daily_limit: 1000 },
-          { provider_id: 'cloudflare', requests_count: 3600, daily_limit: 10000 },
-          { provider_id: 'openai', requests_count: 110, daily_limit: 500 },
-          { provider_id: 'pollinations', requests_count: 45, daily_limit: 300 },
-        ],
+        providerDailyUsage: store.getProviders().map((p) => ({
+          provider_id: p.id,
+          requests_count: p.used_today || 0,
+          daily_limit: p.daily_limit || 1000,
+        })),
       });
 
       return sendJson(metrics);
@@ -348,7 +347,207 @@ export function createDashboardServer(): http.Server {
       return;
     }
 
-    // 9. Web Dashboard HTML UI
+    // 9. API: Providers CRUD
+    if (url.pathname === '/api/providers') {
+      if (req.method === 'GET') {
+        const providers = store.getProviders();
+        const allKeys = store.getProviderKeys();
+        const enriched = providers.map((p) => {
+          const keys = allKeys.filter((k) => k.provider_id === p.id);
+          return {
+            ...p,
+            keyCount: keys.length,
+            activeKeyCount: keys.filter((k) => k.is_active).length,
+            keys: keys.map((k) => ({
+              id: k.id,
+              provider_id: k.provider_id,
+              masked_key: k.masked_key,
+              label: k.label,
+              is_active: k.is_active,
+              created_at: k.created_at,
+            })),
+          };
+        });
+        return sendJson(enriched);
+      }
+
+      if (req.method === 'POST') {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            if (!data.name || !data.adapter_kind) {
+              return sendJson({ error: 'Provider name and adapter_kind are required.' }, 400);
+            }
+
+            const newProvider = store.createProvider({
+              name: data.name,
+              adapter_kind: data.adapter_kind,
+              base_url: data.base_url,
+              model_name: data.model_name,
+              daily_limit: Number(data.daily_limit) || 1000,
+              priority: Number(data.priority) || 1,
+              enabled: data.enabled !== false,
+            });
+
+            let addedKey = null;
+            if (data.initial_key && data.initial_key.trim()) {
+              addedKey = store.addProviderKey({
+                provider_id: newProvider.id,
+                raw_key: data.initial_key,
+                label: data.key_label || 'Primary Key',
+              });
+            }
+
+            return sendJson({ success: true, provider: newProvider, key: addedKey }, 201);
+          } catch (e: any) {
+            return sendJson({ error: e.message }, 500);
+          }
+        });
+        return;
+      }
+
+      if (req.method === 'PUT') {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            if (!data.id) {
+              return sendJson({ error: 'Provider ID is required.' }, 400);
+            }
+            const updated = store.updateProvider(data.id, data);
+            return sendJson({ success: true, provider: updated });
+          } catch (e: any) {
+            return sendJson({ error: e.message }, 500);
+          }
+        });
+        return;
+      }
+
+      if (req.method === 'DELETE') {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            const providerId = data.id || url.searchParams.get('id');
+            if (!providerId) {
+              return sendJson({ error: 'Provider ID is required.' }, 400);
+            }
+            const deleted = store.deleteProvider(providerId);
+            return sendJson({ success: deleted });
+          } catch (e: any) {
+            return sendJson({ error: e.message }, 500);
+          }
+        });
+        return;
+      }
+    }
+
+    // 10. API: Provider Keys CRUD
+    if (url.pathname === '/api/provider-keys') {
+      if (req.method === 'GET') {
+        const providerId = url.searchParams.get('providerId') || undefined;
+        const keys = store.getProviderKeys(providerId).map((k) => ({
+          id: k.id,
+          provider_id: k.provider_id,
+          masked_key: k.masked_key,
+          label: k.label,
+          is_active: k.is_active,
+          created_at: k.created_at,
+        }));
+        return sendJson(keys);
+      }
+
+      if (req.method === 'POST') {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            const providerId = data.provider_id || data.providerId;
+            const rawKey = data.raw_key || data.key;
+            if (!providerId || !rawKey) {
+              return sendJson({ error: 'provider_id and key are required.' }, 400);
+            }
+            const newKey = store.addProviderKey({
+              provider_id: providerId,
+              raw_key: rawKey,
+              label: data.label,
+            });
+            return sendJson(
+              {
+                success: true,
+                key: {
+                  id: newKey.id,
+                  provider_id: newKey.provider_id,
+                  masked_key: newKey.masked_key,
+                  label: newKey.label,
+                  is_active: newKey.is_active,
+                  created_at: newKey.created_at,
+                },
+              },
+              201
+            );
+          } catch (e: any) {
+            return sendJson({ error: e.message }, 500);
+          }
+        });
+        return;
+      }
+
+      if (req.method === 'DELETE') {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            const keyId = data.id || url.searchParams.get('id');
+            if (!keyId) {
+              return sendJson({ error: 'Key ID is required.' }, 400);
+            }
+            const deleted = store.deleteProviderKey(keyId);
+            return sendJson({ success: deleted });
+          } catch (e: any) {
+            return sendJson({ error: e.message }, 500);
+          }
+        });
+        return;
+      }
+    }
+
+    // 11. API: Toggle Key Active/Disabled
+    if (req.method === 'POST' && url.pathname === '/api/provider-keys/toggle') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.id) {
+            return sendJson({ error: 'Key ID is required.' }, 400);
+          }
+          const updated = store.toggleProviderKey(data.id, data.is_active);
+          return sendJson({
+            success: true,
+            key: {
+              id: updated.id,
+              provider_id: updated.provider_id,
+              masked_key: updated.masked_key,
+              label: updated.label,
+              is_active: updated.is_active,
+              created_at: updated.created_at,
+            },
+          });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 12. Web Dashboard HTML UI
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
       const html = generateDashboardHtml();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -364,6 +563,8 @@ export function createDashboardServer(): http.Server {
 function generateDashboardHtml(): string {
   const pages = store.getPages();
   const posts = store.getPosts();
+  const providers = store.getProviders();
+  const providerKeys = store.getProviderKeys();
   const killSwitch = store.getKillSwitch();
   const reviewPosts = posts.filter((p) => p.status === 'pending_review' || p.review_state === 'pending');
 
@@ -883,46 +1084,91 @@ function generateDashboardHtml(): string {
     <!-- TAB 6: PROVIDERS -->
     <div id="tab-providers" class="tab-content">
       <div class="card">
-        <h3 style="margin-bottom: 14px; font-size: 16px;">Configured LLM & Image Providers (AES-256-GCM Encrypted)</h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <div>
+            <h3 style="font-size: 16px; margin-bottom: 4px;">Configured LLM & Image Providers</h3>
+            <p style="font-size: 13px; color: var(--text-muted);">Manage AI endpoints, daily request quotas, failover priorities, and AES-256-GCM encrypted API key rotation pools.</p>
+          </div>
+          <button class="btn btn-primary" onclick="openAddProviderModal()">➕ Add Provider</button>
+        </div>
         <table>
           <thead>
             <tr>
-              <th>Provider</th>
+              <th>Provider & Model</th>
               <th>Adapter Kind</th>
+              <th>Failover Priority</th>
+              <th>Daily Quota</th>
+              <th>Key Pool (AES-256-GCM)</th>
               <th>Status</th>
-              <th>Encrypted Key Storage</th>
-              <th>Failover Strategy</th>
+              <th style="text-align: right;">Actions</th>
             </tr>
           </thead>
-          <tbody>
-            <tr>
-              <td><strong>Google Gemini 2.5 Flash</strong></td>
-              <td><code>gemini_native</code></td>
-              <td><span style="color: #34d399; font-weight: 600;">● Active</span></td>
-              <td><code>AIza...8932</code></td>
-              <td>Priority 1</td>
-            </tr>
-            <tr>
-              <td><strong>OpenAI GPT-4o</strong></td>
-              <td><code>openai_compatible_chat</code></td>
-              <td><span style="color: #34d399; font-weight: 600;">● Active</span></td>
-              <td><code>sk-...cdef</code></td>
-              <td>Priority 2 (Failover)</td>
-            </tr>
-            <tr>
-              <td><strong>Cloudflare Workers AI (FLUX)</strong></td>
-              <td><code>cloudflare_workers_ai</code></td>
-              <td><span style="color: #34d399; font-weight: 600;">● Active</span></td>
-              <td><code>cf-...7789</code></td>
-              <td>Image Primary</td>
-            </tr>
-            <tr>
-              <td><strong>Pollinations AI</strong></td>
-              <td><code>pollinations_image</code></td>
-              <td><span style="color: #34d399; font-weight: 600;">● Active</span></td>
-              <td><code>Free Tier (No Auth)</code></td>
-              <td>Image Failover</td>
-            </tr>
+          <tbody id="providersTableBody">
+            ${providers
+              .map((p) => {
+                const keys = providerKeys.filter((k) => k.provider_id === p.id);
+                const activeKeys = keys.filter((k) => k.is_active);
+                const keyBadges =
+                  keys.length > 0
+                    ? keys
+                        .map(
+                          (k) =>
+                            `<span class="badge" style="background: ${
+                              k.is_active ? '#1e293b' : '#27272a'
+                            }; color: ${
+                              k.is_active ? '#93c5fd' : '#71717a'
+                            }; font-family: 'JetBrains Mono', monospace; font-size: 11px; margin: 2px; display: inline-block;">${
+                              k.masked_key
+                            }</span>`
+                        )
+                        .join('')
+                    : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
+                const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+
+                return `
+                <tr id="provider-row-${p.id}">
+                  <td>
+                    <strong>${p.name}</strong><br>
+                    <span style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">${
+                      p.model_name || 'default'
+                    }</span>
+                  </td>
+                  <td><code>${p.adapter_kind}</code></td>
+                  <td><span class="badge" style="background: #1e3a8a; color: #60a5fa;">Priority ${p.priority}</span></td>
+                  <td>
+                    <div style="font-weight: 600;">${p.used_today || 0} / ${p.daily_limit} reqs</div>
+                    <div style="width: 100px; height: 5px; background: #374151; border-radius: 3px; margin-top: 4px; overflow: hidden;">
+                      <div style="width: ${pct}%; height: 100%; background: ${pct > 85 ? '#ef4444' : '#3b82f6'};"></div>
+                    </div>
+                  </td>
+                  <td>
+                    <div style="margin-bottom: 4px; max-width: 280px;">${keyBadges}</div>
+                    <span style="font-size: 11px; color: ${activeKeys.length > 0 ? '#34d399' : '#f59e0b'};">
+                      ● ${activeKeys.length} active key${activeKeys.length === 1 ? '' : 's'}
+                    </span>
+                  </td>
+                  <td>
+                    ${
+                      p.enabled
+                        ? '<span style="color: #34d399; font-weight: 600;">● Active</span>'
+                        : '<span style="color: #ef4444; font-weight: 600;">● Disabled</span>'
+                    }
+                  </td>
+                  <td style="text-align: right; white-space: nowrap;">
+                    <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openManageKeysModal('${
+                      p.id
+                    }')">🔑 Keys (${keys.length})</button>
+                    <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openEditProviderModal('${
+                      p.id
+                    }')">✏️ Edit</button>
+                    <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="deleteProviderAction('${
+                      p.id
+                    }')">🗑️</button>
+                  </td>
+                </tr>
+              `;
+              })
+              .join('')}
           </tbody>
         </table>
       </div>
@@ -1019,8 +1265,186 @@ function generateDashboardHtml(): string {
     </div>
   </div>
 
+  <!-- MODAL: ADD NEW PROVIDER -->
+  <div class="modal" id="addProviderModal">
+    <div class="modal-content">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
+        <h3 style="font-size: 18px;">➕ Add AI or Image Provider</h3>
+        <button onclick="closeAddProviderModal()" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
+      </div>
+
+      <form id="addProviderForm" onsubmit="submitNewProvider(event)">
+        <div class="form-group">
+          <label>Provider Name *</label>
+          <input type="text" id="newProviderName" class="form-control" placeholder="e.g. Google Gemini 2.5 Flash, Groq LLaMA 3.3, DeepSeek R1" required>
+        </div>
+
+        <div class="form-group">
+          <label>Adapter Kind *</label>
+          <select id="newProviderAdapter" class="form-control" onchange="onAdapterSelectChange(this.value)">
+            <option value="gemini_native">Google Gemini Native (gemini_native)</option>
+            <option value="openai_compatible_chat">OpenAI Compatible Chat (OpenAI, Groq, OpenRouter, DeepSeek)</option>
+            <option value="cloudflare_workers_ai">Cloudflare Workers AI (cloudflare_workers_ai)</option>
+            <option value="pollinations_image">Pollinations AI Image (pollinations_image)</option>
+            <option value="custom_http">Custom HTTP JSON Webhook (custom_http)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Base URL</label>
+          <input type="text" id="newProviderBaseUrl" class="form-control" value="https://generativelanguage.googleapis.com/v1beta" placeholder="https://api.openai.com/v1">
+        </div>
+
+        <div class="form-group">
+          <label>Model Name / ID</label>
+          <input type="text" id="newProviderModel" class="form-control" value="gemini-2.5-flash" placeholder="e.g. gpt-4o, llama-3.3-70b-versatile, @cf/black-forest-labs/flux-1-schnell">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+          <div class="form-group">
+            <label>Failover Priority (1 = Primary, 2+ = Fallback)</label>
+            <input type="number" id="newProviderPriority" class="form-control" value="1" min="1" max="10">
+          </div>
+          <div class="form-group">
+            <label>Daily Request Quota</label>
+            <input type="number" id="newProviderDailyLimit" class="form-control" value="1000" min="10">
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid var(--card-border); padding-top: 14px; margin-top: 14px;">
+          <h4 style="font-size: 12px; color: #60a5fa; margin-bottom: 10px; text-transform: uppercase;">Initial API Key (AES-256-GCM Encrypted Immediately)</h4>
+          <div class="form-group">
+            <label>API Key / Secret Token (Optional)</label>
+            <input type="password" id="newProviderKey" class="form-control" placeholder="sk-... or AIza... (Leave blank if keyless)">
+          </div>
+          <div class="form-group">
+            <label>Key Label</label>
+            <input type="text" id="newProviderKeyLabel" class="form-control" placeholder="e.g. Primary Production Key">
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+          <button type="button" class="btn btn-secondary" onclick="closeAddProviderModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Provider</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: MANAGE PROVIDER KEY POOL -->
+  <div class="modal" id="manageKeysModal">
+    <div class="modal-content" style="max-width: 680px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <div>
+          <h3 id="manageKeysTitle" style="font-size: 18px; margin-bottom: 4px;">🔑 Key Pool Management</h3>
+          <p id="manageKeysSubtitle" style="font-size: 13px; color: var(--text-muted);">AES-256-GCM Encrypted Key Rotation Pool</p>
+        </div>
+        <button onclick="closeManageKeysModal()" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
+      </div>
+
+      <!-- Current Keys in Pool -->
+      <div style="margin-bottom: 24px;">
+        <h4 style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px; text-transform: uppercase;">Keys in Rotation Pool</h4>
+        <div id="keysListContainer" style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Add New Key Form -->
+      <div style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 16px;">
+        <h4 style="font-size: 12px; color: #60a5fa; margin-bottom: 12px; text-transform: uppercase;">➕ Add New API Key to this Pool</h4>
+        <form id="addKeyForm" onsubmit="submitAddKey(event)">
+          <input type="hidden" id="keyPoolProviderId">
+          <div class="form-group">
+            <label>Raw API Key * (AES-256-GCM Encrypted on save)</label>
+            <input type="password" id="keyPoolRawKey" class="form-control" placeholder="Paste new API key (e.g. AIza..., sk-...)" required>
+          </div>
+          <div class="form-group">
+            <label>Key Label / Alias (Optional)</label>
+            <input type="text" id="keyPoolLabel" class="form-control" placeholder="e.g. Backup Key 2, Team Workspace Key">
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button type="submit" class="btn btn-primary">➕ Encrypt & Add Key</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: EDIT PROVIDER -->
+  <div class="modal" id="editProviderModal">
+    <div class="modal-content">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
+        <h3 style="font-size: 18px;">✏️ Edit Provider Settings</h3>
+        <button onclick="closeEditProviderModal()" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
+      </div>
+
+      <form id="editProviderForm" onsubmit="submitEditProvider(event)">
+        <input type="hidden" id="editProviderId">
+
+        <div class="form-group">
+          <label>Provider Name *</label>
+          <input type="text" id="editProviderName" class="form-control" required>
+        </div>
+
+        <div class="form-group">
+          <label>Adapter Kind</label>
+          <select id="editProviderAdapter" class="form-control">
+            <option value="gemini_native">Google Gemini Native (gemini_native)</option>
+            <option value="openai_compatible_chat">OpenAI Compatible Chat</option>
+            <option value="cloudflare_workers_ai">Cloudflare Workers AI</option>
+            <option value="pollinations_image">Pollinations AI Image</option>
+            <option value="custom_http">Custom HTTP JSON Webhook</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Base URL</label>
+          <input type="text" id="editProviderBaseUrl" class="form-control">
+        </div>
+
+        <div class="form-group">
+          <label>Model Name</label>
+          <input type="text" id="editProviderModel" class="form-control">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+          <div class="form-group">
+            <label>Failover Priority</label>
+            <input type="number" id="editProviderPriority" class="form-control" min="1" max="10">
+          </div>
+          <div class="form-group">
+            <label>Daily Request Quota</label>
+            <input type="number" id="editProviderDailyLimit" class="form-control" min="10">
+          </div>
+        </div>
+
+        <div class="form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
+          <input type="checkbox" id="editProviderEnabled" style="width: 18px; height: 18px; accent-color: var(--primary);">
+          <label for="editProviderEnabled" style="margin: 0; cursor: pointer; text-transform: none; font-size: 14px;">Provider Enabled & Active</label>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+          <button type="button" class="btn btn-secondary" onclick="closeEditProviderModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
     let pagesData = ${JSON.stringify(pages)};
+    let providersData = ${JSON.stringify(providers)};
+    let providerKeysData = ${JSON.stringify(
+      providerKeys.map((k) => ({
+        id: k.id,
+        provider_id: k.provider_id,
+        masked_key: k.masked_key,
+        label: k.label,
+        is_active: k.is_active,
+        created_at: k.created_at,
+      }))
+    )};
 
     function showTab(tabId, btn) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -1284,6 +1708,247 @@ function generateDashboardHtml(): string {
       } else {
         btn.innerText = 'Activate Kill Switch';
         alert('System RESUMED.');
+      }
+    }
+
+    // --- Provider Modal & Actions ---
+    function openAddProviderModal() {
+      document.getElementById('addProviderModal').classList.add('active');
+    }
+
+    function closeAddProviderModal() {
+      document.getElementById('addProviderModal').classList.remove('active');
+    }
+
+    function onAdapterSelectChange(val) {
+      const baseInput = document.getElementById('newProviderBaseUrl');
+      const modelInput = document.getElementById('newProviderModel');
+      if (val === 'gemini_native') {
+        baseInput.value = 'https://generativelanguage.googleapis.com/v1beta';
+        modelInput.value = 'gemini-2.5-flash';
+      } else if (val === 'openai_compatible_chat') {
+        baseInput.value = 'https://api.openai.com/v1';
+        modelInput.value = 'gpt-4o';
+      } else if (val === 'cloudflare_workers_ai') {
+        baseInput.value = 'https://api.cloudflare.com/client/v4';
+        modelInput.value = '@cf/black-forest-labs/flux-1-schnell';
+      } else if (val === 'pollinations_image') {
+        baseInput.value = 'https://gen.pollinations.ai';
+        modelInput.value = 'flux';
+      } else {
+        baseInput.value = '';
+        modelInput.value = '';
+      }
+    }
+
+    async function submitNewProvider(e) {
+      e.preventDefault();
+      const name = document.getElementById('newProviderName').value;
+      const adapter_kind = document.getElementById('newProviderAdapter').value;
+      const base_url = document.getElementById('newProviderBaseUrl').value;
+      const model_name = document.getElementById('newProviderModel').value;
+      const priority = parseInt(document.getElementById('newProviderPriority').value, 10) || 1;
+      const daily_limit = parseInt(document.getElementById('newProviderDailyLimit').value, 10) || 1000;
+      const initial_key = document.getElementById('newProviderKey').value;
+      const key_label = document.getElementById('newProviderKeyLabel').value;
+
+      const res = await fetch('/api/providers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          adapter_kind,
+          base_url,
+          model_name,
+          priority,
+          daily_limit,
+          initial_key,
+          key_label,
+        })
+      });
+
+      if (res.ok) {
+        closeAddProviderModal();
+        alert('Provider and key successfully created and encrypted!');
+        window.location.reload();
+      } else {
+        const err = await res.json();
+        alert('Failed to add provider: ' + (err.error || 'Unknown error'));
+      }
+    }
+
+    function openEditProviderModal(id) {
+      const p = providersData.find(item => item.id === id);
+      if (!p) return;
+      document.getElementById('editProviderId').value = p.id;
+      document.getElementById('editProviderName').value = p.name;
+      document.getElementById('editProviderAdapter').value = p.adapter_kind;
+      document.getElementById('editProviderBaseUrl').value = p.base_url || '';
+      document.getElementById('editProviderModel').value = p.model_name || '';
+      document.getElementById('editProviderPriority').value = p.priority;
+      document.getElementById('editProviderDailyLimit').value = p.daily_limit;
+      document.getElementById('editProviderEnabled').checked = p.enabled !== false;
+      document.getElementById('editProviderModal').classList.add('active');
+    }
+
+    function closeEditProviderModal() {
+      document.getElementById('editProviderModal').classList.remove('active');
+    }
+
+    async function submitEditProvider(e) {
+      e.preventDefault();
+      const id = document.getElementById('editProviderId').value;
+      const name = document.getElementById('editProviderName').value;
+      const adapter_kind = document.getElementById('editProviderAdapter').value;
+      const base_url = document.getElementById('editProviderBaseUrl').value;
+      const model_name = document.getElementById('editProviderModel').value;
+      const priority = parseInt(document.getElementById('editProviderPriority').value, 10) || 1;
+      const daily_limit = parseInt(document.getElementById('editProviderDailyLimit').value, 10) || 1000;
+      const enabled = document.getElementById('editProviderEnabled').checked;
+
+      const res = await fetch('/api/providers', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id,
+          name,
+          adapter_kind,
+          base_url,
+          model_name,
+          priority,
+          daily_limit,
+          enabled,
+        })
+      });
+
+      if (res.ok) {
+        closeEditProviderModal();
+        alert('Provider successfully updated!');
+        window.location.reload();
+      } else {
+        const err = await res.json();
+        alert('Failed to update provider: ' + (err.error || 'Unknown error'));
+      }
+    }
+
+    async function deleteProviderAction(id) {
+      if (!confirm('Are you sure you want to delete this provider and all associated API keys?')) return;
+      const res = await fetch('/api/providers', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      if (res.ok) {
+        alert('Provider deleted.');
+        window.location.reload();
+      } else {
+        alert('Failed to delete provider.');
+      }
+    }
+
+    // --- Key Pool Modal & Actions ---
+    function openManageKeysModal(providerId) {
+      const p = providersData.find(item => item.id === providerId);
+      if (!p) return;
+      document.getElementById('keyPoolProviderId').value = providerId;
+      document.getElementById('manageKeysTitle').innerText = '🔑 Keys for ' + p.name;
+      document.getElementById('manageKeysSubtitle').innerText = 'Adapter: ' + p.adapter_kind + ' • Model: ' + (p.model_name || 'default');
+      renderKeysList(providerId);
+      document.getElementById('manageKeysModal').classList.add('active');
+    }
+
+    function closeManageKeysModal() {
+      document.getElementById('manageKeysModal').classList.remove('active');
+    }
+
+    function renderKeysList(providerId) {
+      const keys = providerKeysData.filter(k => k.provider_id === providerId);
+      const container = document.getElementById('keysListContainer');
+      if (keys.length === 0) {
+        container.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; padding: 12px; background: #0b0f19; border-radius: 6px; text-align: center;">No API keys configured for this provider. Add one below.</div>';
+        return;
+      }
+
+      container.innerHTML = keys.map(k => \`
+        <div style="display: flex; justify-content: space-between; align-items: center; background: #0b0f19; border: 1px solid var(--card-border); padding: 12px 14px; border-radius: 8px;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #93c5fd;">\${k.masked_key}</span>
+              \${k.label ? \`<span style="font-size: 11px; background: #1f2937; padding: 2px 6px; border-radius: 4px; color: #d1d5db;">\${k.label}</span>\` : ''}
+              \${k.is_active ? '<span style="color: #34d399; font-size: 11px; font-weight: 600;">● Active</span>' : '<span style="color: #f59e0b; font-size: 11px; font-weight: 600;">⏸ Paused</span>'}
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Added \${new Date(k.created_at).toLocaleDateString()}</div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="toggleKeyAction('\${k.id}', '\${providerId}')">
+              \${k.is_active ? '⏸ Pause' : '▶ Activate'}
+            </button>
+            <button type="button" class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteKeyAction('\${k.id}', '\${providerId}')">
+              🗑️ Delete
+            </button>
+          </div>
+        </div>
+      \`).join('');
+    }
+
+    async function submitAddKey(e) {
+      e.preventDefault();
+      const providerId = document.getElementById('keyPoolProviderId').value;
+      const rawKey = document.getElementById('keyPoolRawKey').value;
+      const label = document.getElementById('keyPoolLabel').value;
+
+      const res = await fetch('/api/provider-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider_id: providerId,
+          raw_key: rawKey,
+          label,
+        })
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        providerKeysData.push(result.key);
+        document.getElementById('keyPoolRawKey').value = '';
+        document.getElementById('keyPoolLabel').value = '';
+        renderKeysList(providerId);
+        alert('API Key encrypted and added to rotation pool!');
+      } else {
+        const err = await res.json();
+        alert('Failed to add key: ' + (err.error || 'Unknown error'));
+      }
+    }
+
+    async function toggleKeyAction(keyId, providerId) {
+      const res = await fetch('/api/provider-keys/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: keyId })
+      });
+      if (res.ok) {
+        const result = await res.json();
+        const idx = providerKeysData.findIndex(k => k.id === keyId);
+        if (idx !== -1) providerKeysData[idx] = result.key;
+        renderKeysList(providerId);
+      } else {
+        alert('Failed to toggle key status.');
+      }
+    }
+
+    async function deleteKeyAction(keyId, providerId) {
+      if (!confirm('Are you sure you want to permanently delete this API key from the encrypted vault?')) return;
+      const res = await fetch('/api/provider-keys', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: keyId })
+      });
+      if (res.ok) {
+        providerKeysData = providerKeysData.filter(k => k.id !== keyId);
+        renderKeysList(providerId);
+        alert('API Key deleted.');
+      } else {
+        alert('Failed to delete key.');
       }
     }
   </script>

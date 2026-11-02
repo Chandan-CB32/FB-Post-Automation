@@ -1,43 +1,6 @@
 {
   "pages": [
     {
-      "id": "page_science_01",
-      "name": "Cosmic Horizons & Science Daily",
-      "fb_page_id": "109283746501",
-      "fb_page_token": "3IQiSaYgvI30h7pK:P0HfyRBpw6aL6If7ac6Ycg==:D+BsEXKM4/HWjHhoO7a5Q5bv1Btgklbeep4Tiyg=",
-      "token_status": "valid",
-      "profile_id": "science_space",
-      "publishing_mode": "hybrid",
-      "hybrid_min_score": 80,
-      "daily_cap": 3,
-      "active": true,
-      "schedule": {
-        "postsPerDay": 3,
-        "postingTimes": [
-          "09:00",
-          "14:00",
-          "19:00"
-        ],
-        "timezone": "UTC"
-      },
-      "custom_caption_prompt": "Emphasize recent peer-reviewed astrophysical papers (Nature Astronomy, Astrophysical Journal). Ask an engaging open-ended question at the end for science lovers to discuss.",
-      "custom_caption_prompt_mode": "append",
-      "custom_image_prompt": "Deep cosmic blue and violet tones, high contrast, James Webb infrared telescope aesthetic.",
-      "custom_image_prompt_mode": "append",
-      "overrides": {
-        "caption.min": 120,
-        "caption.target": 180,
-        "caption.max": 240,
-        "image.aspectRatio": "4:5",
-        "image.headlinePanel.enabled": true,
-        "image.headlinePanel.backgroundColor": "#050b14",
-        "image.headlinePanel.textColor": "#FFFFFF",
-        "image.headlinePanel.heightPercent": 26
-      },
-      "created_at": "2026-10-30T14:19:03.279Z",
-      "updated_at": "2026-11-02T14:19:03.280Z"
-    },
-    {
       "id": "page_horror_02",
       "name": "Midnight Crypt Stories",
       "fb_page_id": "209384756102",
@@ -104,8 +67,8 @@
     {
       "id": "post_rev_001",
       "page_id": "page_science_01",
-      "status": "pending_review",
-      "review_state": "pending",
+      "status": "skipped",
+      "review_state": "rejected",
       "title": "James Webb Detects Ocean Atmosphere on K2-18b",
       "headline": "NEW MOLECULAR EVIDENCE OF WATER VAPOR ON TEMPERATE EXOPLANET",
       "caption": "Astronomers analyzing spectroscopic transmission data from the James Webb Space Telescope have identified atmospheric methane and carbon dioxide in the habitable-zone sub-Neptune K2-18b.\n\nThis discovery marks one of the most promising candidates for a hycean world—an ocean-covered planet beneath a hydrogen-rich atmosphere.\n\nWhat kind of life forms do you think could thrive in deep alien oceans?\n\n#space #astronomy #science #jwst #exoplanet",
@@ -122,13 +85,14 @@
       "qa_score": 94,
       "sensitive_flags": [],
       "image_phash": "0123456789abcdef",
-      "content_hash": "9f837261a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8"
+      "content_hash": "9f837261a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8",
+      "review_note": "abcd"
     },
     {
       "id": "post_rev_002",
       "page_id": "page_horror_02",
-      "status": "pending_review",
-      "review_state": "pending",
+      "status": "ready",
+      "review_state": "approved",
       "title": "The Tallow Candle of Blackwood Chapel",
       "headline": "THE WICK THAT REFUSED TO BE EXTINGUISHED",
       "caption": "For two centuries, the solitary tallow candle upon the altar of Blackwood Chapel burned with an unearthly violet flame. The caretakers were warned never to snuff it out, for it was not lit to bring light, but to keep the darkness trapped within the crypt below.\n\nTonight, a sudden winter gale forced the iron latch open.\n\n#horror #creepypasta #gothic #ghoststory #mystery",
@@ -145,7 +109,8 @@
       "qa_score": 91,
       "sensitive_flags": [],
       "image_phash": "fedcba9876543210",
-      "content_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b"
+      "content_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
+      "review_note": "Approved by owner via dashboard"
     },
     {
       "id": "post_sched_003",
@@ -192,5 +157,84 @@
     }
   ],
   "killSwitchActive": false,
-  "workerHeartbeat": "2026-11-02T14:19:03.280Z"
+  "workerHeartbeat": "2026-11-02T14:19:03.280Z",
+  "providers": [
+    {
+      "id": "gemini_flash",
+      "name": "Google Gemini 2.5 Flash",
+      "adapter_kind": "gemini_native",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "model_name": "gemini-2.5-flash",
+      "daily_limit": 1500,
+      "used_today": 520,
+      "enabled": true,
+      "priority": 1,
+      "created_at": "2026-10-26T14:31:18.861Z"
+    },
+    {
+      "id": "openai_gpt4o",
+      "name": "OpenAI GPT-4o",
+      "adapter_kind": "openai_compatible_chat",
+      "base_url": "https://api.openai.com/v1",
+      "model_name": "gpt-4o",
+      "daily_limit": 500,
+      "used_today": 110,
+      "enabled": true,
+      "priority": 2,
+      "created_at": "2026-10-26T14:31:18.861Z"
+    },
+    {
+      "id": "cf_flux",
+      "name": "Cloudflare Workers AI (FLUX)",
+      "adapter_kind": "cloudflare_workers_ai",
+      "base_url": "https://api.cloudflare.com/client/v4",
+      "model_name": "@cf/black-forest-labs/flux-1-schnell",
+      "daily_limit": 10000,
+      "used_today": 3600,
+      "enabled": true,
+      "priority": 1,
+      "created_at": "2026-10-26T14:31:18.861Z"
+    },
+    {
+      "id": "pollinations",
+      "name": "Pollinations AI",
+      "adapter_kind": "pollinations_image",
+      "base_url": "https://gen.pollinations.ai",
+      "model_name": "flux",
+      "daily_limit": 300,
+      "used_today": 45,
+      "enabled": true,
+      "priority": 2,
+      "created_at": "2026-10-26T14:31:18.861Z"
+    }
+  ],
+  "providerKeys": [
+    {
+      "id": "key_gemini_01",
+      "provider_id": "gemini_flash",
+      "encrypted_key": "ZAgLtnWT4ta9nk7I:PAz+nJ6crTAl8pXqyFYlrA==:xlXtVSNpyjzWbCi5y390lONlcl5VYbnwENs=",
+      "masked_key": "AIza...8932",
+      "label": "Production Primary Gemini",
+      "is_active": true,
+      "created_at": "2026-10-26T14:31:18.862Z"
+    },
+    {
+      "id": "key_openai_01",
+      "provider_id": "openai_gpt4o",
+      "encrypted_key": "YbUumgnYiufGXFMH:RRyDvvS7R+U6Omy4pkabIw==:fBG7TRSvTuhDMN8+Av1Dp4vpe3+OvKHi6sfIUr4=",
+      "masked_key": "sk-...cdef",
+      "label": "Tier-1 Failover Key",
+      "is_active": true,
+      "created_at": "2026-10-26T14:31:18.863Z"
+    },
+    {
+      "id": "key_cf_01",
+      "provider_id": "cf_flux",
+      "encrypted_key": "suhMHYDYGL6wObZC:0H9loTnwG2/SdtTC/9cHZw==:E1dqYKVg3GeJwyCAE3ltvWeJN8u+a/0b",
+      "masked_key": "cf-...7789",
+      "label": "Cloudflare Image Token",
+      "is_active": true,
+      "created_at": "2026-10-26T14:31:18.863Z"
+    }
+  ]
 }

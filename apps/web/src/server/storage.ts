@@ -10,7 +10,31 @@ try {
   // Ignore
 }
 
-import { encryptPageToken } from '@fb-auto/core';
+import { encryptPageToken, encrypt, maskSecret } from '@fb-auto/core';
+
+export interface StoredProvider {
+  id: string;
+  name: string;
+  adapter_kind: 'gemini_native' | 'openai_compatible_chat' | 'cloudflare_workers_ai' | 'pollinations_image' | 'custom_http';
+  base_url?: string;
+  model_name?: string;
+  daily_limit: number;
+  used_today?: number;
+  enabled: boolean;
+  priority: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface StoredProviderKey {
+  id: string;
+  provider_id: string;
+  encrypted_key: string; // AES-256-GCM encrypted
+  masked_key: string;    // e.g. "sk-...1234"
+  label?: string;
+  is_active: boolean;
+  created_at: string;
+}
 
 export interface StoredPage {
   id: string;
@@ -62,6 +86,8 @@ export interface StoredPost {
 export interface SystemStoreData {
   pages: StoredPage[];
   posts: StoredPost[];
+  providers: StoredProvider[];
+  providerKeys: StoredProviderKey[];
   killSwitchActive: boolean;
   workerHeartbeat: string;
 }
@@ -71,6 +97,85 @@ const STORE_FILE = path.join(DATA_DIR, 'system-store.json');
 
 function getInitialStore(): SystemStoreData {
   return {
+    providers: [
+      {
+        id: 'gemini_flash',
+        name: 'Google Gemini 2.5 Flash',
+        adapter_kind: 'gemini_native',
+        base_url: 'https://generativelanguage.googleapis.com/v1beta',
+        model_name: 'gemini-2.5-flash',
+        daily_limit: 1500,
+        used_today: 520,
+        enabled: true,
+        priority: 1,
+        created_at: new Date(Date.now() - 3600 * 1000 * 24 * 7).toISOString(),
+      },
+      {
+        id: 'openai_gpt4o',
+        name: 'OpenAI GPT-4o',
+        adapter_kind: 'openai_compatible_chat',
+        base_url: 'https://api.openai.com/v1',
+        model_name: 'gpt-4o',
+        daily_limit: 500,
+        used_today: 110,
+        enabled: true,
+        priority: 2,
+        created_at: new Date(Date.now() - 3600 * 1000 * 24 * 7).toISOString(),
+      },
+      {
+        id: 'cf_flux',
+        name: 'Cloudflare Workers AI (FLUX)',
+        adapter_kind: 'cloudflare_workers_ai',
+        base_url: 'https://api.cloudflare.com/client/v4',
+        model_name: '@cf/black-forest-labs/flux-1-schnell',
+        daily_limit: 10000,
+        used_today: 3600,
+        enabled: true,
+        priority: 1,
+        created_at: new Date(Date.now() - 3600 * 1000 * 24 * 7).toISOString(),
+      },
+      {
+        id: 'pollinations',
+        name: 'Pollinations AI',
+        adapter_kind: 'pollinations_image',
+        base_url: 'https://gen.pollinations.ai',
+        model_name: 'flux',
+        daily_limit: 300,
+        used_today: 45,
+        enabled: true,
+        priority: 2,
+        created_at: new Date(Date.now() - 3600 * 1000 * 24 * 7).toISOString(),
+      },
+    ],
+    providerKeys: [
+      {
+        id: 'key_gemini_01',
+        provider_id: 'gemini_flash',
+        encrypted_key: encrypt('AIzaSyDemoKeyForGemini8932'),
+        masked_key: 'AIza...8932',
+        label: 'Production Primary Gemini',
+        is_active: true,
+        created_at: new Date(Date.now() - 3600 * 1000 * 24 * 7).toISOString(),
+      },
+      {
+        id: 'key_openai_01',
+        provider_id: 'openai_gpt4o',
+        encrypted_key: encrypt('sk-proj-demoKeyOpenAIChatcdef'),
+        masked_key: 'sk-...cdef',
+        label: 'Tier-1 Failover Key',
+        is_active: true,
+        created_at: new Date(Date.now() - 3600 * 1000 * 24 * 7).toISOString(),
+      },
+      {
+        id: 'key_cf_01',
+        provider_id: 'cf_flux',
+        encrypted_key: encrypt('cf-token-workers-ai-7789'),
+        masked_key: 'cf-...7789',
+        label: 'Cloudflare Image Token',
+        is_active: true,
+        created_at: new Date(Date.now() - 3600 * 1000 * 24 * 7).toISOString(),
+      },
+    ],
     pages: [
       {
         id: 'page_science_01',
@@ -234,6 +339,7 @@ export class SystemStore {
   }
 
   private load(): SystemStoreData {
+    const initial = getInitialStore();
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -241,13 +347,25 @@ export class SystemStore {
 
       if (fs.existsSync(STORE_FILE)) {
         const raw = fs.readFileSync(STORE_FILE, 'utf-8');
-        return JSON.parse(raw);
+        const loaded: SystemStoreData = JSON.parse(raw);
+        let changed = false;
+        if (!Array.isArray(loaded.providers) || loaded.providers.length === 0) {
+          loaded.providers = initial.providers;
+          changed = true;
+        }
+        if (!Array.isArray(loaded.providerKeys) || loaded.providerKeys.length === 0) {
+          loaded.providerKeys = initial.providerKeys;
+          changed = true;
+        }
+        if (changed) {
+          this.save(loaded);
+        }
+        return loaded;
       }
     } catch (e) {
       console.warn('[SystemStore] Could not load store file, initializing new store:', e);
     }
 
-    const initial = getInitialStore();
     this.save(initial);
     return initial;
   }
@@ -386,6 +504,127 @@ export class SystemStore {
       return true;
     }
     return false;
+  }
+
+  // --- Providers & Keys CRUD ---
+  public getProviders(): StoredProvider[] {
+    return this.data.providers;
+  }
+
+  public getProviderById(id: string): StoredProvider | undefined {
+    return this.data.providers.find((p) => p.id === id);
+  }
+
+  public createProvider(input: {
+    name: string;
+    adapter_kind: 'gemini_native' | 'openai_compatible_chat' | 'cloudflare_workers_ai' | 'pollinations_image' | 'custom_http';
+    base_url?: string;
+    model_name?: string;
+    daily_limit?: number;
+    enabled?: boolean;
+    priority?: number;
+  }): StoredProvider {
+    const id = `provider_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newProvider: StoredProvider = {
+      id,
+      name: input.name,
+      adapter_kind: input.adapter_kind,
+      base_url: input.base_url || '',
+      model_name: input.model_name || '',
+      daily_limit: Number(input.daily_limit) || 1000,
+      used_today: 0,
+      enabled: input.enabled !== false,
+      priority: Number(input.priority) || 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    this.data.providers.push(newProvider);
+    this.save();
+    return newProvider;
+  }
+
+  public updateProvider(id: string, updates: Partial<StoredProvider>): StoredProvider {
+    const idx = this.data.providers.findIndex((p) => p.id === id);
+    if (idx === -1) {
+      throw new Error(`Provider with ID ${id} not found.`);
+    }
+    const updated: StoredProvider = {
+      ...this.data.providers[idx],
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    this.data.providers[idx] = updated;
+    this.save();
+    return updated;
+  }
+
+  public deleteProvider(id: string): boolean {
+    const initialLen = this.data.providers.length;
+    this.data.providers = this.data.providers.filter((p) => p.id !== id);
+    // Cascade delete associated keys
+    this.data.providerKeys = this.data.providerKeys.filter((k) => k.provider_id !== id);
+    if (this.data.providers.length !== initialLen) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  public getProviderKeys(providerId?: string): StoredProviderKey[] {
+    if (providerId) {
+      return this.data.providerKeys.filter((k) => k.provider_id === providerId);
+    }
+    return this.data.providerKeys;
+  }
+
+  public addProviderKey(input: {
+    provider_id: string;
+    raw_key: string;
+    label?: string;
+  }): StoredProviderKey {
+    const provider = this.getProviderById(input.provider_id);
+    if (!provider) {
+      throw new Error(`Provider with ID ${input.provider_id} does not exist.`);
+    }
+    const trimmed = input.raw_key ? input.raw_key.trim() : '';
+    if (!trimmed) {
+      throw new Error('API key cannot be empty.');
+    }
+    const id = `key_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const encrypted_key = encrypt(trimmed);
+    const masked_key = maskSecret(trimmed);
+    const newKey: StoredProviderKey = {
+      id,
+      provider_id: input.provider_id,
+      encrypted_key,
+      masked_key,
+      label: input.label?.trim() || undefined,
+      is_active: true,
+      created_at: new Date().toISOString(),
+    };
+    this.data.providerKeys.push(newKey);
+    this.save();
+    return newKey;
+  }
+
+  public deleteProviderKey(keyId: string): boolean {
+    const initialLen = this.data.providerKeys.length;
+    this.data.providerKeys = this.data.providerKeys.filter((k) => k.id !== keyId);
+    if (this.data.providerKeys.length !== initialLen) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  public toggleProviderKey(keyId: string, isActive?: boolean): StoredProviderKey {
+    const key = this.data.providerKeys.find((k) => k.id === keyId);
+    if (!key) {
+      throw new Error(`Key with ID ${keyId} not found.`);
+    }
+    key.is_active = typeof isActive === 'boolean' ? isActive : !key.is_active;
+    this.save();
+    return key;
   }
 
   // --- Kill Switch & Heartbeat ---

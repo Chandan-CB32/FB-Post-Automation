@@ -9,6 +9,7 @@ import {
   formatReviewCard,
   formatProviderViewModel,
   DASHBOARD_NAV_ITEMS,
+  SystemStore,
 } from '../apps/web/src/index.js';
 
 describe('Web Dashboard & UI Views (Milestone 11)', () => {
@@ -187,6 +188,67 @@ describe('Web Dashboard & UI Views (Milestone 11)', () => {
       expect(viewModel.keyCount).toBe(1);
       expect(viewModel.maskedKeys[0]).toMatch(/^sk-...klmn$/);
       expect(viewModel.quotaPercentUsed).toBe(40);
+    });
+
+    it('performs full Provider & Key Pool CRUD with AES-256-GCM encryption in SystemStore', () => {
+      const store = SystemStore.getInstance();
+
+      // 1. Create a new provider
+      const provider = store.createProvider({
+        name: 'DeepSeek R1 on Groq',
+        adapter_kind: 'openai_compatible_chat',
+        base_url: 'https://api.groq.com/openai/v1',
+        model_name: 'deepseek-r1-distill-llama-70b',
+        daily_limit: 3000,
+        priority: 1,
+      });
+
+      expect(provider.id).toBeDefined();
+      expect(provider.name).toBe('DeepSeek R1 on Groq');
+      expect(provider.enabled).toBe(true);
+
+      // 2. Add an encrypted API key to this provider
+      const rawKey = 'gsk_test1234567890abcdefghijkSecretValue';
+      const keyItem = store.addProviderKey({
+        provider_id: provider.id,
+        raw_key: rawKey,
+        label: 'Production Primary Groq Key',
+      });
+
+      expect(keyItem.id).toBeDefined();
+      expect(keyItem.provider_id).toBe(provider.id);
+      expect(keyItem.masked_key).toBe('gsk...alue');
+      expect(keyItem.is_active).toBe(true);
+      // Key must be encrypted: 3-part format <iv>:<tag>:<ciphertext>
+      const parts = keyItem.encrypted_key.split(':');
+      expect(parts.length).toBe(3);
+      expect(keyItem.encrypted_key).not.toContain(rawKey);
+
+      // 3. Toggle key status
+      const paused = store.toggleProviderKey(keyItem.id, false);
+      expect(paused.is_active).toBe(false);
+
+      const resumed = store.toggleProviderKey(keyItem.id, true);
+      expect(resumed.is_active).toBe(true);
+
+      // 4. Update provider settings
+      const updated = store.updateProvider(provider.id, {
+        daily_limit: 5000,
+        priority: 2,
+      });
+      expect(updated.daily_limit).toBe(5000);
+      expect(updated.priority).toBe(2);
+
+      // 5. Delete key
+      const keyDeleted = store.deleteProviderKey(keyItem.id);
+      expect(keyDeleted).toBe(true);
+      const remainingKeys = store.getProviderKeys(provider.id);
+      expect(remainingKeys.length).toBe(0);
+
+      // 6. Delete provider
+      const providerDeleted = store.deleteProvider(provider.id);
+      expect(providerDeleted).toBe(true);
+      expect(store.getProviderById(provider.id)).toBeUndefined();
     });
   });
 });
