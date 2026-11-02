@@ -23,6 +23,7 @@ export * from './image/image-qa.js';
 export * from './image/compositor.js';
 export * from './stages/07-post.js';
 export * from './schedulers/reconciler.js';
+export * from './schedulers/slot-planner.js';
 
 export function getWorkerStatus() {
   return {

@@ -51,3 +51,9 @@ export * from './facebook/types.js';
 export * from './facebook/client.js';
 export * from './facebook/tokens.js';
 export * from './facebook/publisher.js';
+
+// Review Inbox State Machine
+export * from './review/inbox-manager.js';
+
+// Series Continuity & Story Memory
+export * from './series/series-engine.js';
