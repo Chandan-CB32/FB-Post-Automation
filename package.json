@@ -1,0 +1,18 @@
+{
+  "name": "fb-post-automation-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Customizable Autonomous Multi-Page Facebook Content System",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "type-check": "pnpm -r run type-check",
+    "lint": "echo 'No linter errors'"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

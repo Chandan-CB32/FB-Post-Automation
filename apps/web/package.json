@@ -1,0 +1,16 @@
+{
+  "name": "@fb-auto/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "build": "echo 'apps/web scaffold ready for milestone 11'"
+  },
+  "dependencies": {
+    "@fb-auto/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
