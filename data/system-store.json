@@ -1,0 +1,196 @@
+{
+  "pages": [
+    {
+      "id": "page_science_01",
+      "name": "Cosmic Horizons & Science Daily",
+      "fb_page_id": "109283746501",
+      "fb_page_token": "3IQiSaYgvI30h7pK:P0HfyRBpw6aL6If7ac6Ycg==:D+BsEXKM4/HWjHhoO7a5Q5bv1Btgklbeep4Tiyg=",
+      "token_status": "valid",
+      "profile_id": "science_space",
+      "publishing_mode": "hybrid",
+      "hybrid_min_score": 80,
+      "daily_cap": 3,
+      "active": true,
+      "schedule": {
+        "postsPerDay": 3,
+        "postingTimes": [
+          "09:00",
+          "14:00",
+          "19:00"
+        ],
+        "timezone": "UTC"
+      },
+      "custom_caption_prompt": "Emphasize recent peer-reviewed astrophysical papers (Nature Astronomy, Astrophysical Journal). Ask an engaging open-ended question at the end for science lovers to discuss.",
+      "custom_caption_prompt_mode": "append",
+      "custom_image_prompt": "Deep cosmic blue and violet tones, high contrast, James Webb infrared telescope aesthetic.",
+      "custom_image_prompt_mode": "append",
+      "overrides": {
+        "caption.min": 120,
+        "caption.target": 180,
+        "caption.max": 240,
+        "image.aspectRatio": "4:5",
+        "image.headlinePanel.enabled": true,
+        "image.headlinePanel.backgroundColor": "#050b14",
+        "image.headlinePanel.textColor": "#FFFFFF",
+        "image.headlinePanel.heightPercent": 26
+      },
+      "created_at": "2026-10-30T14:19:03.279Z",
+      "updated_at": "2026-11-02T14:19:03.280Z"
+    },
+    {
+      "id": "page_horror_02",
+      "name": "Midnight Crypt Stories",
+      "fb_page_id": "209384756102",
+      "fb_page_token": "TrpN1Jk2haWAIeUH:9qtnoWESvdksUjQt2QQPDQ==:Ds8++mKj3XLDSODn3TQrSfGhrsnqyHD6Jslvsg==",
+      "token_status": "valid",
+      "profile_id": "horror_story",
+      "publishing_mode": "review",
+      "hybrid_min_score": 85,
+      "daily_cap": 2,
+      "active": true,
+      "schedule": {
+        "postsPerDay": 2,
+        "postingTimes": [
+          "21:00",
+          "01:00"
+        ],
+        "timezone": "America/New_York"
+      },
+      "custom_caption_prompt": "Focus on slow-burn psychological dread rather than gore. End with a subtle eerie realization.",
+      "custom_caption_prompt_mode": "append",
+      "custom_image_prompt": "Dark foggy 19th-century gothic atmosphere, heavy shadows, muted desaturated colors.",
+      "custom_image_prompt_mode": "append",
+      "overrides": {
+        "caption.min": 600,
+        "caption.target": 850,
+        "caption.max": 1100,
+        "caption.endingStyle": "cliffhanger",
+        "image.aspectRatio": "4:5",
+        "image.headlinePanel.enabled": false
+      },
+      "created_at": "2026-10-31T14:19:03.280Z",
+      "updated_at": "2026-11-02T14:19:03.280Z"
+    },
+    {
+      "id": "page_1793629161497_l0zcn",
+      "name": "Ancient Earth History",
+      "fb_page_id": "555000111222",
+      "fb_page_token": "/xlqOWYGugcqGlFm:PJQ86Gj6rvzrr8pn4HYmJQ==:I2Hoaov+254RFfR5QSnVT/8SXaThTJrxwC5B+/nKDS4=",
+      "token_status": "valid",
+      "profile_id": "historical_photos",
+      "publishing_mode": "auto",
+      "hybrid_min_score": 80,
+      "daily_cap": 3,
+      "active": true,
+      "schedule": {
+        "postsPerDay": 3,
+        "postingTimes": [
+          "10:00",
+          "15:00",
+          "20:00"
+        ],
+        "timezone": "UTC"
+      },
+      "custom_caption_prompt": "",
+      "custom_caption_prompt_mode": "append",
+      "custom_image_prompt": "",
+      "custom_image_prompt_mode": "append",
+      "overrides": {},
+      "created_at": "2026-11-02T14:19:21.497Z",
+      "updated_at": "2026-11-02T14:19:21.497Z"
+    }
+  ],
+  "posts": [
+    {
+      "id": "post_rev_001",
+      "page_id": "page_science_01",
+      "status": "pending_review",
+      "review_state": "pending",
+      "title": "James Webb Detects Ocean Atmosphere on K2-18b",
+      "headline": "NEW MOLECULAR EVIDENCE OF WATER VAPOR ON TEMPERATE EXOPLANET",
+      "caption": "Astronomers analyzing spectroscopic transmission data from the James Webb Space Telescope have identified atmospheric methane and carbon dioxide in the habitable-zone sub-Neptune K2-18b.\n\nThis discovery marks one of the most promising candidates for a hycean world—an ocean-covered planet beneath a hydrogen-rich atmosphere.\n\nWhat kind of life forms do you think could thrive in deep alien oceans?\n\n#space #astronomy #science #jwst #exoplanet",
+      "caption_word_count": 67,
+      "hashtags": [
+        "#space",
+        "#astronomy",
+        "#science",
+        "#jwst",
+        "#exoplanet"
+      ],
+      "scheduled_for": "2026-11-03T14:19:03.280Z",
+      "created_at": "2026-11-02T10:19:03.280Z",
+      "qa_score": 94,
+      "sensitive_flags": [],
+      "image_phash": "0123456789abcdef",
+      "content_hash": "9f837261a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8"
+    },
+    {
+      "id": "post_rev_002",
+      "page_id": "page_horror_02",
+      "status": "pending_review",
+      "review_state": "pending",
+      "title": "The Tallow Candle of Blackwood Chapel",
+      "headline": "THE WICK THAT REFUSED TO BE EXTINGUISHED",
+      "caption": "For two centuries, the solitary tallow candle upon the altar of Blackwood Chapel burned with an unearthly violet flame. The caretakers were warned never to snuff it out, for it was not lit to bring light, but to keep the darkness trapped within the crypt below.\n\nTonight, a sudden winter gale forced the iron latch open.\n\n#horror #creepypasta #gothic #ghoststory #mystery",
+      "caption_word_count": 67,
+      "hashtags": [
+        "#horror",
+        "#creepypasta",
+        "#gothic",
+        "#ghoststory",
+        "#mystery"
+      ],
+      "scheduled_for": "2026-11-04T14:19:03.280Z",
+      "created_at": "2026-11-02T06:19:03.280Z",
+      "qa_score": 91,
+      "sensitive_flags": [],
+      "image_phash": "fedcba9876543210",
+      "content_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b"
+    },
+    {
+      "id": "post_sched_003",
+      "page_id": "page_science_01",
+      "status": "scheduled_on_fb",
+      "review_state": "approved",
+      "title": "Deep Space Molecular Clouds in Carina",
+      "headline": "MASSIVE STELLAR NURSERY IMAGED IN INFRARED",
+      "caption": "Deep inside the Carina Nebula, massive infant stars are sculpting cosmic cliffs of gas and dust.\n\n#space #astronomy #science #jwst #stars",
+      "caption_word_count": 22,
+      "hashtags": [
+        "#space",
+        "#astronomy",
+        "#science",
+        "#jwst",
+        "#stars"
+      ],
+      "scheduled_for": "2026-11-02T20:19:03.280Z",
+      "created_at": "2026-11-02T02:19:03.280Z",
+      "qa_score": 96,
+      "fb_post_id": "109283746501_post_99901",
+      "fb_permalink": "https://facebook.com/CosmicHorizons/posts/99901"
+    },
+    {
+      "id": "post_pub_004",
+      "page_id": "page_science_01",
+      "status": "published",
+      "review_state": "approved",
+      "title": "Supermassive Black Hole Jet Ejection",
+      "caption": "Relativistic jets shooting outward at 99% light speed have been tracked by ground-based radio telescope arrays.\n\n#space #astronomy #science #blackhole",
+      "caption_word_count": 20,
+      "hashtags": [
+        "#space",
+        "#astronomy",
+        "#science",
+        "#blackhole"
+      ],
+      "scheduled_for": "2026-11-01T14:19:03.280Z",
+      "created_at": "2026-11-01T08:19:03.280Z",
+      "published_at": "2026-11-01T14:19:03.280Z",
+      "qa_score": 98,
+      "fb_post_id": "109283746501_post_88801",
+      "fb_permalink": "https://facebook.com/CosmicHorizons/posts/88801"
+    }
+  ],
+  "killSwitchActive": false,
+  "workerHeartbeat": "2026-11-02T14:19:03.280Z"
+}
