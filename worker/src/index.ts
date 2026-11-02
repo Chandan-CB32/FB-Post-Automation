@@ -13,6 +13,7 @@ export * from './research/rss-fetcher.js';
 export * from './research/collector.js';
 export * from './stages/02-research-idea.js';
 export * from './stages/02-idea-generator.js';
+export * from './stages/03-topic-select.js';
 
 export function getWorkerStatus() {
   return {

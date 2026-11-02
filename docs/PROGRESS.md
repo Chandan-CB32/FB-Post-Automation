@@ -324,5 +324,35 @@
     - Topic CSV parsing parses double-quoted fields natively without third-party CSV libraries to maintain minimal dependency footprint and total security.
   - **Known limitations:**
     - Topic selection scoring and 90-day history deduplication window are implemented in Step 6.3.
-- [ ] **Step 6.3: Topic Selector, Category Weights & Dedup**
+- [x] **Step 6.3: Topic Selector, Category Weights & Dedup**
+  - **What was built:**
+    - Deduplication engine in `packages/core/src/topics/dedup.ts`:
+      - `normalizeTopic`: Strips noise stop words, punctuation, and accents for clean comparison.
+      - `computeTopicSimilarity`: Hybrid token Jaccard and character-bigram Dice coefficient (0.0 to 1.0) detecting near-duplicates across topic rewordings.
+      - `isTopicDuplicate`: Enforces the PRD 90-day / 200-post deduplication window, rejecting candidate topics with similarity >= 0.65 against history.
+      - `generateTopicKey`: Generates 32-character SHA-256 hash keys for indexed fast lookups in `topic_history`.
+      - `recordTopicHistory`: Helper storing published topics into Supabase `topic_history`.
+    - Category weighting & mix selector in `packages/core/src/topics/category-selector.ts`:
+      - `selectTargetCategory`: Roulette-wheel weighted category selection honoring configured weights and enforcing the "prevent consecutive repeated category" rule.
+    - Stage 03 Topic Selector in `worker/src/stages/03-topic-select.ts`:
+      - Gathers candidate pool from enabled sources (`owner_queue`, `research`, `auto_topics`, `series`).
+      - Filters candidate pool against 90-day post history, banned topics, and negative keyword exclusion lists.
+      - Executes multi-candidate LLM scoring judging curiosity gap, emotional hook, profile fit, and visual image potential.
+      - Generates clean emergency fallback candidates if all inputs were filtered out.
+  - **Tests run & results:**
+    - `pnpm test`: 147/147 tests passed across 22 test suites.
+    - Added 7 unit tests in `tests/topic-selector.test.ts` covering normalization, similarity scoring, 90-day window dedup rejection, consecutive category avoidance, multi-candidate LLM selection, and fallback generation.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Combined word token Jaccard and character bigram Dice coefficient to accurately flag semantic duplicates regardless of phrasing changes.
+  - **Known limitations:**
+    - Long-form chunked writing and programmatic caption validators are built in Milestone 7.
+
+---
+
+### Milestone 7: Write Pipeline, Long-Form Chunking & QA Validation
+- [ ] **Step 7.1: Fact Extraction Pipeline (Factual / True-Story)**
+- [ ] **Step 7.2: Long-Form Writer & Chunker (Outline → Sections → Stitch → Polish)**
+- [ ] **Step 7.3: Programmatic Caption Validators (Lengths, Sentences, Hooks, Emojis, Disclaimers)**
+- [ ] **Step 7.4: QA Scoring & Content Safety Classifier (Secondary Model Audit)**
 

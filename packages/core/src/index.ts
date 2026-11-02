@@ -20,8 +20,10 @@ export * from './prompt-engine/interpolator.js';
 export * from './profiles/importer.js';
 export * from './profiles/seed-profiles.js';
 
-// Topic Queue Manager
+// Topic Queue Manager & Dedup
 export * from './topics/queue-manager.js';
+export * from './topics/dedup.js';
+export * from './topics/category-selector.js';
 
 // Settings Resolver
 export * from './settings-resolver/resolver.js';
