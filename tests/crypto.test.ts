@@ -110,3 +110,4 @@ describe('AES-256-GCM Encryption Module', () => {
     expect(maskSecret('')).toBe('');
   });
 });
+

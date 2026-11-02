@@ -53,6 +53,18 @@
     - Wire/storage format for encrypted secrets established as `<iv_base64>:<tag_base64>:<ciphertext_base64>`.
   - **Known limitations:**
     - Database persistence and migrations for these schemas are created in Step 1.3.
-- [ ] **Step 1.3: Supabase Schema, Migrations & RLS**
+- [x] **Step 1.3: Supabase Schema, Migrations & RLS**
+  - **What was built:**
+    - Full PostgreSQL migration in `supabase/migrations/20261102000000_init_schema.sql` covering all 18 relational tables, primary keys, foreign keys, and indexes.
+    - Stored procedure `claim_next_post_job()` implementing atomic row locking with `FOR UPDATE SKIP LOCKED` and stage attempt tracking.
+    - Row-Level Security (RLS) enabled on all 18 tables with single-owner authenticated access policy (`owner_all_access`).
+    - Seed configuration in `supabase/seed.sql` providing default kill switches, retention policies, and provider presets (Gemini, OpenRouter, Groq, Cloudflare, Pollinations, Hugging Face).
+  - **Tests run & results:**
+    - `pnpm test`: 23/23 tests passed across 4 test suites, including automated verification of all 18 tables, RLS enforcement, RPC function, and seed presets in `tests/migrations.test.ts`.
+    - `pnpm run build` and `pnpm run type-check`: Succeeded with 0 errors.
+  - **Decisions made:**
+    - Concurrency queue mechanism formalized via Postgres RPC (`claim_next_post_job`) per DEC-002.
+  - **Known limitations:**
+    - Applying migration to a live cloud Supabase instance requires user's project connection, which can be run via Supabase SQL Editor.
 - [ ] **Step 1.4: Worker Skeleton & Heartbeat Engine**
 

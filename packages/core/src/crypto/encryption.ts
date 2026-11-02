@@ -118,3 +118,4 @@ export function maskSecret(secret: string, visiblePrefix = 3, visibleSuffix = 4)
   const end = trimmed.slice(-visibleSuffix);
   return `${start}...${end}`;
 }
+
