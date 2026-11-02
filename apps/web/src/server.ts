@@ -222,11 +222,11 @@ export function createDashboardServer(): http.Server {
       const accounts = store.getAccounts();
 
       const published = posts.filter((p) => p.status === 'published' && p.analytics);
-      const totalImpressions = published.reduce((acc, p) => acc + (p.analytics?.impressions || 0), 149800);
-      const totalReach = published.reduce((acc, p) => acc + (p.analytics?.reach || 0), 107700);
-      const totalLikes = published.reduce((acc, p) => acc + (p.analytics?.likes || 0), 8930);
-      const totalComments = published.reduce((acc, p) => acc + (p.analytics?.comments || 0), 1052);
-      const totalShares = published.reduce((acc, p) => acc + (p.analytics?.shares || 0), 649);
+      const totalImpressions = published.reduce((acc, p) => acc + (p.analytics?.impressions || 0), 0);
+      const totalReach = published.reduce((acc, p) => acc + (p.analytics?.reach || 0), 0);
+      const totalLikes = published.reduce((acc, p) => acc + (p.analytics?.likes || 0), 0);
+      const totalComments = published.reduce((acc, p) => acc + (p.analytics?.comments || 0), 0);
+      const totalShares = published.reduce((acc, p) => acc + (p.analytics?.shares || 0), 0);
 
       const topPosts = published
         .map((p) => {
@@ -255,7 +255,15 @@ export function createDashboardServer(): http.Server {
           totalLikes,
           totalComments,
           totalShares,
-          avgEngagementRate: 8.8,
+          avgEngagementRate:
+            published.length > 0
+              ? Number(
+                  (
+                    published.reduce((acc, p) => acc + (p.analytics?.engagement_rate || 0), 0) /
+                    published.length
+                  ).toFixed(1)
+                )
+              : 0,
         },
         topPosts,
       });
@@ -495,6 +503,9 @@ export function createDashboardServer(): http.Server {
           const parsed = JSON.parse(body || '{}');
           const pageId = parsed.pageId;
           const page = pageId ? store.getPageById(pageId) : store.getPages()[0];
+          if (!page) {
+            return sendJson({ error: 'No Facebook Page found. Please connect a page first in the Pages tab.' }, 400);
+          }
           const profile =
             seedProfiles.find(
               (p) =>
@@ -790,6 +801,17 @@ function generateDashboardHtml(): string {
   const auditLogs = store.getAuditLogs();
   const killSwitch = store.getKillSwitch();
   const reviewPosts = posts.filter((p) => p.status === 'pending_review' || p.review_state === 'pending');
+  const publishedPosts = posts.filter((p) => p.status === 'published' && p.analytics);
+  const totalImpressions = publishedPosts.reduce((acc, p) => acc + (p.analytics?.impressions || 0), 0);
+  const totalReach = publishedPosts.reduce((acc, p) => acc + (p.analytics?.reach || 0), 0);
+  const totalLikes = publishedPosts.reduce((acc, p) => acc + (p.analytics?.likes || 0), 0);
+  const totalComments = publishedPosts.reduce((acc, p) => acc + (p.analytics?.comments || 0), 0);
+  const totalShares = publishedPosts.reduce((acc, p) => acc + (p.analytics?.shares || 0), 0);
+  const avgEngagement =
+    publishedPosts.length > 0
+      ? (publishedPosts.reduce((acc, p) => acc + (p.analytics?.engagement_rate || 0), 0) / publishedPosts.length).toFixed(1)
+      : '0.0';
+  const reachDisplay = totalReach >= 1000 ? `${(totalReach / 1000).toFixed(1)}K` : `${totalReach}`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1035,8 +1057,8 @@ function generateDashboardHtml(): string {
         </div>
         <div class="card">
           <div class="card-title">30-Day Organic Reach</div>
-          <div class="card-val" style="color: #34d399;">214.8K</div>
-          <div class="card-meta">+34% vs last period across all pages</div>
+          <div class="card-val" style="color: #34d399;">${reachDisplay}</div>
+          <div class="card-meta">Live aggregated Facebook reach</div>
         </div>
         <div class="card">
           <div class="card-title">Awaiting Owner Review</div>
@@ -1052,36 +1074,23 @@ function generateDashboardHtml(): string {
 
       <div class="card" style="margin-bottom: 24px;">
         <h3 style="margin-bottom: 14px; font-size: 16px;">Provider Daily Demand & Quotas</h3>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-          <div>
-            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-              <span>Google Gemini 2.5 Flash</span>
-              <strong>520 / 1,500 reqs (35%)</strong>
-            </div>
-            <div style="height: 8px; background: #374151; border-radius: 4px; overflow: hidden; margin-top: 6px;"><div style="height: 100%; width: 35%; background: var(--primary);"></div></div>
-          </div>
-          <div>
-            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-              <span>Cloudflare Workers AI (FLUX)</span>
-              <strong>3,600 / 10,000 neurons (36%)</strong>
-            </div>
-            <div style="height: 8px; background: #374151; border-radius: 4px; overflow: hidden; margin-top: 6px;"><div style="height: 100%; width: 36%; background: var(--success);"></div></div>
-          </div>
-          <div>
-            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-              <span>OpenAI GPT-4o</span>
-              <strong>110 / 500 reqs (22%)</strong>
-            </div>
-            <div style="height: 8px; background: #374151; border-radius: 4px; overflow: hidden; margin-top: 6px;"><div style="height: 100%; width: 22%; background: var(--accent);"></div></div>
-          </div>
-          <div>
-            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-              <span>Pollinations Image API</span>
-              <strong>45 / 300 images (15%)</strong>
-            </div>
-            <div style="height: 8px; background: #374151; border-radius: 4px; overflow: hidden; margin-top: 6px;"><div style="height: 100%; width: 15%; background: #ec4899;"></div></div>
-          </div>
-        </div>
+        ${providers.length > 0
+          ? `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+              ${providers.map((p) => {
+                const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+                return `<div>
+                  <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                    <span>${p.name}</span>
+                    <strong>${p.used_today || 0} / ${p.daily_limit.toLocaleString()} reqs (${pct}%)</strong>
+                  </div>
+                  <div style="height: 8px; background: #374151; border-radius: 4px; overflow: hidden; margin-top: 6px;">
+                    <div style="height: 100%; width: ${pct}%; background: ${pct > 85 ? '#ef4444' : '#3b82f6'};"></div>
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>`
+          : `<div style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 13px;">No AI providers configured yet. Add providers in the <strong>Providers & Keys</strong> tab to track live quota usage.</div>`
+        }
       </div>
     </div>
 
@@ -1110,45 +1119,52 @@ function generateDashboardHtml(): string {
             </tr>
           </thead>
           <tbody id="accountsTableBody">
-            ${accounts
-              .map((acc) => {
-                const ownedPages = pages.filter((p) => p.fb_account_id === acc.id);
-                return `
-              <tr id="account-row-${acc.id}">
-                <td>
-                  <strong>${acc.account_name}</strong><br>
-                  <small style="color: var(--text-muted);">${acc.email || 'No email specified'} • ${acc.notes || 'Creator profile'}</small>
-                </td>
-                <td><code style="font-size: 13px;">${acc.fb_user_id}</code></td>
-                <td>
-                  <span style="color: #34d399; font-weight: 600;">● ${acc.token_status.toUpperCase()}</span><br>
-                  <span class="badge" style="background: #1e293b; color: #93c5fd; font-family: monospace; font-size: 11px;">${acc.masked_token || 'EAAB...vault'}</span>
-                </td>
-                <td>
-                  <span style="font-size: 12px; color: #d1d5db;">${acc.token_expires_at ? new Date(acc.token_expires_at).toLocaleDateString() : 'Long-Lived'}</span>
-                </td>
-                <td>
-                  <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-                    ${
-                      ownedPages.length > 0
-                        ? ownedPages
-                            .map(
-                              (p) => `<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-size: 11px;">${p.name}</span>`
-                            )
-                            .join('')
-                        : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No pages linked yet</span>'
-                    }
-                  </div>
-                </td>
-                <td style="text-align: right; white-space: nowrap;">
-                  <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="addPageForAccount('${acc.id}')">➕ Add Page</button>
-                  <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openEditAccountModal('${acc.id}')">✏️ Edit</button>
-                  <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="deleteAccountAction('${acc.id}')">🗑️</button>
-                </td>
-              </tr>
-            `;
-              })
-              .join('')}
+            ${accounts.length > 0
+              ? accounts
+                  .map((acc) => {
+                    const ownedPages = pages.filter((p) => p.fb_account_id === acc.id);
+                    return `
+                  <tr id="account-row-${acc.id}">
+                    <td>
+                      <strong>${acc.account_name}</strong><br>
+                      <small style="color: var(--text-muted);">${acc.email || 'No email specified'} • ${acc.notes || 'Creator profile'}</small>
+                    </td>
+                    <td><code style="font-size: 13px;">${acc.fb_user_id}</code></td>
+                    <td>
+                      <span style="color: #34d399; font-weight: 600;">● ${acc.token_status.toUpperCase()}</span><br>
+                      <span class="badge" style="background: #1e293b; color: #93c5fd; font-family: monospace; font-size: 11px;">${acc.masked_token || 'EAAB...vault'}</span>
+                    </td>
+                    <td>
+                      <span style="font-size: 12px; color: #d1d5db;">${acc.token_expires_at ? new Date(acc.token_expires_at).toLocaleDateString() : 'Long-Lived'}</span>
+                    </td>
+                    <td>
+                      <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                        ${
+                          ownedPages.length > 0
+                            ? ownedPages
+                                .map(
+                                  (p) => `<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-size: 11px;">${p.name}</span>`
+                                )
+                                .join('')
+                            : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No pages linked yet</span>'
+                        }
+                      </div>
+                    </td>
+                    <td style="text-align: right; white-space: nowrap;">
+                      <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="addPageForAccount('${acc.id}')">➕ Add Page</button>
+                      <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openEditAccountModal('${acc.id}')">✏️ Edit</button>
+                      <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="deleteAccountAction('${acc.id}')">🗑️</button>
+                    </td>
+                  </tr>
+                `;
+                  })
+                  .join('')
+              : `<tr><td colspan="6" style="text-align: center; padding: 36px; color: var(--text-muted);">
+                  <div style="font-size: 28px; margin-bottom: 8px;">👤</div>
+                  <div style="font-size: 14px; font-weight: 600; color: #d1d5db; margin-bottom: 4px;">No Facebook Identities Connected</div>
+                  <div style="font-size: 12px;">Click <strong>➕ Connect Facebook Account</strong> above to add your first Facebook User ID or Business Manager.</div>
+                </td></tr>`
+            }
           </tbody>
         </table>
       </div>
@@ -1189,42 +1205,45 @@ function generateDashboardHtml(): string {
             </tr>
           </thead>
           <tbody id="pagesTableBody">
-            ${pages
-              .map((p) => {
-                const ownerAcc = accounts.find((a) => a.id === p.fb_account_id);
-                return `
-              <tr id="page-row-${p.id}" class="page-row" data-account="${p.fb_account_id || ''}">
-                <td>
-                  <strong>${p.name}</strong><br>
-                  <small style="color: #60a5fa;">Profile: ${p.profile_id}</small>
-                </td>
-                <td>
-                  <span class="badge" style="background: #1e293b; color: #93c5fd; font-size: 11px;">
-                    👤 ${ownerAcc ? ownerAcc.account_name : 'Direct Page Token'}
-                  </span><br>
-                  <small style="color: var(--text-muted); font-family: monospace;">ID: ${ownerAcc ? ownerAcc.fb_user_id : p.fb_page_id}</small>
-                </td>
-                <td><code>${p.fb_page_id}</code></td>
-                <td>
-                  <span style="background: #1e3a8a; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; text-transform: uppercase;">
-                    ${p.publishing_mode} (Min ${p.hybrid_min_score})
-                  </span>
-                </td>
-                <td>${p.schedule.postsPerDay} posts/day (${p.schedule.postingTimes.join(', ')})</td>
-                <td style="text-align: right;">
-                  <div style="display: flex; justify-content: flex-end; gap: 8px;">
-                    <button class="btn btn-secondary" onclick="openPagePromptStudio('${p.id}')">✍️ Custom Prompts</button>
-                    <button class="btn btn-danger" onclick="deletePageAction('${p.id}')">🗑️</button>
-                  </div>
-                </td>
-              </tr>
-            `;
-              })
-              .join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
+            ${pages.length > 0
+              ? pages
+                  .map((p) => {
+                    const ownerAcc = accounts.find((a) => a.id === p.fb_account_id);
+                    return `
+                  <tr id="page-row-${p.id}" class="page-row" data-account="${p.fb_account_id || ''}">
+                    <td>
+                      <strong>${p.name}</strong><br>
+                      <small style="color: #60a5fa;">Profile: ${p.profile_id}</small>
+                    </td>
+                    <td>
+                      <span class="badge" style="background: #1e293b; color: #93c5fd; font-size: 11px;">
+                        👤 ${ownerAcc ? ownerAcc.account_name : 'Direct Page Token'}
+                      </span><br>
+                      <small style="color: var(--text-muted); font-family: monospace;">ID: ${ownerAcc ? ownerAcc.fb_user_id : p.fb_page_id}</small>
+                    </td>
+                    <td><code>${p.fb_page_id}</code></td>
+                    <td>
+                      <span style="background: #1e3a8a; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; text-transform: uppercase;">
+                        ${p.publishing_mode} (Min ${p.hybrid_min_score})
+                      </span>
+                    </td>
+                    <td>${p.schedule.postsPerDay} posts/day (${p.schedule.postingTimes.join(', ')})</td>
+                    <td style="text-align: right;">
+                      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                        <button class="btn btn-secondary" onclick="openPagePromptStudio('${p.id}')">✍️ Custom Prompts</button>
+                        <button class="btn btn-danger" onclick="deletePageAction('${p.id}')">🗑️</button>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+                  })
+                  .join('')
+              : `<tr><td colspan="6" style="text-align: center; padding: 36px; color: var(--text-muted);">
+                  <div style="font-size: 28px; margin-bottom: 8px;">📄</div>
+                  <div style="font-size: 14px; font-weight: 600; color: #d1d5db; margin-bottom: 4px;">No Facebook Pages Added</div>
+                  <div style="font-size: 12px;">Click <strong>➕ Connect / Add New Page</strong> above to add your first Facebook Page.</div>
+                </td></tr>`
+            }
           </tbody>
         </table>
       </div>
@@ -1232,6 +1251,7 @@ function generateDashboardHtml(): string {
 
     <!-- TAB 3: PAGE PROMPT STUDIO -->
     <div id="tab-page-prompts" class="tab-content">
+      ${pages.length > 0 ? `
       <div class="card" style="margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; border-bottom: 1px solid var(--card-border); padding-bottom: 16px;">
           <div>
@@ -1357,7 +1377,12 @@ function generateDashboardHtml(): string {
           <h4 style="color: #60a5fa; margin-bottom: 8px;">Effective Resolved Prompt for this Page:</h4>
           <pre id="effectiveInspectCode" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #e5e7eb; white-space: pre-wrap; line-height: 1.5;"></pre>
         </div>
-      </div>
+      </div>` : `
+      <div class="card" style="text-align: center; padding: 48px 24px; color: var(--text-muted);">
+        <div style="font-size: 32px; margin-bottom: 12px;">✍️</div>
+        <h4 style="font-size: 16px; font-weight: 600; color: #d1d5db; margin-bottom: 6px;">No Facebook Pages Available</h4>
+        <p style="font-size: 13px; max-width: 500px; margin: 0 auto;">Connect a Facebook Page in the <strong>Pages & Accounts</strong> tab to begin customizing isolated prompts, voice, word counts, and headline panels.</p>
+      </div>`}
     </div>
 
     <!-- TAB 4: REVIEW INBOX -->
@@ -1371,43 +1396,50 @@ function generateDashboardHtml(): string {
       </div>
 
       <div id="reviewCardsList">
-        ${reviewPosts
-          .map(
-            (p) => `
-          <div class="card" id="card-${p.id}" style="margin-bottom: 18px;">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
-              <div>
-                <h4 style="font-size: 17px; font-weight: 700; color: #60a5fa;">${p.title}</h4>
-                <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
-                  Target Page: <strong>${p.page_id}</strong> • Scheduled for: ${new Date(p.scheduled_for).toLocaleString()} • Word count: ${p.caption_word_count}
+        ${reviewPosts.length > 0
+          ? reviewPosts
+              .map(
+                (p) => `
+              <div class="card" id="card-${p.id}" style="margin-bottom: 18px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                  <div>
+                    <h4 style="font-size: 17px; font-weight: 700; color: #60a5fa;">${p.title}</h4>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+                      Target Page: <strong>${p.page_id}</strong> • Scheduled for: ${new Date(p.scheduled_for).toLocaleString()} • Word count: ${p.caption_word_count}
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <span style="background: #064e3b; color: #34d399; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 12px;">QA: ${p.qa_score}/100</span>
+                    <span style="background: #1e3a8a; color: #93c5fd; padding: 4px 10px; border-radius: 6px; font-weight: 600; font-size: 12px;">Safety Approved</span>
+                  </div>
+                </div>
+
+                <div style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 14px; margin-bottom: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap;">${p.caption}</div>
+
+                ${
+                  p.first_comment
+                    ? `
+                <div style="background: #062016; border: 1px solid #065f46; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: #a7f3d0;">
+                  <strong>💬 First Comment Auto-Booster:</strong> ${p.first_comment}
+                </div>`
+                    : ''
+                }
+
+                <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                  <button class="btn btn-secondary" onclick="editCaptionPrompt('${p.id}')">✏️ Edit Caption</button>
+                  <button class="btn btn-danger" onclick="rejectPostAction('${p.id}')">✕ Reject</button>
+                  <button class="btn btn-success" onclick="approvePostAction('${p.id}')">✓ Approve & Schedule</button>
                 </div>
               </div>
-              <div style="display: flex; gap: 8px;">
-                <span style="background: #064e3b; color: #34d399; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 12px;">QA: ${p.qa_score}/100</span>
-                <span style="background: #1e3a8a; color: #93c5fd; padding: 4px 10px; border-radius: 6px; font-weight: 600; font-size: 12px;">Safety Approved</span>
-              </div>
-            </div>
-
-            <div style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 14px; margin-bottom: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap;">${p.caption}</div>
-
-            ${
-              p.first_comment
-                ? `
-            <div style="background: #062016; border: 1px solid #065f46; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: #a7f3d0;">
-              <strong>💬 First Comment Auto-Booster:</strong> ${p.first_comment}
+            `
+              )
+              .join('')
+          : `<div style="text-align: center; padding: 48px 24px; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; color: var(--text-muted);">
+              <div style="font-size: 32px; margin-bottom: 12px;">📬</div>
+              <h4 style="font-size: 16px; font-weight: 600; color: #d1d5db; margin-bottom: 6px;">Review Inbox is Empty</h4>
+              <p style="font-size: 13px;">No posts are currently awaiting review. Generated posts requiring owner verification will appear here.</p>
             </div>`
-                : ''
-            }
-
-            <div style="display: flex; justify-content: flex-end; gap: 10px;">
-              <button class="btn btn-secondary" onclick="editCaptionPrompt('${p.id}')">✏️ Edit Caption</button>
-              <button class="btn btn-danger" onclick="rejectPostAction('${p.id}')">✕ Reject</button>
-              <button class="btn btn-success" onclick="approvePostAction('${p.id}')">✓ Approve & Schedule</button>
-            </div>
-          </div>
-        `
-          )
-          .join('')}
+        }
       </div>
     </div>
 
@@ -1479,23 +1511,23 @@ function generateDashboardHtml(): string {
       <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-bottom: 24px;">
         <div class="card">
           <div class="card-title">30-Day Organic Impressions</div>
-          <div class="card-val" style="color: #60a5fa;">489.2K</div>
-          <div class="card-meta">+48% growth across 5 connected pages</div>
+          <div class="card-val" style="color: #60a5fa;">${totalImpressions >= 1000 ? (totalImpressions / 1000).toFixed(1) + 'K' : totalImpressions}</div>
+          <div class="card-meta">${publishedPosts.length} published post${publishedPosts.length === 1 ? '' : 's'} tracked</div>
         </div>
         <div class="card">
           <div class="card-title">Unique Audience Reach</div>
-          <div class="card-val" style="color: #34d399;">214.8K</div>
-          <div class="card-meta">Viral shares & explore discovery</div>
+          <div class="card-val" style="color: #34d399;">${totalReach >= 1000 ? (totalReach / 1000).toFixed(1) + 'K' : totalReach}</div>
+          <div class="card-meta">Live verified Facebook reach</div>
         </div>
         <div class="card">
           <div class="card-title">Average Engagement Rate</div>
-          <div class="card-val" style="color: #a78bfa;">6.2%</div>
-          <div class="card-meta">3.4x industry benchmark (1.8%)</div>
+          <div class="card-val" style="color: #a78bfa;">${avgEngagement}%</div>
+          <div class="card-meta">Based on Facebook Graph API metrics</div>
         </div>
         <div class="card">
           <div class="card-title">Reactions & Comments</div>
-          <div class="card-val" style="color: #f59e0b;">18,450</div>
-          <div class="card-meta">Driven by First Comment booster</div>
+          <div class="card-val" style="color: #f59e0b;">${(totalLikes + totalComments).toLocaleString()}</div>
+          <div class="card-meta">${totalShares.toLocaleString()} shares recorded</div>
         </div>
       </div>
 
@@ -1514,32 +1546,34 @@ function generateDashboardHtml(): string {
             </tr>
           </thead>
           <tbody>
-            ${posts
-              .filter((p) => p.status === 'published' && p.analytics)
-              .sort((a, b) => (b.analytics?.reach || 0) - (a.analytics?.reach || 0))
-              .map((p, idx) => {
-                const pg = pages.find((page) => page.id === p.page_id);
-                return `
-              <tr>
-                <td>
-                  <div style="display: flex; align-items: center; gap: 10px;">
-                    <span style="font-weight: 800; color: ${idx === 0 ? '#fbbf24' : idx === 1 ? '#d1d5db' : '#b45309'}; font-size: 16px;">#${idx + 1}</span>
-                    <div>
-                      <strong>${p.title}</strong><br>
-                      <small style="color: var(--text-muted);">${p.headline || 'Organic Post'}</small>
-                    </div>
-                  </div>
-                </td>
-                <td><span class="badge" style="background: #1e3a8a; color: #60a5fa;">${pg?.name || 'Page'}</span></td>
-                <td><strong style="color: #34d399;">${(p.analytics?.reach || 0).toLocaleString()}</strong></td>
-                <td>${(p.analytics?.likes || 0).toLocaleString()}</td>
-                <td>${(p.analytics?.comments || 0).toLocaleString()}</td>
-                <td>${(p.analytics?.shares || 0).toLocaleString()}</td>
-                <td><span style="background: #064e3b; color: #34d399; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px;">${p.analytics?.engagement_rate}%</span></td>
-              </tr>
-            `;
-              })
-              .join('')}
+            ${publishedPosts.length > 0
+              ? publishedPosts
+                  .sort((a, b) => (b.analytics?.reach || 0) - (a.analytics?.reach || 0))
+                  .map((p, idx) => {
+                    const pg = pages.find((page) => page.id === p.page_id);
+                    return `
+                  <tr>
+                    <td>
+                      <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-weight: 800; color: ${idx === 0 ? '#fbbf24' : idx === 1 ? '#d1d5db' : '#b45309'}; font-size: 16px;">#${idx + 1}</span>
+                        <div>
+                          <strong>${p.title}</strong><br>
+                          <small style="color: var(--text-muted);">${p.headline || 'Organic Post'}</small>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="badge" style="background: #1e3a8a; color: #60a5fa;">${pg?.name || 'Page'}</span></td>
+                    <td><strong style="color: #34d399;">${(p.analytics?.reach || 0).toLocaleString()}</strong></td>
+                    <td>${(p.analytics?.likes || 0).toLocaleString()}</td>
+                    <td>${(p.analytics?.comments || 0).toLocaleString()}</td>
+                    <td>${(p.analytics?.shares || 0).toLocaleString()}</td>
+                    <td><span style="background: #064e3b; color: #34d399; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px;">${p.analytics?.engagement_rate}%</span></td>
+                  </tr>
+                `;
+                  })
+                  .join('')
+              : `<tr><td colspan="7" style="text-align: center; padding: 36px; color: var(--text-muted);"><div style="font-size: 24px; margin-bottom: 6px;">📊</div>No published posts or analytics recorded yet. Posts published to Facebook will appear on this leaderboard with reach, reactions, and engagement metrics.</td></tr>`
+            }
           </tbody>
         </table>
       </div>
@@ -1555,9 +1589,12 @@ function generateDashboardHtml(): string {
 
         <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 20px;">
           <select id="simPageSelect" class="form-control" style="width: 320px;">
-            ${pages.map((p) => `<option value="${p.id}">Page: ${p.name}</option>`).join('')}
+            ${pages.length > 0
+              ? pages.map((p) => `<option value="${p.id}">Page: ${p.name}</option>`).join('')
+              : '<option value="">(No pages added yet - add a page in Pages tab)</option>'
+            }
           </select>
-          <button class="btn btn-primary" onclick="runSimulationForSelectedPage()">🚀 Run Test Run For Page</button>
+          <button class="btn btn-primary" onclick="runSimulationForSelectedPage()" ${pages.length === 0 ? 'disabled' : ''}>🚀 Run Test Run For Page</button>
         </div>
 
         <div id="simResult" style="display: none; background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 18px;">
@@ -1590,71 +1627,78 @@ function generateDashboardHtml(): string {
             </tr>
           </thead>
           <tbody id="providersTableBody">
-            ${providers
-              .map((p) => {
-                const keys = providerKeys.filter((k) => k.provider_id === p.id);
-                const activeKeys = keys.filter((k) => k.is_active);
-                const keyBadges =
-                  keys.length > 0
-                    ? keys
-                        .map(
-                          (k) =>
-                            `<span class="badge" style="background: ${
-                              k.is_active ? '#1e293b' : '#27272a'
-                            }; color: ${
-                              k.is_active ? '#93c5fd' : '#71717a'
-                            }; font-family: 'JetBrains Mono', monospace; font-size: 11px; margin: 2px; display: inline-block;">${
-                              k.masked_key
-                            }</span>`
-                        )
-                        .join('')
-                    : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
-                const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+            ${providers.length > 0
+              ? providers
+                  .map((p) => {
+                    const keys = providerKeys.filter((k) => k.provider_id === p.id);
+                    const activeKeys = keys.filter((k) => k.is_active);
+                    const keyBadges =
+                      keys.length > 0
+                        ? keys
+                            .map(
+                              (k) =>
+                                `<span class="badge" style="background: ${
+                                  k.is_active ? '#1e293b' : '#27272a'
+                                }; color: ${
+                                  k.is_active ? '#93c5fd' : '#71717a'
+                                }; font-family: 'JetBrains Mono', monospace; font-size: 11px; margin: 2px; display: inline-block;">${
+                                  k.masked_key
+                                }</span>`
+                            )
+                            .join('')
+                        : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
+                    const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
 
-                return `
-                <tr id="provider-row-${p.id}">
-                  <td>
-                    <strong>${p.name}</strong><br>
-                    <span style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">${
-                      p.model_name || 'default'
-                    }</span>
-                  </td>
-                  <td><code>${p.adapter_kind}</code></td>
-                  <td><span class="badge" style="background: #1e3a8a; color: #60a5fa;">Priority ${p.priority}</span></td>
-                  <td>
-                    <div style="font-weight: 600;">${p.used_today || 0} / ${p.daily_limit} reqs</div>
-                    <div style="width: 100px; height: 5px; background: #374151; border-radius: 3px; margin-top: 4px; overflow: hidden;">
-                      <div style="width: ${pct}%; height: 100%; background: ${pct > 85 ? '#ef4444' : '#3b82f6'};"></div>
-                    </div>
-                  </td>
-                  <td>
-                    <div style="margin-bottom: 4px; max-width: 280px;">${keyBadges}</div>
-                    <span style="font-size: 11px; color: ${activeKeys.length > 0 ? '#34d399' : '#f59e0b'};">
-                      ● ${activeKeys.length} active key${activeKeys.length === 1 ? '' : 's'}
-                    </span>
-                  </td>
-                  <td>
-                    ${
-                      p.enabled
-                        ? '<span style="color: #34d399; font-weight: 600;">● Active</span>'
-                        : '<span style="color: #ef4444; font-weight: 600;">● Disabled</span>'
-                    }
-                  </td>
-                  <td style="text-align: right; white-space: nowrap;">
-                    <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openManageKeysModal('${
-                      p.id
-                    }')">🔑 Keys (${keys.length})</button>
-                    <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openEditProviderModal('${
-                      p.id
-                    }')">✏️ Edit</button>
-                    <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="deleteProviderAction('${
-                      p.id
-                    }')">🗑️</button>
-                  </td>
-                </tr>
-              `;
-              })
-              .join('')}
+                    return `
+                    <tr id="provider-row-${p.id}">
+                      <td>
+                        <strong>${p.name}</strong><br>
+                        <span style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">${
+                          p.model_name || 'default'
+                        }</span>
+                      </td>
+                      <td><code>${p.adapter_kind}</code></td>
+                      <td><span class="badge" style="background: #1e3a8a; color: #60a5fa;">Priority ${p.priority}</span></td>
+                      <td>
+                        <div style="font-weight: 600;">${p.used_today || 0} / ${p.daily_limit} reqs</div>
+                        <div style="width: 100px; height: 5px; background: #374151; border-radius: 3px; margin-top: 4px; overflow: hidden;">
+                          <div style="width: ${pct}%; height: 100%; background: ${pct > 85 ? '#ef4444' : '#3b82f6'};"></div>
+                        </div>
+                      </td>
+                      <td>
+                        <div style="margin-bottom: 4px; max-width: 280px;">${keyBadges}</div>
+                        <span style="font-size: 11px; color: ${activeKeys.length > 0 ? '#34d399' : '#f59e0b'};">
+                          ● ${activeKeys.length} active key${activeKeys.length === 1 ? '' : 's'}
+                        </span>
+                      </td>
+                      <td>
+                        ${
+                          p.enabled
+                            ? '<span style="color: #34d399; font-weight: 600;">● Active</span>'
+                            : '<span style="color: #ef4444; font-weight: 600;">● Disabled</span>'
+                        }
+                      </td>
+                      <td style="text-align: right; white-space: nowrap;">
+                        <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openManageKeysModal('${
+                          p.id
+                        }')">🔑 Keys (${keys.length})</button>
+                        <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openEditProviderModal('${
+                          p.id
+                        }')">✏️ Edit</button>
+                        <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="deleteProviderAction('${
+                          p.id
+                        }')">🗑️</button>
+                      </td>
+                    </tr>
+                  `;
+                  })
+                  .join('')
+              : `<tr><td colspan="7" style="text-align: center; padding: 36px; color: var(--text-muted);">
+                  <div style="font-size: 28px; margin-bottom: 8px;">🤖</div>
+                  <div style="font-size: 14px; font-weight: 600; color: #d1d5db; margin-bottom: 4px;">No AI Providers Configured</div>
+                  <div style="font-size: 12px;">Click <strong>➕ Add Provider</strong> above to add Gemini, OpenAI, Cloudflare, or Pollinations with your API keys.</div>
+                </td></tr>`
+            }
           </tbody>
         </table>
       </div>
@@ -1677,25 +1721,32 @@ function generateDashboardHtml(): string {
         </div>
 
         <div id="auditLogsContainer" style="display: flex; flex-direction: column; gap: 10px;">
-          ${auditLogs
-            .map((log) => {
-              const badgeBg = log.level === 'success' ? '#064e3b' : log.level === 'warning' ? '#78350f' : log.level === 'error' ? '#7f1d1d' : '#1e3a8a';
-              const badgeText = log.level === 'success' ? '#34d399' : log.level === 'warning' ? '#f59e0b' : log.level === 'error' ? '#f87171' : '#60a5fa';
+          ${auditLogs.length > 0
+            ? auditLogs
+                .map((log) => {
+                  const badgeBg = log.level === 'success' ? '#064e3b' : log.level === 'warning' ? '#78350f' : log.level === 'error' ? '#7f1d1d' : '#1e3a8a';
+                  const badgeText = log.level === 'success' ? '#34d399' : log.level === 'warning' ? '#f59e0b' : log.level === 'error' ? '#f87171' : '#60a5fa';
 
-              return `
-              <div class="audit-log-item" data-cat="${log.category}" style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                  <span class="badge" style="background: ${badgeBg}; color: ${badgeText}; font-size: 11px; text-transform: uppercase;">${log.level}</span>
-                  <span class="badge" style="background: #1f2937; color: #d1d5db; font-size: 11px;">${log.category}</span>
-                  <span style="font-size: 13px; color: #f3f4f6;">${log.message}</span>
-                </div>
-                <div style="font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; white-space: nowrap;">
-                  ${new Date(log.timestamp).toLocaleTimeString()}
-                </div>
-              </div>
-            `;
-            })
-            .join('')}
+                  return `
+                  <div class="audit-log-item" data-cat="${log.category}" style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                      <span class="badge" style="background: ${badgeBg}; color: ${badgeText}; font-size: 11px; text-transform: uppercase;">${log.level}</span>
+                      <span class="badge" style="background: #1f2937; color: #d1d5db; font-size: 11px;">${log.category}</span>
+                      <span style="font-size: 13px; color: #f3f4f6;">${log.message}</span>
+                    </div>
+                    <div style="font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; white-space: nowrap;">
+                      ${new Date(log.timestamp).toLocaleTimeString()}
+                    </div>
+                  </div>
+                `;
+                })
+                .join('')
+            : `<div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                <div style="font-size: 32px; margin-bottom: 12px;">📜</div>
+                <h4 style="font-size: 16px; margin-bottom: 6px; color: #d1d5db;">No Audit Events Recorded</h4>
+                <p style="font-size: 13px;">Operational events, token checks, QA scores, and publishing actions will appear here in real time as actions occur.</p>
+              </div>`
+          }
         </div>
       </div>
     </div>
@@ -2325,11 +2376,14 @@ function generateDashboardHtml(): string {
     }
 
     function loadPageIntoStudio() {
-      const pageId = document.getElementById('studioPageSelect').value;
+      const selectPageElem = document.getElementById('studioPageSelect');
+      if (!selectPageElem) return;
+      const pageId = selectPageElem.value;
       const page = pagesData.find(p => p.id === pageId) || pagesData[0];
       if (!page) return;
 
       const selectElem = document.getElementById('editProfileSelect');
+      if (!selectElem) return;
       let found = false;
       for (let i = 0; i < selectElem.options.length; i++) {
         if (selectElem.options[i].value === page.profile_id) {
@@ -2461,13 +2515,22 @@ function generateDashboardHtml(): string {
     }
 
     async function runSimulationForSelectedPage() {
-      const pageId = document.getElementById('simPageSelect').value;
+      const simSelect = document.getElementById('simPageSelect');
+      const pageId = simSelect ? simSelect.value : '';
+      if (!pageId) {
+        alert('Please add a Facebook Page first in the Pages & Accounts tab before running simulations.');
+        return;
+      }
       const res = await fetch('/api/test-run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pageId })
       });
       const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('Notice: ' + (data.error || 'Failed to run simulation.'));
+        return;
+      }
       const simBox = document.getElementById('simResult');
       const simOut = document.getElementById('simOutput');
       simBox.style.display = 'block';
