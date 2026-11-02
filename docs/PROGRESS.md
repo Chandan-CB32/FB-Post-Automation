@@ -151,7 +151,26 @@
 ---
 
 ### Milestone 3: Provider Router, Chains, Quotas & Quality Bench
-- [ ] **Step 3.1: Provider Router & Execution Engine**
+- [x] **Step 3.1: Provider Router & Execution Engine**
+  - **What was built:**
+    - Chain strategy engine in `worker/src/router/strategies.ts`:
+      - `priority`: Fixed priority order as configured.
+      - `round_robin`: Sequential starting provider rotation.
+      - `least_used_today`: Dynamic sorting by lowest daily request count.
+      - `weighted_by_remaining_budget`: Sorts by largest remaining daily request capacity.
+      - `filterEligibleCandidates`: Filtering out disabled, over-quota, and cooling providers with automatic cooldown expiration.
+    - `ProviderRouter` in `worker/src/router/provider-router.ts`:
+      - Stage-aware text and image routing (`idea`, `topic`, `outline`, `write`, `polish`, `qa`, `image`, `vision_check`).
+      - In-flight automatic failover across keys and providers on 429 (rate limits), 401/403 (invalid keys), 5xx (server errors), and timeouts.
+      - `ProviderRouterError` logging full multi-attempt diagnostics when all candidates in a chain fail.
+  - **Tests run & results:**
+    - `pnpm test`: 84/84 tests passed across 13 test suites.
+    - Verified `tests/strategies.test.ts` (6 tests) and `tests/provider-router.test.ts` (5 tests).
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Provider configuration objects (including custom headers, account IDs, and extra request parameters) are automatically merged and forwarded to adapters during router execution.
+  - **Known limitations:**
+    - Quota tracking database persistence and daily budget demand planning will be added in Step 3.2.
 - [ ] **Step 3.2: Quota Tracking & Daily Demand Planner**
 - [ ] **Step 3.3: Provider Health Checks & Quality Benchmarking**
 
