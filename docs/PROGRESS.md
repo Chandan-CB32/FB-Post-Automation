@@ -371,7 +371,29 @@
     - Fact extractor enforces JSON output mode and aggregates facts, timeline items, and alleged claims into `allFactBullets` to ensure writers only use verified material.
   - **Known limitations:**
     - Long-form writer chunking (outline → sections → stitch → polish) and length enforcement are built in Step 7.2.
-- [ ] **Step 7.2: Long-Form Writer & Chunker (Outline → Sections → Stitch → Polish)**
+- [x] **Step 7.2: Long-Form Writer & Chunker (Outline → Sections → Stitch → Polish)**
+  - **What was built:**
+    - Narrative chunking engine in `worker/src/stages/chunker.ts`:
+      - `planSectionBudgets`: Distributes target word budgets (250–2,500 words) across 4 standard narrative phases: Hook & Opening (~18%), Rising Tension / Evidence (~32%), Climactic Revelation (~32%), and Aftermath / Reflection (~18%).
+      - `formatParagraphs`: Formats post prose into mobile-friendly paragraphs of maximum 1–3 sentences (`\n\n`) per PRD readability standards.
+      - `countWords`: Accurately computes word counts.
+    - Full Write stage in `worker/src/stages/04-write.ts`:
+      - **Short-form direct generation (<250 words)**: Single-pass generation bypassing chunking overhead, producing concise viral posts.
+      - **Long-form 4-phase chunked generation (>=250 words)**:
+        1. **Outline & Budgeting**: Establishes section boundaries and target word counts.
+        2. **Sequential Section Writing**: Writes sections sequentially while maintaining a running summary across calls for continuity.
+        3. **Stitching**: Seamlessly connects section narratives without duplicate seam sentences.
+        4. **Polish Pass**: Optional editing pass via the `'polish'` pipeline stage to smooth transitions, tighten pacing, and enforce mobile paragraph structures.
+      - Extracts and bounds hashtags, formats source attribution lines, and attaches fiction disclaimers for creative fiction profiles.
+      - Passed series continuity memory (`seriesBible`, `storySoFar`, `episodeNumber`) into long-form sections.
+  - **Tests run & results:**
+    - `pnpm test`: 156/156 tests passed across 24 test suites.
+    - Added 6 unit tests in `tests/write-chunker.test.ts` verifying word counting, section budget planning, paragraph sentence chunking, short-form direct execution, 4-phase long-form chunked generation, and series bible continuity passing.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Preserves consistent provider within a post run, providing running summaries across section calls to prevent drift or disjointed transitions.
+  - **Known limitations:**
+    - Programmatic caption validators and secondary QA safety audits are built in Steps 7.3 and 7.4.
 - [ ] **Step 7.3: Programmatic Caption Validators (Lengths, Sentences, Hooks, Emojis, Disclaimers)**
 - [ ] **Step 7.4: QA Scoring & Content Safety Classifier (Secondary Model Audit)**
 

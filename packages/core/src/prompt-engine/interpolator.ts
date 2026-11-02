@@ -10,6 +10,7 @@ export interface PromptContext {
   facts?: string | string[];
   outline?: string | string[];
   sources?: string | string[];
+  premise?: string;
   title?: string;
   caption?: string;
   caption_summary?: string;
@@ -86,6 +87,7 @@ export function interpolatePrompt(
     facts: formatValue(context.facts),
     outline: formatValue(context.outline),
     sources: formatValue(context.sources),
+    premise: formatValue(context.premise),
     title: formatValue(context.title),
     caption: formatValue(context.caption),
     caption_summary: formatValue(context.caption_summary),

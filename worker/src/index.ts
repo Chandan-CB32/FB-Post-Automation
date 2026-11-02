@@ -15,6 +15,8 @@ export * from './stages/02-research-idea.js';
 export * from './stages/02-idea-generator.js';
 export * from './stages/03-topic-select.js';
 export * from './stages/04-fact-extractor.js';
+export * from './stages/chunker.js';
+export * from './stages/04-write.js';
 
 export function getWorkerStatus() {
   return {
