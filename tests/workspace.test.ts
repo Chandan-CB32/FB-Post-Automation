@@ -19,3 +19,4 @@ describe('Monorepo Workspace Scaffold', () => {
     expect(WEB_APP_STATUS.name).toBe('FB Post Automation Web App');
   });
 });
+

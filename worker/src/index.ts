@@ -10,3 +10,4 @@ export function getWorkerStatus() {
 if (process.argv[1] && process.argv[1].endsWith('index.js')) {
   console.log(`[Worker] Initialized with @fb-auto/core v${CORE_VERSION}`);
 }
+

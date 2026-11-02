@@ -34,7 +34,25 @@
     - Monorepo structure approved and implemented per DEC-001.
   - **Known limitations:**
     - Sub-packages currently contain minimal scaffold code; cryptographic foundations and schemas will be added in Step 1.2.
-- [ ] **Step 1.2: Core Cryptography & Data Schemas**
+- [x] **Step 1.2: Core Cryptography & Data Schemas**
+  - **What was built:**
+    - Authenticated AES-256-GCM encryption/decryption module in `packages/core/src/crypto/encryption.ts` using fresh 96-bit random IVs and 128-bit authentication tags.
+    - Key normalization supporting raw buffers, 64-character hex strings, and 32-byte base64 strings with strict length validation.
+    - `maskSecret` helper to safely log and display sensitive API keys and Facebook tokens.
+    - Comprehensive Zod validation schemas in `packages/core/src/validation/schemas.ts` and TypeScript interfaces in `packages/core/src/types/index.ts` covering profiles, pages, schedules, posts, and settings.
+    - Generated `.env.example` template and initialized a local `.env` with a cryptographically secure 32-byte key.
+  - **Tests run & results:**
+    - `pnpm run build`: Succeeded with 0 errors across all packages.
+    - `pnpm run type-check`: Succeeded with 0 type errors.
+    - `pnpm test`: 18/18 tests passed across 3 test suites (`workspace.test.ts`, `crypto.test.ts`, `schemas.test.ts`).
+    - Cryptographic verification: Verified round-trips, fallback to `process.env.ENCRYPTION_KEY`, IV non-determinism, tampered ciphertext rejection, and wrong key rejection.
+  - **Issues found & fixed:**
+    - *Issue:* TypeScript flagged `z.record(valueSchema)` requiring two arguments (`z.record(keySchema, valueSchema)`) under strict type checking.
+      *Fix:* Updated `customVariables`, `overrides`, and `qaResult` in `schemas.ts` to explicitly provide `z.string()` as key schema.
+  - **Decisions made:**
+    - Wire/storage format for encrypted secrets established as `<iv_base64>:<tag_base64>:<ciphertext_base64>`.
+  - **Known limitations:**
+    - Database persistence and migrations for these schemas are created in Step 1.3.
 - [ ] **Step 1.3: Supabase Schema, Migrations & RLS**
 - [ ] **Step 1.4: Worker Skeleton & Heartbeat Engine**
 
