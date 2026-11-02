@@ -19,6 +19,7 @@ export * from './stages/chunker.js';
 export * from './stages/04-write.js';
 export * from './stages/05-qa-safety.js';
 export * from './stages/06-image-prompt.js';
+export * from './image/image-qa.js';
 
 export function getWorkerStatus() {
   return {

@@ -457,6 +457,24 @@
     - Extracted scene descriptions are stripped of transitional dialogue and filler to keep diffusion model prompts dense with visual descriptors.
   - **Known limitations:**
     - Image QA (blank / solid color checks, perceptual hashing) and Sharp headline compositing are implemented in Steps 8.2 and 8.3.
-- [ ] **Step 8.2: Image QA, Uniformity / Blank Check & Perceptual Hashing (pHash)**
+- [x] **Step 8.2: Image QA, Uniformity / Blank Check & Perceptual Hashing (pHash)**
+  - **What was built:**
+    - High-performance image QA and perceptual difference hashing module in `worker/src/image/image-qa.ts` powered by `sharp`:
+      - `computeImageStdDev`: Resizes image to 64x64 grayscale and calculates pixel intensity standard deviation $\sigma$ across raw bytes. Detects blank, solid color, black, or refusal outputs ($\sigma < 5.0$).
+      - `computeImagePhash`: Calculates a 64-bit difference hash (dHash) by resizing to 9x8 grayscale and comparing 64 adjacent horizontal pixel gradient pairs, returning an invariant 16-character hexadecimal hash.
+      - `computeHammingDistance`: Computes bit differences (0 to 64) between two 16-hex perceptual hashes using bitwise XOR.
+      - `validateImageBuffer`: Comprehensive QA gate evaluating:
+        - Corruption & minimum buffer size checks.
+        - Minimum resolution validation (e.g. $\ge 512\times 512$).
+        - Solid color / blank image rejection.
+        - Perceptual duplicate detection against historical post hashes with configurable Hamming distance threshold ($\le 10$).
+  - **Tests run & results:**
+    - `pnpm test`: 196/196 tests passed across 28 test suites.
+    - Added 14 unit tests in `tests/image-qa.test.ts` verifying std-dev calculation for solid colors vs complex patterns, 16-char hex dHash formatting, exact Hamming distances, corruption rejection, dimension rejection, solid color rejection, duplicate detection, and clean validation.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Selected 64-bit dHash over block mean pHash for its superior resistance to minor gamma / compression artifacts and high computation speed in `sharp`.
+  - **Known limitations:**
+    - Sharp headline panel compositing and aspect ratio letterbox/pillarbox/crop rendering will be built in Step 8.3.
 - [ ] **Step 8.3: Sharp Headline Panel Renderer & Aspect Ratio Composition**
 
