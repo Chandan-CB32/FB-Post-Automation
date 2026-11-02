@@ -239,6 +239,22 @@
 ---
 
 ### Milestone 5: Content Profiles & Prompt Studio
-- [ ] **Step 5.1: Profile Importer & Seed Profiles**
+- [x] **Step 5.1: Profile Importer & Seed Profiles**
+  - **What was built:**
+    - Profile importer module in `packages/core/src/profiles/importer.ts`:
+      - `stripInteractiveRules`: Strips interactive/human-in-the-loop instructions (e.g. conversational back-and-forth, "wait for my input", "ask before continuing") from legacy prompt markdown to adapt them for autonomous background worker execution.
+      - `extractCategoriesFromPrompt`: Automatically parses category bullet lists and topic domains from system prompts into structured array entries.
+      - `importMasterPrompt`: Converts markdown master prompt text files into typed `ContentProfile` objects with default length targets, tone, and safety rules.
+    - Seed starter profiles catalog in `packages/core/src/profiles/seed-profiles.ts`:
+      - 7 production starter profiles: `horror_story` (The Haunting Hour), `crime_story` (Cold Case Chronicles), `science_story` (Science Oddities), `historical_facts` (Echoes of History), `tech_deep_dive` (Future Byte), `psychology_facts` (Mind Curiosities), and `creepy_wikipedia` (Rabbit Hole Oddities).
+      - Configured with custom generation prompts, headline overlays, aspect ratios (4:5 / 1:1), and quality standards.
+  - **Tests run & results:**
+    - `pnpm test`: 115/115 tests passed across 18 test suites.
+    - Added 5 unit tests in `tests/profiles.test.ts` covering interactive rule stripping, category extraction, prompt importing, seed profile validation, and profile retrieval by slug.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Interactive rule stripping removes conversational setup rules preceding the first markdown horizontal rule (`---`) to ensure prompt execution in worker batches without stalls.
+  - **Known limitations:**
+    - Test Run Runner for simulating full multi-stage pipeline generation will be implemented in Step 5.2.
 - [ ] **Step 5.2: Test Run Runner (Pipeline Simulation without Posting)**
 

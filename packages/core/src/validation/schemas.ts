@@ -157,6 +157,10 @@ export const ContentProfileSchema = z.object({
   version: z.number().int().min(1).default(1),
 });
 
+export type ContentProfile = z.infer<typeof ContentProfileSchema>;
+export type Page = z.infer<typeof PageSchema>;
+export type Post = z.infer<typeof PostSchema>;
+
 export const PageSchema = z.object({
   id: z.string().uuid().optional(),
   name: z.string().min(1),

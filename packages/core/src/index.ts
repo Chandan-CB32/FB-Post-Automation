@@ -16,6 +16,10 @@ export * from './security/ssrf.js';
 export * from './prompt-engine/safety-baseline.js';
 export * from './prompt-engine/interpolator.js';
 
+// Content Profiles
+export * from './profiles/importer.js';
+export * from './profiles/seed-profiles.js';
+
 // Settings Resolver
 export * from './settings-resolver/resolver.js';
 
