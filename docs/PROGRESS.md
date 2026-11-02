@@ -529,6 +529,31 @@
     - Treated `expires_at: 0` as permanent (never-expiring) per Facebook Graph API specifications for Page access tokens generated from long-lived user tokens.
   - **Known limitations:**
     - Photo upload and feed scheduling will be implemented in Step 9.2.
-- [ ] **Step 9.2: Photo Scheduling & Publishing Engine**
+- [x] **Step 9.2: Photo Scheduling & Publishing Engine**
+  - **What was built:**
+    - High-level Facebook publishing orchestrator in `packages/core/src/facebook/publisher.ts`:
+      - `validateSchedulingWindow`: Enforces Facebook Graph API scheduling boundaries: scheduled posts must be scheduled between 10 minutes and 30 days into the future.
+      - `computePostContentHash`: Deterministic SHA-256 hash of caption and image perceptual hash (`caption + phash`) preventing duplicate submissions.
+      - `FacebookPublisher`:
+        - Two-step publishing architecture:
+          1. `uploadUnpublishedPhoto`: Uploads JPEG buffer (via multipart `FormData`) or remote image URL to `POST /{page-id}/photos` with `published=false`, returning the generated `media_fbid`.
+          2. `publishFeedPost`: Creates feed post on `POST /{page-id}/feed` attaching the uploaded photo (`attached_media=[{ media_fbid }]`), setting `published=false` and `scheduled_publish_time` for future posts, or `published=true` for immediate publishing.
+        - `reschedulePost`: Updates `scheduled_publish_time` on existing scheduled posts.
+        - `deletePost`: Removes scheduled or published posts from Facebook via `DELETE /{post-id}`.
+        - `getPostDetails`: Fetches publication status and canonical permalink (`permalink_url`).
+    - Worker Stage 7 Publishing Pipeline in `worker/src/stages/07-post.ts`:
+      - `executePublishStage`: Integrates content hash calculation, AES-256-GCM token decryption, safety overrides, and mode routing:
+        - Mandatory review holds for sensitive content (`mustHoldForReview` or sensitive flags) even in `auto` mode.
+        - Review mode hold routing to Review Inbox.
+        - Hybrid mode scoring thresholding (`qaScore >= hybridMinScore`).
+        - Facebook scheduling via `FacebookPublisher`.
+  - **Tests run & results:**
+    - `pnpm test`: 236/236 tests passed across 31 test suites.
+    - Added 14 unit tests in `tests/facebook-publisher.test.ts` verifying scheduling window validation (10 min minimum, 30 days maximum, past date rejection), deterministic SHA-256 content hashing, two-step photo upload and scheduled feed post creation, immediate publishing, rescheduling, post deletion, mandatory safety hold rules, review mode routing, hybrid score thresholds, and token decryption.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Structured publishing as an explicit two-step transaction (`photos` unpublished -> `feed` with `attached_media`) matching Meta's recommended Graph API pattern for high-resolution feed photo scheduling.
+  - **Known limitations:**
+    - Publication status reconciliation loop and exponential retry poller will be implemented in Step 9.3.
 - [ ] **Step 9.3: Publishing Status Reconciliation & Error Retries**
 
