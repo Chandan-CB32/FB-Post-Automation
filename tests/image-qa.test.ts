@@ -163,3 +163,4 @@ describe('Image QA & Perceptual Hashing (Step 8.2)', () => {
     });
   });
 });
+

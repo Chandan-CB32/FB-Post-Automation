@@ -1,4 +1,4 @@
-import sharp, { Metadata } from 'sharp';
+import sharp, { type Metadata } from 'sharp';
 
 export interface ImageQaOptions {
   minWidth?: number;
@@ -203,3 +203,4 @@ export async function validateImageBuffer(
     violations,
   };
 }
+

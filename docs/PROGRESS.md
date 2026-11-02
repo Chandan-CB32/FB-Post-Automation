@@ -476,5 +476,35 @@
     - Selected 64-bit dHash over block mean pHash for its superior resistance to minor gamma / compression artifacts and high computation speed in `sharp`.
   - **Known limitations:**
     - Sharp headline panel compositing and aspect ratio letterbox/pillarbox/crop rendering will be built in Step 8.3.
-- [ ] **Step 8.3: Sharp Headline Panel Renderer & Aspect Ratio Composition**
+- [x] **Step 8.3: Sharp Headline Panel Renderer & Aspect Ratio Composition**
+  - **What was built:**
+    - High-performance image compositing and headline panel overlay engine in `worker/src/image/compositor.ts`:
+      - `getAspectDimensions`: Dimension mappings for Facebook-optimized aspect ratios: `4:5` (1080×1350), `1:1` (1080×1080), and `16:9` (1920×1080).
+      - `escapeXml`: Sanitizes headline, source, and watermark strings preventing SVG/XML parsing failures on quotes, ampersands, and angle brackets.
+      - `wrapTextToLines`: Clean word-wrapping breaking long headlines into balanced, readable lines without splitting individual words.
+      - `buildHeadlinePanelSvg`: Generates crisp SVG overlay with:
+        - Configurable panel height (10%–50%, default 25%).
+        - Solid high-contrast background (e.g. `#000000`, customizable hex/rgba).
+        - Dynamic auto-scaling font size sizing (54px down to 24px) ensuring headlines (8–22 words) fit comfortably within horizontal and vertical panel bounds.
+        - Text alignment (`center` or `left`) with customizable padding.
+        - Optional upper watermark / page branding tag and lower source attribution note (`sourceText`).
+      - `composePostImage`:
+        - Sharp pipeline scaling raw generation buffer to exact target dimensions (`cover` / `contain` / `fill`).
+        - Composites SVG headline panel overlay when enabled.
+        - Exports progressive JPEG at quality 85 with mozjpeg optimization.
+  - **Tests run & results:**
+    - `pnpm test`: 209/209 tests passed across 29 test suites.
+    - Added 13 unit tests in `tests/compositor.test.ts` covering aspect ratio dimension calculations, XML escaping, word wrapping, SVG panel generation with source/watermark, clean image scaling to 1080x1350 JPEG, full panel overlay compositing, square (1:1) and widescreen (16:9) formats, and custom dimension overrides.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Rendered the headline panel as a vectorized SVG overlay in `sharp` rather than relying on image diffusion models, ensuring 100% spelling precision, perfect typography contrast, and mobile readability per PRD Section 8 & Master Prompts.
+  - **Known limitations:**
+    - Image compositing is completed. Facebook Graph API publishing of composed images will be built in Milestone 9.
+
+---
+
+### Milestone 9: Facebook Graph API Integration & Publishing
+- [ ] **Step 9.1: Facebook Graph API Client & Token Management**
+- [ ] **Step 9.2: Photo Scheduling & Publishing Engine**
+- [ ] **Step 9.3: Publishing Status Reconciliation & Error Retries**
 
