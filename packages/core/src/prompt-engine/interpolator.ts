@@ -18,6 +18,7 @@ export interface PromptContext {
   pov?: string;
   audience?: string;
   language?: string;
+  count?: number | string;
   word_min?: number | string;
   word_max?: number | string;
   word_target?: number | string;
@@ -95,6 +96,7 @@ export function interpolatePrompt(
     word_max: formatValue(context.word_max),
     word_target: formatValue(context.word_target),
     word_count: formatValue(context.word_count),
+    count: formatValue(context.count),
     hashtag_count: formatValue(context.hashtag_count || 5),
     story_so_far: formatValue(context.story_so_far),
     series_bible: formatValue(context.series_bible),

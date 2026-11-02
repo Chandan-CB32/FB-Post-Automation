@@ -135,6 +135,18 @@ export interface TopicSettings {
   excludeKeywords: string[];
 }
 
+export interface TopicQueueItem {
+  id: string;
+  page_id?: string | null;
+  profile_id?: string | null;
+  text: string;
+  category?: string | null;
+  status: 'pending' | 'used' | 'skipped';
+  sort_order: number;
+  created_at: string;
+  used_at?: string | null;
+}
+
 export interface PostingSchedule {
   timezone: string;
   postsPerDay: number;

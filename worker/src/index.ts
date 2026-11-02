@@ -12,6 +12,7 @@ export * from './stages/test-run-runner.js';
 export * from './research/rss-fetcher.js';
 export * from './research/collector.js';
 export * from './stages/02-research-idea.js';
+export * from './stages/02-idea-generator.js';
 
 export function getWorkerStatus() {
   return {

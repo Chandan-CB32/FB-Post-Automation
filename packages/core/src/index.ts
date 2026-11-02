@@ -20,6 +20,9 @@ export * from './prompt-engine/interpolator.js';
 export * from './profiles/importer.js';
 export * from './profiles/seed-profiles.js';
 
+// Topic Queue Manager
+export * from './topics/queue-manager.js';
+
 // Settings Resolver
 export * from './settings-resolver/resolver.js';
 

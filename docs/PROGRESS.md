@@ -303,6 +303,26 @@
     - XML feed parser parses feeds directly using safe RegExp matching without DTD entity expansion, ensuring 100% XXE immunity and eliminating external XML parsing dependencies.
   - **Known limitations:**
     - Owner topic queue management (CSV/paste import, random/ordered usage) and category-weighted topic selection will be implemented in Steps 6.2 and 6.3.
-- [ ] **Step 6.2: Idea Generator & Owner Topic Queue**
+- [x] **Step 6.2: Idea Generator & Owner Topic Queue**
+  - **What was built:**
+    - Owner Topic Queue manager in `packages/core/src/topics/queue-manager.ts`:
+      - `parseTopicImport`: Robust parser for bulk topic imports supporting multi-line plain text, comma-separated entries, standard CSVs with headers (`topic/text`, `category`), comment filtering (`#` and `//`), and double-quoted fields with embedded commas.
+      - `enqueueTopics`: Converts parsed entries into typed `TopicQueueItem` objects with UUIDs, sort orders, and pending statuses.
+      - `getNextTopic`: Retrieves the next eligible topic using FIFO ordering (lowest `sort_order`) or random selection, with optional case-insensitive category filtering.
+      - `markTopicStatus`: Transition states (`pending` → `used` | `skipped`) and records ISO timestamps.
+      - `getQueueStats`: Comprehensive queue distribution counters across statuses and categories.
+    - Autonomous Idea Generator in `worker/src/stages/02-idea-generator.ts`:
+      - Generates high-engagement story topics and premises via the `ProviderRouter` for fiction and general niches.
+      - Constrains generation by profile categories, target audiences, tone, POV, and negative keyword/banned topic avoidance.
+      - Supports series continuity memory (`seriesBible`, `storySoFar`, `episodeNumber`) and flags ideas as `series` or `auto_idea`.
+      - Extracts key visual scene concepts and estimated hook strength scores (1-10) with graceful unstructured fallback handling.
+  - **Tests run & results:**
+    - `pnpm test`: 140/140 tests passed across 21 test suites.
+    - Added 10 unit tests in `tests/topic-queue.test.ts` covering plain-text/CSV parsing, FIFO queue progression, random selection, category filtering, queue statistics, series continuity incorporation, and LLM idea generation.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Topic CSV parsing parses double-quoted fields natively without third-party CSV libraries to maintain minimal dependency footprint and total security.
+  - **Known limitations:**
+    - Topic selection scoring and 90-day history deduplication window are implemented in Step 6.3.
 - [ ] **Step 6.3: Topic Selector, Category Weights & Dedup**
 
