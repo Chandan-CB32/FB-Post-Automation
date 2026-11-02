@@ -22,6 +22,7 @@ export * from './stages/06-image-prompt.js';
 export * from './image/image-qa.js';
 export * from './image/compositor.js';
 export * from './stages/07-post.js';
+export * from './schedulers/reconciler.js';
 
 export function getWorkerStatus() {
   return {

@@ -555,5 +555,30 @@
     - Structured publishing as an explicit two-step transaction (`photos` unpublished -> `feed` with `attached_media`) matching Meta's recommended Graph API pattern for high-resolution feed photo scheduling.
   - **Known limitations:**
     - Publication status reconciliation loop and exponential retry poller will be implemented in Step 9.3.
-- [ ] **Step 9.3: Publishing Status Reconciliation & Error Retries**
+- [x] **Step 9.3: Publishing Status Reconciliation & Error Retries**
+  - **What was built:**
+    - Status reconciliation and failure retry state machine in `worker/src/schedulers/reconciler.ts`:
+      - `calculateNextRetry`: Calculates exponential backoff intervals with configurable base delay (1 min) and maximum delay (1 hour), tracking retry attempt counters and flagging job exhaustion (`isExhausted: true` when `attempt > maxAttempts`).
+      - `isRetryablePublishError`: Classifies errors according to Facebook Graph API standards: network timeouts, ETIMEDOUT, rate limits, and 5xx server errors trigger backoff retries; auth/session errors (code 190), permission rejections, and deleted/invalid objects (code 100) abort immediately.
+      - `reconcileSinglePost`:
+        - Checks scheduled post status against Facebook Graph API (`getPostDetails`).
+        - Transitions posts confirmed published by Facebook to `status = 'published'`, recording `published_at` timestamp and permanent `permalinkUrl`.
+        - Detects deleted/removed Facebook posts (code 100 / object does not exist) and transitions post to `status = 'failed'`.
+        - Tracks overdue posts (`isOverdueWarning: true` when >3 hours overdue past scheduled time without publishing).
+      - `reconcileScheduledPosts`: Batch database reconciliation fetching pending scheduled posts, decrypting page tokens, updating post status, and recording published posts into `topic_history` to enforce the 90-day / 200-post deduplication window.
+  - **Tests run & results:**
+    - `pnpm test`: 247/247 tests passed across 32 test suites.
+    - Added 11 unit tests in `tests/reconciler.test.ts` verifying exponential backoff calculations, delay caps, exhaustion flags, retryable vs non-retryable error classification, published post reconciliation, still-scheduled status retention, 3-hour overdue warnings, deleted post failure transitions, expired token error reporting, and full database reconciliation with `topic_history` insertion.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Used resilient structural error inspection (`code`, `name === 'FacebookGraphError'`, `isAuthError`) to ensure error classification is invariant across runtime environments.
+  - **Known limitations:**
+    - Milestone 9 is complete. Worker loop orchestration, lead time slot planner, and review inbox state machine will be built in Milestone 10.
+
+---
+
+### Milestone 10: Orchestration & Review Inbox State Machine
+- [ ] **Step 10.1: Slot Planner & Lead Time Engine**
+- [ ] **Step 10.2: Review Inbox State Machine & Transition Actions (Approve, Edit, Reject, Reschedule)**
+- [ ] **Step 10.3: Worker Cycle Orchestrator & End-to-End Pipeline Loop**
 

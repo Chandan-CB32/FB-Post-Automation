@@ -293,7 +293,7 @@ describe('Facebook Photo Scheduling & Publishing Engine (Step 9.2)', () => {
       });
 
       expect(result.action).toBe('scheduled');
-      expect(result.status).toBe('scheduled');
+      expect(result.status).toBe('scheduled_on_fb');
       expect(result.fbPostId).toBe('page_100_post_555');
       expect(result.fbPhotoId).toBe('photo_777');
       expect(mockPublisher.publishFeedPost).toHaveBeenCalledTimes(1);
@@ -305,3 +305,4 @@ describe('Facebook Photo Scheduling & Publishing Engine (Step 9.2)', () => {
     });
   });
 });
+

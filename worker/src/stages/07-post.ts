@@ -23,7 +23,7 @@ export interface ExecutePublishStageInput {
 
 export interface ExecutePublishStageResult {
   action: 'scheduled' | 'published' | 'held_for_review';
-  status: 'scheduled' | 'published' | 'pending_review';
+  status: 'scheduled_on_fb' | 'published' | 'pending_review';
   contentHash: string;
   fbPostId?: string;
   fbPhotoId?: string;
@@ -121,7 +121,7 @@ export async function executePublishStage(
 
   return {
     action: publishResult.isScheduled ? 'scheduled' : 'published',
-    status: publishResult.isScheduled ? 'scheduled' : 'published',
+    status: publishResult.isScheduled ? 'scheduled_on_fb' : 'published',
     contentHash,
     fbPostId: publishResult.postId,
     fbPhotoId: publishResult.photoId,
@@ -129,3 +129,4 @@ export async function executePublishStage(
     scheduledPublishTime: publishResult.scheduledPublishTime,
   };
 }
+
