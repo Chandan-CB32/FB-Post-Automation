@@ -89,7 +89,20 @@
 ---
 
 ### Milestone 2: Generic Provider Framework & Adapters
-- [ ] **Step 2.1: Provider Adapter Interface & OpenAI-Compatible Chat Adapter**
+- [x] **Step 2.1: Provider Adapter Interface & OpenAI-Compatible Chat Adapter**
+  - **What was built:**
+    - Standard adapter contracts in `packages/core/src/adapters/types.ts`: `TextProviderAdapter`, `ImageProviderAdapter`, `TextGenerateOptions`, `TextGenerateResult`, `ImageGenerateOptions`, `ImageGenerateResult`.
+    - Typed `ProviderError` with categorized error kinds (`auth`, `rate_limit`, `timeout`, `content_policy`, `server_error`, `invalid_output`, `network_error`).
+    - Robust JSON extractor in `packages/core/src/adapters/json-extractor.ts` handling raw JSON, markdown-wrapped blocks (````json ... ````), and bracket substring extraction.
+    - `OpenAIChatAdapter` in `packages/core/src/adapters/openai-chat.ts` supporting OpenAI-compatible providers (OpenRouter, Groq, NVIDIA NIM, ZenMux, Cerebras, Together, Hugging Face), with automatic OpenRouter headers, timeout abort signals, retry fallbacks on unsupported `response_format`, and 429 `retry-after` header extraction.
+  - **Tests run & results:**
+    - `pnpm test`: 40/40 tests passed across 7 test suites.
+    - Verified `tests/json-extractor.test.ts` (6 tests) and `tests/openai-chat.test.ts` (7 tests).
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Error classification structure standardizes error recovery and chain failover decisions for Milestone 3.
+  - **Known limitations:**
+    - Native adapters for Gemini, Cloudflare, and Pollinations are implemented in Step 2.2.
 - [ ] **Step 2.2: Native Adapters (Gemini, Cloudflare Workers AI, Pollinations)**
 - [ ] **Step 2.3: Custom HTTP Template Adapter with SSRF Protection**
 - [ ] **Step 2.4: Provider Key Pool & Presets**

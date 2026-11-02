@@ -30,3 +30,4 @@ export function getSupabaseClient(config?: DatabaseConfig): SupabaseClient | nul
 export function resetSupabaseClient(): void {
   cachedClient = null;
 }
+
