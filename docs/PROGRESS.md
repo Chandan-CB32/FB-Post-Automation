@@ -171,6 +171,19 @@
     - Provider configuration objects (including custom headers, account IDs, and extra request parameters) are automatically merged and forwarded to adapters during router execution.
   - **Known limitations:**
     - Quota tracking database persistence and daily budget demand planning will be added in Step 3.2.
-- [ ] **Step 3.2: Quota Tracking & Daily Demand Planner**
+- [x] **Step 3.2: Quota Tracking & Daily Demand Planner**
+  - **What was built:**
+    - `QuotaTracker` in `worker/src/router/quota-tracker.ts` tracking daily request counts, tokens, neurons, units, and estimated costs with in-memory caching and Supabase `provider_usage_daily` table upserts.
+    - Quota check logic calculating percentage utilization, 80% warning threshold alerts, and 100% capacity exhaustion.
+    - `DailyDemandPlanner` in `worker/src/schedulers/daily-planner.ts` estimating upcoming text and image demand per Page and caption preset (Short, Standard, Long, Story, Epic) with 20% image retry buffering.
+    - Capacity evaluation comparing demand against provider supply, raising actionable warnings, setting `status: 'throttled'`, and expanding slot gaps to 240m when budgets are exceeded.
+  - **Tests run & results:**
+    - `pnpm test`: 90/90 tests passed across 14 test suites.
+    - 6 new unit tests in `tests/daily-planner.test.ts` verifying usage tracking, 80% warning triggers, 100% capacity exhaustion, healthy capacity planning, tight capacity warnings, and demand throttling.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Token estimation calibrated based on PRD Section 2 & 14.3 (Short: 500, Standard: 800, Long: 1500, Story: 3500, Epic: 7500 tokens per post).
+  - **Known limitations:**
+    - Provider health checks and the quality benchmarking tool are implemented in Step 3.3.
 - [ ] **Step 3.3: Provider Health Checks & Quality Benchmarking**
 
