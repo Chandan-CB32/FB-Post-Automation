@@ -202,6 +202,19 @@
 ---
 
 ### Milestone 4: Settings Resolver & Prompt Engine
-- [ ] **Step 4.1: Settings Resolver (Global → Profile → Page → Post)**
+- [x] **Step 4.1: Settings Resolver (Global → Profile → Page → Post)**
+  - **What was built:**
+    - `resolveSettings` engine in `packages/core/src/settings-resolver/resolver.ts` implementing the 4-tier inheritance hierarchy: Global Defaults → Content Profile → Page Overrides → Post Overrides.
+    - Full provenance tracking (`ProvenanceRecord`) recording exact origins (`'global'`, `'profile'`, `'page'`, `'page (appended)'`, `'post'`) for every resolved setting, powering the dashboard's "Effective Settings" inspector.
+    - Custom prompt resolution supporting both `'append'` and `'replace'` modes for custom caption and image prompts.
+    - Global defaults catalog (`GLOBAL_DEFAULTS`) matching production PRD specifications.
+  - **Tests run & results:**
+    - `pnpm test`: 102/102 tests passed across 16 test suites.
+    - 7 new unit tests in `tests/settings-resolver.test.ts` verifying default fallbacks, profile overrides, page supersedence, post-level overrides, custom prompt appending/replacing, and headline panel resolution.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Audit trail maps keys directly by path (e.g. `caption.min`, `templates.captionPrompt`) to simplify UI diff display.
+  - **Known limitations:**
+    - Prompt template variable interpolation and safety baseline injection are implemented in Step 4.2.
 - [ ] **Step 4.2: Prompt Template Engine & Safety Baseline Injection**
 

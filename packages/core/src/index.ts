@@ -12,6 +12,9 @@ export * from './db/client.js';
 // Security
 export * from './security/ssrf.js';
 
+// Settings Resolver
+export * from './settings-resolver/resolver.js';
+
 // Provider Key Pool & Presets
 export * from './providers/key-pool.js';
 export * from './providers/presets.js';
