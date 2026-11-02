@@ -12,6 +12,10 @@ export * from './db/client.js';
 // Security
 export * from './security/ssrf.js';
 
+// Prompt Engine
+export * from './prompt-engine/safety-baseline.js';
+export * from './prompt-engine/interpolator.js';
+
 // Settings Resolver
 export * from './settings-resolver/resolver.js';
 

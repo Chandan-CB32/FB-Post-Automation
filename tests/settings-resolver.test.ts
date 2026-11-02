@@ -145,3 +145,4 @@ describe('Settings Resolver & 4-Tier Inheritance Engine', () => {
     expect(resolved.provenance['image.headlinePanel.enabled'].source).toBe('profile');
   });
 });
+

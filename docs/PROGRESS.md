@@ -216,5 +216,29 @@
     - Audit trail maps keys directly by path (e.g. `caption.min`, `templates.captionPrompt`) to simplify UI diff display.
   - **Known limitations:**
     - Prompt template variable interpolation and safety baseline injection are implemented in Step 4.2.
-- [ ] **Step 4.2: Prompt Template Engine & Safety Baseline Injection**
+- [x] **Step 4.2: Prompt Template Engine & Safety Baseline Injection**
+  - **What was built:**
+    - Non-bypassable platform safety baseline engine in `packages/core/src/prompt-engine/safety-baseline.ts`:
+      - `TEXT_SAFETY_BASELINE`: Enforces anti-gore, zero sexual content, minor protection, anti-hate, anti-defamation of real individuals, and copyright protection.
+      - `IMAGE_SAFETY_BASELINE`: Enforces SFW imagery, no blood/gore, and no living persons' likenesses.
+      - `QA_SAFETY_CRITERIA`: Safety evaluation standards for secondary QA models.
+      - `injectSafetyBaseline`: Permanent, idempotent baseline injection into all stage prompts.
+    - `PromptInterpolator` in `packages/core/src/prompt-engine/interpolator.ts`:
+      - Resolves standard template variables (`{{topic}}`, `{{facts}}`, `{{sources}}`, `{{key_scene}}`, `{{word_target}}`, `{{tone}}`, etc.) and owner custom variables (`{{custom.<name>}}`).
+      - Automatically formats array inputs (facts, sources) into clean markdown bulleted lists.
+      - Tracks and reports any `unresolvedVariables`.
+  - **Tests run & results:**
+    - `pnpm test`: 110/110 tests passed across 17 test suites.
+    - Added 8 unit tests in `tests/prompt-engine.test.ts` verifying text safety injection, image safety injection, QA criteria, variable interpolation, array formatting, custom variables, and unresolved variable detection.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - The safety baseline cannot be disabled by user-configured templates or custom prompt overrides.
+  - **Known limitations:**
+    - Content profile importing from master prompt files and Prompt Studio test runner are built in Milestone 5.
+
+---
+
+### Milestone 5: Content Profiles & Prompt Studio
+- [ ] **Step 5.1: Profile Importer & Seed Profiles**
+- [ ] **Step 5.2: Test Run Runner (Pipeline Simulation without Posting)**
 
