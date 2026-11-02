@@ -12,6 +12,10 @@ export * from './db/client.js';
 // Security
 export * from './security/ssrf.js';
 
+// Provider Key Pool & Presets
+export * from './providers/key-pool.js';
+export * from './providers/presets.js';
+
 // Provider Adapters
 export * from './adapters/types.js';
 export * from './adapters/json-extractor.js';

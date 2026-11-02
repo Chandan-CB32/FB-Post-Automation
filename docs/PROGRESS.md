@@ -130,5 +130,28 @@
     - Implemented strict pre-connection DNS IP validation and manual redirect tracking (`redirect: 'manual'`) per DEC-005.
   - **Known limitations:**
     - Provider key pooling, rotation, and database presets will be implemented in Step 2.4.
-- [ ] **Step 2.4: Provider Key Pool & Presets**
+- [x] **Step 2.4: Provider Key Pool & Presets**
+  - **What was built:**
+    - Key pool management module in `packages/core/src/providers/key-pool.ts`:
+      - Authenticated AES-256-GCM encryption on creation and masked display (`sk-...1234`).
+      - Bulk key import parsing multi-line text with comment filtering (`parseBulkKeys`).
+      - Load balancing key selection prioritizing least-used active keys (`getNextAvailableKey`).
+      - Automatic cooldown expiration and re-activation.
+      - Immediate disable on auth failure (401/403) and dynamic cooldown assignment on rate limit (429).
+    - Provider presets registry in `packages/core/src/providers/presets.ts` with configurations for Google Gemini, OpenRouter, Groq, Cloudflare Workers AI, Pollinations AI, Hugging Face Inference, and NVIDIA NIM.
+  - **Tests run & results:**
+    - `pnpm test`: 73/73 tests passed across 11 test suites.
+    - Added 11 unit tests in `tests/key-pool.test.ts` covering key creation, bulk parsing, load balancing, cooldown lifecycles, and preset lookups.
+    - `pnpm run build` & `pnpm run type-check`: 0 errors.
+  - **Decisions made:**
+    - Key selection uses least-used-today strategy to prevent overloading a single key when multiple account keys are configured.
+  - **Known limitations:**
+    - Provider chains, failover routing, and daily budget planning are built in Milestone 3.
+
+---
+
+### Milestone 3: Provider Router, Chains, Quotas & Quality Bench
+- [ ] **Step 3.1: Provider Router & Execution Engine**
+- [ ] **Step 3.2: Quota Tracking & Daily Demand Planner**
+- [ ] **Step 3.3: Provider Health Checks & Quality Benchmarking**
 

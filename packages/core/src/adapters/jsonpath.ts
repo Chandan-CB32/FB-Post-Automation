@@ -45,3 +45,4 @@ export function resolveJsonPath(obj: unknown, path: string): unknown {
 
   return current;
 }
+

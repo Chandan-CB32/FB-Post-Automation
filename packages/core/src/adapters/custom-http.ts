@@ -286,3 +286,4 @@ export class CustomHttpAdapter implements TextProviderAdapter, ImageProviderAdap
     throw new ProviderError('Custom HTTP image response did not yield valid image data.', 'invalid_output');
   }
 }
+
