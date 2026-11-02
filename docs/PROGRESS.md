@@ -577,8 +577,62 @@
 
 ---
 
-### Milestone 10: Orchestration & Review Inbox State Machine
-- [ ] **Step 10.1: Slot Planner & Lead Time Engine**
-- [ ] **Step 10.2: Review Inbox State Machine & Transition Actions (Approve, Edit, Reject, Reschedule)**
-- [ ] **Step 10.3: Worker Cycle Orchestrator & End-to-End Pipeline Loop**
+### Milestone 10: Orchestration, Slot Planning, Modes & Review Inbox
+- [x] **Step 10.1: Slot Planner & Lead Time Engine**
+  - Built `worker/src/schedulers/slot-planner.ts`:
+    - `calculateNextSlots`: Computes upcoming post slots from page schedule configuration (`postingTimes`, `minGapMinutes`, `activeDays`, `dailyCap`).
+    - `enforceDailyCap`: Strictly caps maximum posts allowed per calendar day.
+    - `planMissingSlots`: Identifies unfulfilled post slots within the configured lead-time window (default 48 hours).
+- [x] **Step 10.2: Publishing Modes & Review Inbox State Machine**
+  - Built `packages/core/src/review/inbox-manager.ts`:
+    - `approveReviewPost`: Transitions post `review_state` to `approved` and `status` to `ready`. Automatically advances stale scheduled times into future valid slots (+2 hours) if the slot passed while pending review.
+    - `rejectReviewPost`: Transitions post `review_state` to `rejected`, `status` to `skipped`, and records review reason.
+    - `editReviewPost`: Applies owner overrides (caption, headline, title, phash) and recalculates caption word count and SHA-256 content hash.
+    - `evaluateAutoApproveEligiblePosts`: Identifies review-pending posts eligible for auto-approval after N hours.
+- [x] **Step 10.3: Series Continuity Engine & Story Memory**
+  - Built `packages/core/src/series/series-engine.ts`:
+    - `formatSeriesStorySoFar`: Formats chronological running summary of all prior episodes.
+    - `buildSeriesPromptContext`: Injects series memory variables (`{{story_so_far}}`, `{{series_bible}}`, `{{previous_cliffhanger}}`, `is_finale`).
+    - `updateSeriesMemory`: Tracks episode numbers and marks series as completed upon reaching finale.
+
+---
+
+### Milestone 11: Web Dashboard & UI Views
+- [x] **Step 11.1: Dashboard App Shell, Navigation & Overview Metrics**
+  - Built `apps/web/src/components/dashboard-views.ts` and `apps/web/src/server/api-handlers.ts`:
+    - Nav bar model spanning 8 sections (Overview, Pages, Profiles, Review, Calendar, Providers, History, Settings).
+    - `getDashboardOverviewMetrics`: Evaluates worker health (healthy, stale, paused, offline), live per-status post counters, provider quota meters, and alerts.
+- [x] **Step 11.2: Effective Settings Viewer & Prompt Studio UI**
+  - `handlePromptStudioPreview`: Resolves multi-tier settings with provenance auditing and template variable support.
+  - `formatPageViewModel`: Presents Page configuration, schedule summary, and token health.
+- [x] **Step 11.3: Review Inbox & Queue / Calendar UI**
+  - `formatReviewCard`: Review cards displaying caption word counts, QA scores, sensitive content warning badges, and composed image paths.
+  - Batch approval, rejection, and inline caption editing handlers.
+- [x] **Step 11.4: Providers, Keys, Chains & Bench UI**
+  - `formatProviderViewModel`: Displays provider adapter kind, active key count, masked key strings (`sk-...1234`), and daily quota usage percentages.
+
+---
+
+### Milestone 12: Deployment, Hardening & End-to-End Acceptance
+- [x] **Step 12.1: Storage Retention & Pruning Engine**
+  - Built `worker/src/schedulers/retention-cleaner.ts`:
+    - `identifyImagesToPrune`: Automatically identifies composed images older than 24 hours for published posts (PRD Section 16), and failed post images older than 3 days.
+    - `executeRetentionPrune`: Cleans up aged local files, prunes research items older than 30 days, and prunes job logs older than 90 days.
+    - `evaluateStorageCapacity`: Disk capacity monitoring with warning threshold at 70% and safe-mode trigger at 90%.
+- [x] **Step 12.2: Production Dockerfile & Railway Configuration**
+  - Multi-stage `Dockerfile`: Lean Node.js 20 production container with pnpm dependency optimization.
+  - `railway.json`: Railway deployment spec with `/health` healthcheck and automated failure restart policy.
+  - `.github/workflows/worker-cron.yml`: GitHub Actions standby fallback cron running every 30 minutes.
+- [x] **Step 12.3: Final End-to-End Acceptance Test Suite**
+  - Built `tests/acceptance.test.ts` validating all core PRD Section 21 acceptance criteria:
+    - Cryptographic security & SSRF protection.
+    - Multi-tier inheritance & content safety baseline.
+    - Deterministic caption validation & repair.
+    - Image QA, perceptual hashing & Sharp 1080×1350 JPEG compositing with headline panel.
+    - Two-step Facebook scheduling with mandatory review holds on sensitive content.
+    - Storage retention, 24h image pruning, and capacity meter.
+  - **Tests run & results:**
+    - `pnpm test`: 280/280 tests passed across 35 test suites.
+    - `pnpm run type-check`: 0 errors.
+    - `pnpm -r run build`: Clean compilation across `@fb-auto/core`, `@fb-auto/worker`, `@fb-auto/web`.
 

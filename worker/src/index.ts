@@ -24,6 +24,7 @@ export * from './image/compositor.js';
 export * from './stages/07-post.js';
 export * from './schedulers/reconciler.js';
 export * from './schedulers/slot-planner.js';
+export * from './schedulers/retention-cleaner.js';
 
 export function getWorkerStatus() {
   return {
