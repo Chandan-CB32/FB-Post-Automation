@@ -4,7 +4,7 @@ on:
   schedule:
     # Executes every 15 minutes around the clock
     - cron: '*/15 * * * *'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 # Ensure only one scheduled run executes at a time; do not cancel in-progress runs
 concurrency:

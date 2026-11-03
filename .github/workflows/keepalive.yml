@@ -4,7 +4,7 @@ on:
   schedule:
     # Runs on the 1st of every month at 00:00 UTC
     - cron: '0 0 1 * *'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -29,4 +29,3 @@ jobs:
           git add docs/keepalive.txt
           git diff --quiet && git diff --staged --quiet || git commit -m "chore(ci): monthly scheduled keepalive ping [skip ci]"
           git push
-
