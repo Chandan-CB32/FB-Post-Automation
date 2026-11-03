@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "FB Auto 247 - Autonomous Multi-Page Facebook Content System (Made by Chandan Biswas)",
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
     "start": "node start.mjs",
     "worker:once": "pnpm --filter @fb-auto/worker run worker:once",
