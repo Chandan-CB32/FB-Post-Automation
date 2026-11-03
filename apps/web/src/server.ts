@@ -1,3 +1,4 @@
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import http from 'node:http';
 import fs from 'node:fs';
 
@@ -74,8 +75,285 @@ function renderNicheSelectOptions(allProfiles: ContentProfile[], selectedId?: st
   return html;
 }
 
-export function createDashboardServer(): http.Server {
-  return http.createServer(async (req, res) => {
+
+// ----------------------------------------------------------------------------
+// Supabase Authentication & Session Management
+// ----------------------------------------------------------------------------
+function parseCookies(req: http.IncomingMessage): Record<string, string> {
+  const list: Record<string, string> = {};
+  const rc = req.headers.cookie;
+  if (!rc) return list;
+  rc.split(';').forEach((cookie) => {
+    const parts = cookie.split('=');
+    const name = parts.shift()?.trim();
+    if (name) {
+      list[name] = decodeURIComponent(parts.join('='));
+    }
+  });
+  return list;
+}
+
+let authClient: SupabaseClient | null = null;
+function getAuthClient(): SupabaseClient | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) return null;
+  if (!authClient) {
+    authClient = createClient(url, anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  return authClient;
+}
+
+async function verifyAuth(req: http.IncomingMessage): Promise<{ authenticated: boolean; user?: any }> {
+  // Allow test suite bypass when in test environment without explicit auth testing
+  if (process.env.NODE_ENV === 'test' && !process.env.TEST_AUTH_ENABLED) {
+    return { authenticated: true, user: { email: process.env.OWNER_EMAIL || 'owner@example.com' } };
+  }
+
+  const client = getAuthClient();
+  if (!client) {
+    return { authenticated: false };
+  }
+
+  let token = '';
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7).trim();
+  }
+
+  if (!token) {
+    const cookies = parseCookies(req);
+    token = cookies['sb_access_token'] || '';
+  }
+
+  if (!token) {
+    return { authenticated: false };
+  }
+
+  try {
+    const { data, error } = await client.auth.getUser(token);
+    if (error || !data.user) {
+      return { authenticated: false };
+    }
+
+    const ownerEmail = process.env.OWNER_EMAIL?.trim().toLowerCase();
+    if (ownerEmail && data.user.email?.toLowerCase() !== ownerEmail) {
+      return { authenticated: false };
+    }
+
+    return { authenticated: true, user: data.user };
+  } catch {
+    return { authenticated: false };
+  }
+}
+
+function generateLoginHtml(errorMsg?: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Sign In - Autonomous Facebook Content System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #030712;
+      --card-bg: #0b0f19;
+      --card-border: #1f2937;
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .login-container {
+      width: 100%;
+      max-width: 440px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 36px 32px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    .brand-header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .brand-icon {
+      width: 52px;
+      height: 52px;
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      border-radius: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+    .brand-title {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+    .brand-sub {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .form-group {
+      margin-bottom: 18px;
+    }
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .form-input {
+      width: 100%;
+      background: #030712;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+    }
+    .alert-error {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-bottom: 20px;
+      display: ${errorMsg ? 'block' : 'none'};
+    }
+    .btn-submit {
+      width: 100%;
+      background: var(--primary);
+      color: #ffffff;
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-top: 8px;
+    }
+    .btn-submit:hover {
+      background: var(--primary-hover);
+    }
+    .btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .security-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 24px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <div class="brand-header">
+      <div class="brand-icon">🛡️</div>
+      <h1 class="brand-title">Admin Dashboard</h1>
+      <p class="brand-sub">Single-Owner Supabase Authentication</p>
+    </div>
+
+    <div class="alert-error" id="errorBox">${errorMsg || ''}</div>
+
+    <form id="loginForm" onsubmit="handleLoginSubmit(event)">
+      <div class="form-group">
+        <label class="form-label" for="email">Admin Email</label>
+        <input class="form-input" type="email" id="email" required placeholder="owner@example.com" autocomplete="username">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="password">Password</label>
+        <input class="form-input" type="password" id="password" required placeholder="••••••••••••" autocomplete="current-password">
+      </div>
+
+      <button type="submit" class="btn-submit" id="submitBtn">Sign In to Dashboard ➔</button>
+    </form>
+
+    <div class="security-badge">
+      🔒 Protected by Supabase Auth & AES-256-GCM Vault
+    </div>
+  </div>
+
+  <script>
+    async function handleLoginSubmit(e) {
+      e.preventDefault();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const errorBox = document.getElementById('errorBox');
+      const submitBtn = document.getElementById('submitBtn');
+
+      errorBox.style.display = 'none';
+      submitBtn.disabled = true;
+      submitBtn.innerText = 'Authenticating...';
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const urlParams = new URLSearchParams(window.location.search);
+          const redirect = urlParams.get('redirect') || '/';
+          window.location.href = redirect;
+        } else {
+          errorBox.innerText = data.error || 'Authentication failed. Please verify your credentials.';
+          errorBox.style.display = 'block';
+          submitBtn.disabled = false;
+          submitBtn.innerText = 'Sign In to Dashboard ➔';
+        }
+      } catch (err) {
+        errorBox.innerText = 'Network error during sign in: ' + err.message;
+        errorBox.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.innerText = 'Sign In to Dashboard ➔';
+      }
+    }
+  </script>
+</body>
+</html>`;
+}
+
+export async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
     const sendJson = (data: any, statusCode = 200) => {
@@ -96,6 +374,98 @@ export function createDashboardServer(): http.Server {
       });
       res.end();
       return;
+    }
+
+    // A. Health check endpoint (Public)
+    if (url.pathname === '/health' || url.pathname === '/api/health') {
+      return sendJson({ status: 'ok', timestamp: new Date().toISOString() });
+    }
+
+    // B. Login Page HTML (Public)
+    if (url.pathname === '/login' && req.method === 'GET') {
+      const auth = await verifyAuth(req);
+      if (auth.authenticated) {
+        res.writeHead(302, { Location: '/' });
+        res.end();
+        return;
+      }
+      const html = generateLoginHtml();
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+      return;
+    }
+
+    // C. Authentication API: Login (Public)
+    if (url.pathname === '/api/auth/login' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const { email, password } = JSON.parse(body || '{}');
+          if (!email || !password) {
+            return sendJson({ error: 'Email and password are required.' }, 400);
+          }
+
+          const client = getAuthClient();
+          if (!client) {
+            return sendJson({ error: 'Supabase authentication is not configured on this server.' }, 500);
+          }
+
+          const { data, error } = await client.auth.signInWithPassword({ email, password });
+          if (error || !data.session) {
+            return sendJson({ error: error?.message || 'Invalid email or password.' }, 401);
+          }
+
+          const ownerEmail = process.env.OWNER_EMAIL?.trim().toLowerCase();
+          if (ownerEmail && data.user?.email?.toLowerCase() !== ownerEmail) {
+            return sendJson({ error: `Access denied. Only owner (${ownerEmail}) is permitted.` }, 403);
+          }
+
+          // Issue secure session cookie (7 days)
+          const cookieHeader = `sb_access_token=${data.session.access_token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`;
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Set-Cookie': cookieHeader,
+          });
+          res.end(JSON.stringify({ success: true, redirect: '/', user: { email: data.user.email } }));
+        } catch (err: any) {
+          return sendJson({ error: err.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // D. Authentication API: Logout (Public)
+    if (url.pathname === '/api/auth/logout' || url.pathname === '/logout') {
+      res.writeHead(302, {
+        'Set-Cookie': 'sb_access_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+        Location: '/login',
+      });
+      res.end();
+      return;
+    }
+
+    // E. Authentication API: Session check
+    if (url.pathname === '/api/auth/session') {
+      const auth = await verifyAuth(req);
+      return sendJson({ authenticated: auth.authenticated, email: auth.user?.email || null });
+    }
+
+    // F. Public Facebook OAuth Callback
+    if (url.pathname === '/api/auth/facebook/callback') {
+      // Allow through to Facebook handler
+    } else {
+      // Auth Gate: Protect all other routes
+      const auth = await verifyAuth(req);
+      if (!auth.authenticated) {
+        if (url.pathname.startsWith('/api/')) {
+          return sendJson({ error: 'Unauthorized. Please sign in.' }, 401);
+        }
+        const redirectUrl = url.pathname === '/' ? '/login' : `/login?redirect=${encodeURIComponent(url.pathname + url.search)}`;
+        res.writeHead(302, { Location: redirectUrl });
+        res.end();
+        return;
+      }
     }
 
     // 1. API: Overview Metrics
@@ -948,7 +1318,10 @@ export function createDashboardServer(): http.Server {
 
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not Found');
-  });
+}
+
+export function createDashboardServer(): http.Server {
+  return http.createServer(handleRequest);
 }
 
 function generateDashboardHtml(): string {
@@ -1186,6 +1559,15 @@ function generateDashboardHtml(): string {
       <li class="nav-item"><button onclick="showTab('audit', this)">📋 System Audit Logs</button></li>
       <li class="nav-item"><button onclick="showTab('settings', this)">⚙️ Settings & Controls</button></li>
     </ul>
+    <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid var(--card-border);">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+          <div style="width: 28px; height: 28px; border-radius: 50%; background: #2563eb; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; flex-shrink: 0;">👤</div>
+          <span style="font-size: 12px; color: var(--text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;" title="${process.env.OWNER_EMAIL || 'Administrator'}">${process.env.OWNER_EMAIL || 'Administrator'}</span>
+        </div>
+      </div>
+      <a href="/api/auth/logout" style="display: block; width: 100%; text-align: center; padding: 8px 12px; background: #1f2937; color: #f87171; border-radius: 6px; font-size: 12px; font-weight: 600; text-decoration: none; transition: background 0.15s;" onmouseover="this.style.background='#374151'" onmouseout="this.style.background='#1f2937'">🚪 Sign Out</a>
+    </div>
   </aside>
 
   <!-- Main Body -->

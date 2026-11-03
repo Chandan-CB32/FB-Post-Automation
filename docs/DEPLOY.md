@@ -159,14 +159,16 @@ Your GitHub Actions worker needs access to your database and encryption keys to 
 3. Under *Import Git Repository*, find your `FB-Post-Automation` repository and click **Import**.
 4. Configure Project Settings:
    - **Project Name:** `fb-post-automation`
-   - **Framework Preset:** `Other` (or Node.js)
+   - **Framework Preset:** `Other`
    - **Root Directory:** `./`
    - **Build Command:** `pnpm build`
-   - **Output Directory:** `apps/web/dist`
+   - **Output Directory:** `public`
 5. Expand the **Environment Variables** section and add:
    - `NEXT_PUBLIC_SUPABASE_URL`: `https://your-project.supabase.co`
-   - `SUPABASE_SERVICE_ROLE_KEY`: `eyJ...`
-   - `ENCRYPTION_KEY`: (Your 32-byte hex encryption key)
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: (Publishable anon key)
+   - `SUPABASE_SERVICE_ROLE_KEY`: `eyJ...` (Secret service_role key)
+   - `ENCRYPTION_KEY`: (Your 32-byte base64 encryption key)
+   - `OWNER_EMAIL`: `your-email@example.com`
    - `NODE_ENV`: `production`
 6. Click **Deploy**. Vercel will install dependencies, compile the packages, and give you a live production URL (e.g. `https://fb-post-automation.vercel.app`).
 

@@ -29,6 +29,9 @@ importers:
       '@fb-auto/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@supabase/supabase-js':
+        specifier: ^2.118.0
+        version: 2.118.0
     devDependencies:
       typescript:
         specifier: ^5.7.3
