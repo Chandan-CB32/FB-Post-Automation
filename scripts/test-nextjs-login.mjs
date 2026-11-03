@@ -85,7 +85,7 @@ async function run() {
     const loginPageRes = await fetch(`${BASE_URL}/login`);
     const loginHtml = await loginPageRes.text();
     console.log(`   Status: ${loginPageRes.status} | HTML Length: ${loginHtml.length}`);
-    if (loginPageRes.status !== 200 || !loginHtml.includes('Admin Sign In')) {
+    if (loginPageRes.status !== 200 || !loginHtml.includes('FB Auto 247')) {
       throw new Error('Login page HTML failed to load!');
     }
     console.log('   ✅ Login page HTML rendered cleanly.');
@@ -130,7 +130,7 @@ async function run() {
     });
     const dashHtml = await authDashRes.text();
     console.log(`   Status: ${authDashRes.status} | HTML Length: ${dashHtml.length}`);
-    if (authDashRes.status !== 200 || !dashHtml.includes('Autonomous Facebook Content Automation System')) {
+    if (authDashRes.status !== 200 || !dashHtml.includes('FB Auto 247')) {
       throw new Error('Authenticated dashboard access failed on Next.js!');
     }
     console.log('   ✅ Authenticated dashboard rendered in full on Next.js.');

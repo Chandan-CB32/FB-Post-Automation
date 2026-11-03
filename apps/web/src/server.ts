@@ -155,7 +155,7 @@ function generateLoginHtml(errorMsg?: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin Sign In - Autonomous Facebook Content System</title>
+  <title>FB Auto 247 - Admin Sign In</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -287,8 +287,8 @@ function generateLoginHtml(errorMsg?: string): string {
   <div class="login-container">
     <div class="brand-header">
       <div class="brand-icon">🛡️</div>
-      <h1 class="brand-title">Admin Dashboard</h1>
-      <p class="brand-sub">Single-Owner Supabase Authentication</p>
+      <h1 class="brand-title">FB Auto 247</h1>
+      <p class="brand-sub">Autonomous 24/7 Facebook System • Made by Chandan Biswas</p>
     </div>
 
     <div class="alert-error" id="errorBox">${errorMsg || ''}</div>
@@ -307,8 +307,9 @@ function generateLoginHtml(errorMsg?: string): string {
       <button type="submit" class="btn-submit" id="submitBtn">Sign In to Dashboard ➔</button>
     </form>
 
-    <div class="security-badge">
-      🔒 Protected by Supabase Auth & AES-256-GCM Vault
+    <div class="security-badge" style="display: flex; flex-direction: column; gap: 8px; align-items: center; justify-content: center; margin-top: 24px; font-size: 12px; color: var(--text-muted);">
+      <span>🔒 Protected by Supabase Auth & AES-256-GCM Vault</span>
+      <span style="font-weight: 600; color: #60a5fa; letter-spacing: 0.5px;">✨ Made by Chandan Biswas</span>
     </div>
   </div>
 
@@ -1350,7 +1351,7 @@ function generateDashboardHtml(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Autonomous Facebook Content Automation System</title>
+  <title>FB Auto 247 - Autonomous Multi-Page Facebook System</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -1540,9 +1541,9 @@ function generateDashboardHtml(): string {
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-icon">FB</div>
+      <div class="brand-icon">247</div>
       <div>
-        <div class="brand-title">FB Autonomous</div>
+        <div class="brand-title">FB Auto 247</div>
         <div class="brand-badge">Engine v${CORE_VERSION}</div>
       </div>
     </div>
@@ -1567,6 +1568,7 @@ function generateDashboardHtml(): string {
         </div>
       </div>
       <a href="/api/auth/logout" style="display: block; width: 100%; text-align: center; padding: 8px 12px; background: #1f2937; color: #f87171; border-radius: 6px; font-size: 12px; font-weight: 600; text-decoration: none; transition: background 0.15s;" onmouseover="this.style.background='#374151'" onmouseout="this.style.background='#1f2937'">🚪 Sign Out</a>
+      <div style="font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 14px; font-weight: 500; letter-spacing: 0.3px;">Made by <strong style="color: #60a5fa;">Chandan Biswas</strong></div>
     </div>
   </aside>
 
@@ -1574,8 +1576,8 @@ function generateDashboardHtml(): string {
   <main class="main">
     <header class="header">
       <div class="header-title">
-        <h1 id="tabHeading">Overview Dashboard</h1>
-        <p id="tabDesc">Autonomous multi-page content production status and operational metrics.</p>
+        <h1 id="tabHeading">FB Auto 247 Dashboard</h1>
+        <p id="tabDesc">Autonomous 24/7 multi-page content machine • Made by Chandan Biswas</p>
       </div>
       <div class="status-pill" id="workerPill">
         <div class="status-dot"></div>
@@ -3869,7 +3871,7 @@ function generateStandalonePageDetailsHtml(pageId: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${page.name} - Deep Page Inspection & Live Stream</title>
+  <title>${page.name} - FB Auto 247 Deep Page Inspection</title>
   <style>
     :root {
       --bg: #030712;
@@ -3952,7 +3954,7 @@ function generateStandalonePageDetailsHtml(pageId: string): string {
   <div class="container">
     <!-- Top Navigation -->
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-      <a href="/" class="btn btn-secondary">⬅️ Back to Main Dashboard</a>
+      <div style="display: flex; align-items: center; gap: 12px;"><a href="/" class="btn btn-secondary">⬅️ Back to Main Dashboard</a><span style="font-size: 12px; font-weight: 600; color: #60a5fa; background: rgba(37,99,235,0.15); padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(59,130,246,0.3);">FB Auto 247 • Made by Chandan Biswas</span></div>
       <div style="display: flex; gap: 10px;">
         <button class="btn btn-secondary" onclick="window.location.reload()">🔄 Refresh Live Data</button>
         <button class="btn btn-primary" onclick="triggerPageTestRun('${page.id}')">🚀 Generate Post Now</button>
@@ -4130,6 +4132,10 @@ function generateStandalonePageDetailsHtml(pageId: string): string {
         </div>
       </div>
     </div>
+    <footer style="margin-top: 36px; padding: 20px 0; border-top: 1px solid var(--card-border); display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--text-muted);">
+      <div><strong>FB Auto 247</strong> • Deep Page Inspection & Live Stream</div>
+      <div>Made by <strong style="color: #3b82f6;">Chandan Biswas</strong></div>
+    </footer>
   </div>
 
   <script>

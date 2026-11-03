@@ -1,8 +1,8 @@
 {
-  "name": "fb-post-automation-monorepo",
+  "name": "fb-auto-247",
   "version": "0.1.0",
   "private": true,
-  "description": "Customizable Autonomous Multi-Page Facebook Content System",
+  "description": "FB Auto 247 - Autonomous Multi-Page Facebook Content System (Made by Chandan Biswas)",
   "scripts": {
     "start": "node start.mjs",
     "worker:once": "pnpm --filter @fb-auto/worker run worker:once",
