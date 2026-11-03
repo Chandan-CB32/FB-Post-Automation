@@ -7,6 +7,8 @@ node_modules
 .env*.local
 *.pem
 *.key
+data/*.json
+!data/.gitkeep
 
 # Build outputs
 dist

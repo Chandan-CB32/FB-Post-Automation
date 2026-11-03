@@ -15,7 +15,16 @@ import { encryptPageToken, encrypt, maskSecret } from '@fb-auto/core';
 export interface StoredProvider {
   id: string;
   name: string;
-  adapter_kind: 'gemini_native' | 'openai_compatible_chat' | 'cloudflare_workers_ai' | 'pollinations_image' | 'custom_http';
+  adapter_kind:
+    | 'gemini_native'
+    | 'openai_compatible_chat'
+    | 'openai_compatible_images'
+    | 'cloudflare_workers_ai'
+    | 'huggingface_inference'
+    | 'pollinations'
+    | 'pollinations_image'
+    | 'custom_http'
+    | string;
   base_url?: string;
   model_name?: string;
   daily_limit: number;
@@ -423,6 +432,25 @@ export class SystemStore {
     this.data.posts[idx] = updated;
     this.save();
     return updated;
+  }
+
+  public createPost(input: Partial<StoredPost> & { page_id: string; title: string; caption: string }): StoredPost {
+    const id = `post_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const newPost: StoredPost = {
+      status: 'scheduled',
+      review_state: 'n/a',
+      caption_word_count: input.caption.trim().split(/\s+/).length,
+      hashtags: [],
+      scheduled_for: new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
+      qa_score: 95,
+      ...input,
+      id,
+      created_at: now,
+    };
+    this.data.posts.unshift(newPost);
+    this.save();
+    return newPost;
   }
 
   public removePost(id: string): boolean {

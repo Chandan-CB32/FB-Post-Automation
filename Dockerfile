@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for FB Post Automation System
+# Multi-stage Dockerfile for FB Post Automation System (Dashboard + 24/7 Worker)
 FROM node:20-bookworm-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -40,13 +40,16 @@ COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/worker/package.json ./worker/
 COPY --from=build /app/worker/dist ./worker/dist
 COPY --from=build /app/apps/web/package.json ./apps/web/
-COPY --from=build /app/apps/web/src ./apps/web/src
+COPY --from=build /app/apps/web/dist ./apps/web/dist
+COPY --from=build /app/start.mjs ./start.mjs
 
 # Production dependencies only
 RUN pnpm install --prod --frozen-lockfile
 
+# Create persistent data directory
+RUN mkdir -p /app/data
+
 EXPOSE 3000
 
-# Default entrypoint runs the autonomous worker
-CMD ["node", "worker/dist/index.js"]
-
+# Runs both the Web Dashboard and the 24/7 Autonomous Publisher concurrently
+CMD ["node", "start.mjs"]

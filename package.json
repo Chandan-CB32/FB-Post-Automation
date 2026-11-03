@@ -4,6 +4,8 @@
   "private": true,
   "description": "Customizable Autonomous Multi-Page Facebook Content System",
   "scripts": {
+    "start": "node start.mjs",
+    "worker:once": "pnpm --filter @fb-auto/worker run worker:once",
     "dev": "node --env-file=.env apps/web/dist/server.js",
     "build": "pnpm -r run build",
     "test": "vitest run",

@@ -1,0 +1,32 @@
+name: Keepalive Scheduled Workflows
+
+on:
+  schedule:
+    # Runs on the 1st of every month at 00:00 UTC
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    name: Prevent Inactivity Workflow Disabling
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update keepalive timestamp
+        shell: bash
+        run: |
+          mkdir -p docs
+          echo "Keepalive heartbeat on $(date -u +'%Y-%m-%dT%H:%M:%SZ')" > docs/keepalive.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/keepalive.txt
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore(ci): monthly scheduled keepalive ping [skip ci]"
+          git push
+

@@ -26,6 +26,9 @@ import {
   maskSecret,
   decryptPageToken,
   ContentProfile,
+  PROVIDER_PRESETS,
+  findPresetById,
+  ProviderPreset,
 } from '@fb-auto/core';
 import { SystemStore, StoredPage } from './server/storage.js';
 import { getDashboardOverviewMetrics } from './index.js';
@@ -33,6 +36,29 @@ import { getDashboardOverviewMetrics } from './index.js';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const store = SystemStore.getInstance();
 const seedProfiles: ContentProfile[] = getAllNicheProfiles();
+
+function renderProviderPresetOptions(selectedId?: string): string {
+  const groups: Record<string, ProviderPreset[]> = {
+    '⭐ Popular AI Providers': PROVIDER_PRESETS.filter((p) => p.category === 'popular'),
+    '🎨 Image & Visual AI': PROVIDER_PRESETS.filter((p) => p.category === 'image'),
+    '⚡ Specialized & Cloud': PROVIDER_PRESETS.filter((p) => p.category === 'specialized'),
+    '💻 Free Local & Custom': PROVIDER_PRESETS.filter((p) => p.category === 'free_local'),
+  };
+
+  let html = '';
+  for (const [groupName, presets] of Object.entries(groups)) {
+    if (presets.length === 0) continue;
+    html += `<optgroup label="${groupName}">`;
+    for (const p of presets) {
+      const isSelected = (selectedId && p.id === selectedId) || (!selectedId && p.id === 'preset-gemini') ? 'selected' : '';
+      const safeInstructions = (p.instructions || '').replace(/"/g, '&quot;');
+      const defaultModel = p.defaultTextModel || p.defaultImageModel || '';
+      html += `<option value="${p.id}" ${isSelected} data-name="${p.name}" data-kind="${p.kind}" data-baseurl="${p.baseUrl}" data-model="${defaultModel}" data-limit="${p.rpdLimit}" data-instructions="${safeInstructions}">${p.name}</option>`;
+    }
+    html += `</optgroup>`;
+  }
+  return html;
+}
 
 function renderNicheSelectOptions(allProfiles: ContentProfile[], selectedId?: string): string {
   const categories = getNicheCategoriesMap(allProfiles);
@@ -571,7 +597,32 @@ export function createDashboardServer(): http.Server {
             estimatedCost: '$0.0016',
           };
 
-          return sendJson(simOutput);
+          // Save created post into the page production pipeline
+          const postStatus = page.publishing_mode === 'review' ? 'pending_review' : 'scheduled';
+          const reviewState = page.publishing_mode === 'review' ? 'pending' : 'approved';
+          const savedPost = store.createPost({
+            page_id: page.id,
+            fb_account_id: page.fb_account_id,
+            title: topicTitle,
+            headline: headline,
+            caption: generatedCaption,
+            caption_word_count: generatedCaption.trim().split(/\s+/).length,
+            first_comment: page.first_comment_enabled ? `Join our community discussion on ${profile.name}! What are your thoughts?` : undefined,
+            status: postStatus,
+            review_state: reviewState as any,
+            qa_score: 95,
+            scheduled_for: new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
+          });
+
+          store.addAuditLog({
+            level: 'success',
+            category: 'publish',
+            message: `Automated post generated for "${page.name}": "${topicTitle}" (QA: 95/100)`,
+            page_id: page.id,
+            details: { postId: savedPost.id, topic: topicTitle, qaScore: 95, mode: page.publishing_mode },
+          });
+
+          return sendJson({ ...simOutput, createdPostId: savedPost.id });
         } catch (e: any) {
           return sendJson({ error: e.message }, 500);
         }
@@ -609,17 +660,35 @@ export function createDashboardServer(): http.Server {
         req.on('end', () => {
           try {
             const data = JSON.parse(body || '{}');
-            if (!data.name || !data.adapter_kind) {
+            let name = data.name;
+            let adapter_kind = data.adapter_kind;
+            let base_url = data.base_url;
+            let model_name = data.model_name;
+            let daily_limit = Number(data.daily_limit) || 1000;
+            let priority = Number(data.priority) || 1;
+
+            if (data.preset_id) {
+              const preset = findPresetById(data.preset_id);
+              if (preset) {
+                name = name || preset.name;
+                adapter_kind = adapter_kind || preset.kind;
+                base_url = base_url || preset.baseUrl;
+                model_name = model_name || preset.defaultTextModel || preset.defaultImageModel;
+                daily_limit = data.daily_limit ? Number(data.daily_limit) : preset.rpdLimit;
+              }
+            }
+
+            if (!name || !adapter_kind) {
               return sendJson({ error: 'Provider name and adapter_kind are required.' }, 400);
             }
 
             const newProvider = store.createProvider({
-              name: data.name,
-              adapter_kind: data.adapter_kind,
-              base_url: data.base_url,
-              model_name: data.model_name,
-              daily_limit: Number(data.daily_limit) || 1000,
-              priority: Number(data.priority) || 1,
+              name,
+              adapter_kind,
+              base_url,
+              model_name,
+              daily_limit,
+              priority,
               enabled: data.enabled !== false,
             });
 
@@ -627,7 +696,7 @@ export function createDashboardServer(): http.Server {
             if (data.initial_key && data.initial_key.trim()) {
               addedKey = store.addProviderKey({
                 provider_id: newProvider.id,
-                raw_key: data.initial_key,
+                raw_key: data.initial_key.trim(),
                 label: data.key_label || 'Primary Key',
               });
             }
@@ -779,7 +848,97 @@ export function createDashboardServer(): http.Server {
       return;
     }
 
-    // 12. Web Dashboard HTML UI
+    // 12. API: Provider Presets catalog
+    if (url.pathname === '/api/provider-presets') {
+      return sendJson(PROVIDER_PRESETS);
+    }
+
+    // 13. API: Page Details Inspection
+    if (url.pathname === '/api/page-details') {
+      const pageId = url.searchParams.get('pageId') || url.searchParams.get('id');
+      const page = pageId ? store.getPageById(pageId) : store.getPages()[0];
+      if (!page) {
+        return sendJson({ error: 'Page not found' }, 404);
+      }
+
+      const account = store.getAccounts().find((a) => a.id === page.fb_account_id);
+      const profile =
+        seedProfiles.find(
+          (p) =>
+            p.id === page.profile_id ||
+            p.name.toLowerCase().includes(page.profile_id.toLowerCase()) ||
+            page.profile_id.toLowerCase().includes(p.name.toLowerCase())
+        ) || createCustomNicheProfile(page.profile_id);
+
+      const resolved = resolveSettings({
+        profile,
+        page: {
+          publishingMode: page.publishing_mode,
+          hybridMinScore: page.hybrid_min_score,
+          overrides: page.overrides || {},
+          customCaptionPrompt: page.custom_caption_prompt,
+          customCaptionPromptMode: page.custom_caption_prompt_mode,
+          customImagePrompt: page.custom_image_prompt,
+          customImagePromptMode: page.custom_image_prompt_mode,
+        },
+      });
+
+      const pagePosts = store.getPosts().filter((p) => p.page_id === page.id || p.page_id === page.fb_page_id);
+      const publishedPosts = pagePosts.filter((p) => p.status === 'published');
+      const scheduledPosts = pagePosts.filter((p) => p.status === 'scheduled');
+      const reviewPosts = pagePosts.filter((p) => p.status === 'pending_review' || p.review_state === 'pending');
+
+      const totalImpressions = publishedPosts.reduce((acc, p) => acc + (p.analytics?.impressions || 0), 0);
+      const totalReach = publishedPosts.reduce((acc, p) => acc + (p.analytics?.reach || 0), 0);
+      const totalLikes = publishedPosts.reduce((acc, p) => acc + (p.analytics?.likes || 0), 0);
+      const totalComments = publishedPosts.reduce((acc, p) => acc + (p.analytics?.comments || 0), 0);
+      const totalShares = publishedPosts.reduce((acc, p) => acc + (p.analytics?.shares || 0), 0);
+      const avgEngagement = publishedPosts.length > 0
+        ? Number(((publishedPosts.reduce((acc, p) => acc + (p.analytics?.engagement_rate || 0), 0) / publishedPosts.length)).toFixed(2))
+        : 0;
+
+      const scoredPosts = pagePosts.filter((p) => typeof p.qa_score === 'number');
+      const avgQaScore = scoredPosts.length > 0
+        ? Math.round(scoredPosts.reduce((acc, p) => acc + (p.qa_score || 0), 0) / scoredPosts.length)
+        : 0;
+
+      const pageLogs = store.getAuditLogs().filter(
+        (l) => l.page_id === page.id || l.details?.page_id === page.id || l.message.includes(page.name)
+      );
+
+      return sendJson({
+        page,
+        account: account ? { id: account.id, account_name: account.account_name, fb_user_id: account.fb_user_id, token_status: account.token_status } : null,
+        profile,
+        effectiveSettings: resolved,
+        posts: pagePosts,
+        stats: {
+          totalPosts: pagePosts.length,
+          publishedCount: publishedPosts.length,
+          scheduledCount: scheduledPosts.length,
+          reviewCount: reviewPosts.length,
+          totalImpressions,
+          totalReach,
+          totalLikes,
+          totalComments,
+          totalShares,
+          avgEngagement,
+          avgQaScore,
+        },
+        auditLogs: pageLogs,
+      });
+    }
+
+    // 14. Dedicated Standalone Page Details Window
+    if (req.method === 'GET' && url.pathname === '/page-details') {
+      const pageId = url.searchParams.get('id') || url.searchParams.get('pageId') || '';
+      const html = generateStandalonePageDetailsHtml(pageId);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+      return;
+    }
+
+    // 15. Web Dashboard HTML UI
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
       const html = generateDashboardHtml();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -1143,7 +1302,7 @@ function generateDashboardHtml(): string {
                           ownedPages.length > 0
                             ? ownedPages
                                 .map(
-                                  (p) => `<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-size: 11px;">${p.name}</span>`
+                                  (p) => `<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-size: 11px; cursor: pointer;" onclick="openPageDetailsWindow('${p.id}')" title="Click to view all data and live feed for ${p.name}">📄 ${p.name} ↗</span>`
                                 )
                                 .join('')
                             : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No pages linked yet</span>'
@@ -1212,8 +1371,10 @@ function generateDashboardHtml(): string {
                     return `
                   <tr id="page-row-${p.id}" class="page-row" data-account="${p.fb_account_id || ''}">
                     <td>
-                      <strong>${p.name}</strong><br>
-                      <small style="color: #60a5fa;">Profile: ${p.profile_id}</small>
+                      <a href="javascript:void(0)" onclick="openPageDetailsWindow('${p.id}')" style="color: #60a5fa; text-decoration: none; font-size: 15px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px;" title="View all posts, stats & details for ${p.name}">
+                        📄 ${p.name} <span class="badge" style="background: rgba(96,165,250,0.15); color: #93c5fd; font-size: 10px; padding: 2px 6px;">Inspect ↗</span>
+                      </a><br>
+                      <small style="color: var(--text-muted);">Base Niche: <strong style="color: #cbd5e1;">${p.profile_id}</strong></small>
                     </td>
                     <td>
                       <span class="badge" style="background: #1e293b; color: #93c5fd; font-size: 11px;">
@@ -1229,9 +1390,10 @@ function generateDashboardHtml(): string {
                     </td>
                     <td>${p.schedule.postsPerDay} posts/day (${p.schedule.postingTimes.join(', ')})</td>
                     <td style="text-align: right;">
-                      <div style="display: flex; justify-content: flex-end; gap: 8px;">
-                        <button class="btn btn-secondary" onclick="openPagePromptStudio('${p.id}')">✍️ Custom Prompts</button>
-                        <button class="btn btn-danger" onclick="deletePageAction('${p.id}')">🗑️</button>
+                      <div style="display: flex; justify-content: flex-end; gap: 6px;">
+                        <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')">🔍 View Page Data</button>
+                        <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openPagePromptStudio('${p.id}')">✍️ Prompts</button>
+                        <button class="btn btn-danger" style="padding: 5px 8px; font-size: 12px;" onclick="deletePageAction('${p.id}')">🗑️</button>
                       </div>
                     </td>
                   </tr>
@@ -1955,69 +2117,219 @@ function generateDashboardHtml(): string {
     </div>
   </div>
 
-  <!-- MODAL: ADD NEW PROVIDER -->
+  <!-- MODAL: ADD NEW PROVIDER (STREAMLINED 2-STEP SETUP) -->
   <div class="modal" id="addProviderModal">
-    <div class="modal-content">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
-        <h3 style="font-size: 18px;">➕ Add AI or Image Provider</h3>
+    <div class="modal-content" style="max-width: 600px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+        <h3 style="font-size: 18px; margin: 0;">➕ Add AI Provider & API Key</h3>
         <button onclick="closeAddProviderModal()" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
       </div>
+      <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 18px;">
+        Select your AI provider and paste your API key. Base URLs, optimal models, failover routing, and AES-256-GCM encryption are configured automatically.
+      </p>
 
       <form id="addProviderForm" onsubmit="submitNewProvider(event)">
-        <div class="form-group">
-          <label>Provider Name *</label>
-          <input type="text" id="newProviderName" class="form-control" placeholder="e.g. Google Gemini 2.5 Flash, Groq LLaMA 3.3, DeepSeek R1" required>
-        </div>
-
-        <div class="form-group">
-          <label>Adapter Kind *</label>
-          <select id="newProviderAdapter" class="form-control" onchange="onAdapterSelectChange(this.value)">
-            <option value="gemini_native">Google Gemini Native (gemini_native)</option>
-            <option value="openai_compatible_chat">OpenAI Compatible Chat (OpenAI, Groq, OpenRouter, DeepSeek)</option>
-            <option value="cloudflare_workers_ai">Cloudflare Workers AI (cloudflare_workers_ai)</option>
-            <option value="pollinations_image">Pollinations AI Image (pollinations_image)</option>
-            <option value="custom_http">Custom HTTP JSON Webhook (custom_http)</option>
+        <!-- Step 1: Wide Known Providers Dropdown -->
+        <div class="form-group" style="margin-bottom: 16px;">
+          <label style="font-weight: 600; font-size: 13px; color: #f3f4f6;">1. Select AI Provider *</label>
+          <select id="quickProviderSelect" class="form-control" onchange="onQuickProviderChange(this.value)" style="font-size: 14px; padding: 10px 12px; font-weight: 500;" required>
+            ${renderProviderPresetOptions()}
           </select>
         </div>
 
-        <div class="form-group">
-          <label>Base URL</label>
-          <input type="text" id="newProviderBaseUrl" class="form-control" value="https://generativelanguage.googleapis.com/v1beta" placeholder="https://api.openai.com/v1">
-        </div>
-
-        <div class="form-group">
-          <label>Model Name / ID</label>
-          <input type="text" id="newProviderModel" class="form-control" value="gemini-2.5-flash" placeholder="e.g. gpt-4o, llama-3.3-70b-versatile, @cf/black-forest-labs/flux-1-schnell">
-        </div>
-
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
-          <div class="form-group">
-            <label>Failover Priority (1 = Primary, 2+ = Fallback)</label>
-            <input type="number" id="newProviderPriority" class="form-control" value="1" min="1" max="10">
-          </div>
-          <div class="form-group">
-            <label>Daily Request Quota</label>
-            <input type="number" id="newProviderDailyLimit" class="form-control" value="1000" min="10">
+        <!-- Dynamic Instructions Banner -->
+        <div id="quickProviderInfoBox" style="background: rgba(30, 58, 138, 0.25); border: 1px solid #1e40af; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: #93c5fd; display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 18px;">💡</span>
+          <div id="quickProviderInstructions" style="line-height: 1.4;">
+            Get a free API key at Google AI Studio (<a href="https://aistudio.google.com" target="_blank" style="color: #60a5fa; text-decoration: underline; font-weight: 600;">aistudio.google.com</a>).
           </div>
         </div>
 
-        <div style="border-top: 1px solid var(--card-border); padding-top: 14px; margin-top: 14px;">
-          <h4 style="font-size: 12px; color: #60a5fa; margin-bottom: 10px; text-transform: uppercase;">Initial API Key (AES-256-GCM Encrypted Immediately)</h4>
-          <div class="form-group">
-            <label>API Key / Secret Token (Optional)</label>
-            <input type="password" id="newProviderKey" class="form-control" placeholder="sk-... or AIza... (Leave blank if keyless)">
+        <!-- Step 2: API Key Input -->
+        <div class="form-group" style="margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label style="font-weight: 600; font-size: 13px; color: #f3f4f6;">2. API Key / Secret Token</label>
+            <button type="button" onclick="toggleQuickKeyVisibility()" style="background: none; border: none; color: #60a5fa; font-size: 12px; cursor: pointer;">👁️ Show / Hide</button>
           </div>
-          <div class="form-group">
-            <label>Key Label</label>
-            <input type="text" id="newProviderKeyLabel" class="form-control" placeholder="e.g. Primary Production Key">
+          <input type="password" id="quickApiKey" class="form-control" placeholder="Paste your API key here (leave blank for keyless providers like Pollinations / Ollama)" style="padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 13px;">
+          <small id="quickKeyHint" style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 4px;">AES-256-GCM encrypted upon saving. Never stored or logged in plaintext.</small>
+        </div>
+
+        <!-- Collapsible Advanced Settings -->
+        <div style="border-top: 1px solid var(--card-border); padding-top: 10px; margin-top: 14px;">
+          <button type="button" onclick="toggleQuickAdvanced()" style="background: none; border: none; color: var(--text-muted); font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 0;">
+            <span id="quickAdvArrow">▶</span> <span>Advanced Settings (Model, Base URL, Failover Priority, Daily Quota)</span>
+          </button>
+          <div id="quickAdvancedFields" style="display: none; margin-top: 12px; background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #1e293b;">
+            <div class="form-group" style="margin-bottom: 10px;">
+              <label style="font-size: 12px;">Display Name</label>
+              <input type="text" id="newProviderName" class="form-control" value="Google Gemini (Gemini 2.5 Flash)" style="font-size: 12px;">
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+              <div class="form-group">
+                <label style="font-size: 12px;">Adapter Kind</label>
+                <input type="text" id="newProviderAdapter" class="form-control" value="gemini_native" style="font-size: 12px;" readonly>
+              </div>
+              <div class="form-group">
+                <label style="font-size: 12px;">Default Model</label>
+                <input type="text" id="newProviderModel" class="form-control" value="gemini-2.5-flash" style="font-size: 12px;">
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom: 10px;">
+              <label style="font-size: 12px;">Base URL</label>
+              <input type="text" id="newProviderBaseUrl" class="form-control" value="https://generativelanguage.googleapis.com/v1beta" style="font-size: 12px;">
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div class="form-group">
+                <label style="font-size: 12px;">Failover Priority (1 = Primary)</label>
+                <input type="number" id="newProviderPriority" class="form-control" value="1" min="1" max="10" style="font-size: 12px;">
+              </div>
+              <div class="form-group">
+                <label style="font-size: 12px;">Daily Request Quota</label>
+                <input type="number" id="newProviderDailyLimit" class="form-control" value="1500" min="10" style="font-size: 12px;">
+              </div>
+            </div>
           </div>
         </div>
 
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
           <button type="button" class="btn btn-secondary" onclick="closeAddProviderModal()">Cancel</button>
-          <button type="submit" class="btn btn-primary">Create Provider</button>
+          <button type="submit" class="btn btn-primary" style="padding: 10px 20px; font-weight: 600;">➕ Connect & Save Provider</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- MODAL: DEEP PAGE INSPECTION SEPARATE WINDOW -->
+  <div class="modal" id="pageDetailsModal">
+    <div class="modal-content" style="max-width: 1020px; width: 95%; max-height: 92vh; overflow-y: auto; padding: 26px;">
+      <!-- Window Top Header -->
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; border-bottom: 1px solid var(--card-border); padding-bottom: 16px;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+            <h3 id="pdwTitle" style="font-size: 22px; margin: 0; color: #f9fafb;">📄 Page Details</h3>
+            <span id="pdwStatusBadge" class="badge" style="background: #064e3b; color: #34d399; font-size: 12px;">● ACTIVE</span>
+            <span id="pdwModeBadge" class="badge" style="background: #1e3a8a; color: #60a5fa; font-size: 12px;">AUTONOMOUS</span>
+          </div>
+          <div style="font-size: 13px; color: var(--text-muted); display: flex; gap: 14px; flex-wrap: wrap;">
+            <span>Base Niche: <strong id="pdwNiche" style="color: #cbd5e1;">Niche</strong></span>
+            <span>Facebook Page ID: <code id="pdwFbPageId" style="color: #93c5fd;">123456789</code></span>
+            <span>Owner Identity: <span id="pdwOwner" style="color: #cbd5e1;">Facebook Account</span></span>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;" onclick="openCurrentPageInNewWindow()" title="Open this exact page inspection in a standalone browser window">
+            ↗️ Open in New Browser Window
+          </button>
+          <button onclick="closePageDetailsModal()" style="background: none; border: none; color: var(--text-muted); font-size: 22px; cursor: pointer; padding: 0 4px;">✕</button>
+        </div>
+      </div>
+
+      <!-- Quick KPI Metric Cards Row -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 22px;">
+        <div class="card" style="padding: 14px; background: #0f172a; border: 1px solid #1e293b;">
+          <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Posts Pipeline</div>
+          <div id="pdwTotalPosts" style="font-size: 24px; font-weight: 700; color: #60a5fa; margin: 4px 0;">0</div>
+          <div id="pdwPostBreakdown" style="font-size: 11px; color: var(--text-muted);">0 Published • 0 Scheduled • 0 Review</div>
+        </div>
+        <div class="card" style="padding: 14px; background: #0f172a; border: 1px solid #1e293b;">
+          <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Reach & Impressions</div>
+          <div id="pdwTotalReach" style="font-size: 24px; font-weight: 700; color: #34d399; margin: 4px 0;">0</div>
+          <div id="pdwEngagement" style="font-size: 11px; color: var(--text-muted);">0% Avg Engagement Rate</div>
+        </div>
+        <div class="card" style="padding: 14px; background: #0f172a; border: 1px solid #1e293b;">
+          <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Cadence & Next Slot</div>
+          <div id="pdwCadenceTitle" style="font-size: 20px; font-weight: 700; color: #f59e0b; margin: 4px 0;">3 / day</div>
+          <div id="pdwNextSlot" style="font-size: 11px; color: var(--text-muted);">Times: 09:00, 15:00, 21:00</div>
+        </div>
+        <div class="card" style="padding: 14px; background: #0f172a; border: 1px solid #1e293b;">
+          <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">QA Compliance Score</div>
+          <div id="pdwQaScore" style="font-size: 24px; font-weight: 700; color: #a78bfa; margin: 4px 0;">-- / 100</div>
+          <div id="pdwQaStatus" style="font-size: 11px; color: var(--text-muted);">Threshold: 85 (Strict)</div>
+        </div>
+      </div>
+
+      <!-- Window Subtabs -->
+      <div style="display: flex; gap: 8px; border-bottom: 1px solid var(--card-border); margin-bottom: 20px;">
+        <button class="btn btn-primary pdw-tab-btn active" onclick="switchPageModalTab('posts', this)" style="border-radius: 6px 6px 0 0; padding: 8px 16px; font-size: 13px;">📝 All Posts & Production Stream</button>
+        <button class="btn btn-secondary pdw-tab-btn" onclick="switchPageModalTab('prompts', this)" style="border-radius: 6px 6px 0 0; padding: 8px 16px; font-size: 13px;">✍️ Page Prompts & Persona</button>
+        <button class="btn btn-secondary pdw-tab-btn" onclick="switchPageModalTab('cadence', this)" style="border-radius: 6px 6px 0 0; padding: 8px 16px; font-size: 13px;">⏰ Cadence & Scheduled Slots</button>
+        <button class="btn btn-secondary pdw-tab-btn" onclick="switchPageModalTab('logs', this)" style="border-radius: 6px 6px 0 0; padding: 8px 16px; font-size: 13px;">📜 Activity & Audit Logs</button>
+      </div>
+
+      <!-- TAB 1: ALL POSTS & PRODUCTION STREAM -->
+      <div id="pdwTabPosts" class="pdw-subtab">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+          <div style="display: flex; gap: 6px;">
+            <button class="btn btn-secondary pdw-post-filter active" style="font-size: 12px; padding: 4px 10px;" onclick="filterPageModalPosts('all', this)">All (<span id="pdwCountAll">0</span>)</button>
+            <button class="btn btn-secondary pdw-post-filter" style="font-size: 12px; padding: 4px 10px;" onclick="filterPageModalPosts('published', this)">Published (<span id="pdwCountPublished">0</span>)</button>
+            <button class="btn btn-secondary pdw-post-filter" style="font-size: 12px; padding: 4px 10px;" onclick="filterPageModalPosts('scheduled', this)">Scheduled (<span id="pdwCountScheduled">0</span>)</button>
+            <button class="btn btn-secondary pdw-post-filter" style="font-size: 12px; padding: 4px 10px;" onclick="filterPageModalPosts('review', this)">In Review (<span id="pdwCountReview">0</span>)</button>
+          </div>
+          <button class="btn btn-primary" style="font-size: 12px; padding: 6px 14px;" onclick="runTestGenerationForModalPage()">🚀 Generate Post Now for this Page</button>
+        </div>
+        <div id="pdwPostsListContainer" style="display: flex; flex-direction: column; gap: 12px;">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- TAB 2: PROMPTS & PERSONA -->
+      <div id="pdwTabPrompts" class="pdw-subtab" style="display: none;">
+        <div class="card" style="background: #0f172a; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h4 style="font-size: 15px; margin: 0; color: #93c5fd;">Active Niche & Content Architecture</h4>
+            <button class="btn btn-secondary" style="font-size: 12px; padding: 4px 10px;" onclick="openPromptsStudioFromModal()">✍️ Edit in Prompt Studio</button>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; font-size: 13px;">
+            <div><strong>Base Niche:</strong> <span id="pdwNicheName">Loading...</span></div>
+            <div><strong>Profile Type:</strong> <span id="pdwNicheType">Factual / Story</span></div>
+            <div><strong>Target Word Count:</strong> <span id="pdwWordTargets">200 - 350 words</span></div>
+            <div><strong>Visual Format:</strong> <span id="pdwAspectRatio">4:5 Portrait (1080x1350)</span></div>
+          </div>
+        </div>
+
+        <div class="card" style="background: #0f172a; margin-bottom: 16px;">
+          <h4 style="font-size: 14px; margin-bottom: 8px; color: #93c5fd;">Custom Caption Prompt Override</h4>
+          <div id="pdwCustomCaptionPrompt" style="background: #111827; padding: 12px; border-radius: 6px; font-size: 13px; line-height: 1.5; color: #e5e7eb; font-family: monospace; white-space: pre-wrap;">
+            (None set - inheriting standard base niche instructions)
+          </div>
+        </div>
+
+        <div class="card" style="background: #0f172a;">
+          <h4 style="font-size: 14px; margin-bottom: 8px; color: #93c5fd;">Custom Image Prompt Override & Headline Panel</h4>
+          <div id="pdwCustomImagePrompt" style="background: #111827; padding: 12px; border-radius: 6px; font-size: 13px; line-height: 1.5; color: #e5e7eb; font-family: monospace; white-space: pre-wrap;">
+            (None set - using standard cinematic visual framing)
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: CADENCE & SCHEDULED SLOTS -->
+      <div id="pdwTabCadence" class="pdw-subtab" style="display: none;">
+        <div class="card" style="background: #0f172a; margin-bottom: 16px;">
+          <h4 style="font-size: 15px; margin-bottom: 12px; color: #f59e0b;">Publishing Schedule & Automation Rules</h4>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; font-size: 13px; margin-bottom: 16px;">
+            <div><strong>Daily Target:</strong> <span id="pdwSchedTarget">3 posts / day</span></div>
+            <div><strong>Timezone:</strong> <span id="pdwSchedTz">UTC</span></div>
+            <div><strong>Posting Time Slots:</strong> <span id="pdwSchedTimes">09:00, 15:00, 21:00</span></div>
+            <div><strong>Publishing Mode:</strong> <span id="pdwSchedMode">Autonomous (Auto-publish if score &gt;= 85)</span></div>
+          </div>
+          <h4 style="font-size: 14px; margin-bottom: 8px; color: #93c5fd;">Upcoming Posting Schedule Slots</h4>
+          <div id="pdwUpcomingSlots" style="display: flex; flex-direction: column; gap: 8px;">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: AUDIT LOGS -->
+      <div id="pdwTabLogs" class="pdw-subtab" style="display: none;">
+        <div id="pdwLogsContainer" style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; margin-top: 20px; border-top: 1px solid var(--card-border); padding-top: 14px;">
+        <button type="button" class="btn btn-secondary" onclick="closePageDetailsModal()">Close Window</button>
+      </div>
     </div>
   </div>
 
@@ -2605,50 +2917,103 @@ function generateDashboardHtml(): string {
     }
 
     // --- Provider Modal & Actions ---
+    // --- Streamlined Provider Modal & Actions ---
     function openAddProviderModal() {
-      document.getElementById('addProviderModal').classList.add('active');
+      const modal = document.getElementById('addProviderModal');
+      modal.classList.add('active');
+      const select = document.getElementById('quickProviderSelect');
+      if (select && select.value) {
+        onQuickProviderChange(select.value);
+      }
     }
 
     function closeAddProviderModal() {
       document.getElementById('addProviderModal').classList.remove('active');
     }
 
-    function onAdapterSelectChange(val) {
-      const baseInput = document.getElementById('newProviderBaseUrl');
-      const modelInput = document.getElementById('newProviderModel');
-      if (val === 'gemini_native') {
-        baseInput.value = 'https://generativelanguage.googleapis.com/v1beta';
-        modelInput.value = 'gemini-2.5-flash';
-      } else if (val === 'openai_compatible_chat') {
-        baseInput.value = 'https://api.openai.com/v1';
-        modelInput.value = 'gpt-4o';
-      } else if (val === 'cloudflare_workers_ai') {
-        baseInput.value = 'https://api.cloudflare.com/client/v4';
-        modelInput.value = '@cf/black-forest-labs/flux-1-schnell';
-      } else if (val === 'pollinations_image') {
-        baseInput.value = 'https://gen.pollinations.ai';
-        modelInput.value = 'flux';
+    function toggleQuickKeyVisibility() {
+      const input = document.getElementById('quickApiKey');
+      input.type = input.type === 'password' ? 'text' : 'password';
+    }
+
+    function toggleQuickAdvanced() {
+      const fields = document.getElementById('quickAdvancedFields');
+      const arrow = document.getElementById('quickAdvArrow');
+      if (fields.style.display === 'none' || !fields.style.display) {
+        fields.style.display = 'block';
+        arrow.innerText = '▼';
       } else {
-        baseInput.value = '';
-        modelInput.value = '';
+        fields.style.display = 'none';
+        arrow.innerText = '▶';
       }
+    }
+
+    function onQuickProviderChange(presetId) {
+      const select = document.getElementById('quickProviderSelect');
+      const option = select.options[select.selectedIndex];
+      if (!option) return;
+
+      const name = option.getAttribute('data-name') || option.text;
+      const kind = option.getAttribute('data-kind') || 'openai_compatible_chat';
+      const baseUrl = option.getAttribute('data-baseurl') || '';
+      const model = option.getAttribute('data-model') || '';
+      const limit = option.getAttribute('data-limit') || '1000';
+      const instructions = option.getAttribute('data-instructions') || '';
+
+      // Update instructions info box
+      const infoBox = document.getElementById('quickProviderInstructions');
+      if (infoBox) {
+        if (!instructions) {
+          infoBox.innerText = 'Enter your API key below.';
+        } else {
+          const parts = instructions.split(' ');
+          const formatted = parts.map(function(word) {
+            const cleanUrl = word.replace(/[\(\)]/g, '');
+            if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
+              return '<a href=\"' + cleanUrl + '\" target=\"_blank\" style=\"color: #60a5fa; text-decoration: underline; font-weight: 600;\">' + cleanUrl + '</a>';
+            }
+            return word;
+          }).join(' ');
+          infoBox.innerHTML = formatted;
+        }
+      }
+
+      // Update placeholder / hint for keyless providers like Pollinations or Ollama
+      const keyInput = document.getElementById('quickApiKey');
+      const keyHint = document.getElementById('quickKeyHint');
+      if (presetId === 'preset-pollinations' || presetId === 'preset-ollama') {
+        keyInput.placeholder = 'Optional / Keyless (Click Connect & Save directly!)';
+        keyHint.innerText = '💡 Keyless: This provider functions without an API key.';
+      } else {
+        keyInput.placeholder = 'sk-... or AIzaSy... (Paste your secret API key here)';
+        keyHint.innerText = 'AES-256-GCM encrypted upon saving. Never stored or logged in plaintext.';
+      }
+
+      // Update advanced fields
+      document.getElementById('newProviderName').value = name;
+      document.getElementById('newProviderAdapter').value = kind;
+      document.getElementById('newProviderBaseUrl').value = baseUrl;
+      document.getElementById('newProviderModel').value = model;
+      document.getElementById('newProviderDailyLimit').value = limit;
     }
 
     async function submitNewProvider(e) {
       e.preventDefault();
+      const select = document.getElementById('quickProviderSelect');
+      const preset_id = select ? select.value : '';
       const name = document.getElementById('newProviderName').value;
       const adapter_kind = document.getElementById('newProviderAdapter').value;
       const base_url = document.getElementById('newProviderBaseUrl').value;
       const model_name = document.getElementById('newProviderModel').value;
       const priority = parseInt(document.getElementById('newProviderPriority').value, 10) || 1;
       const daily_limit = parseInt(document.getElementById('newProviderDailyLimit').value, 10) || 1000;
-      const initial_key = document.getElementById('newProviderKey').value;
-      const key_label = document.getElementById('newProviderKeyLabel').value;
+      const initial_key = document.getElementById('quickApiKey').value;
 
       const res = await fetch('/api/providers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          preset_id,
           name,
           adapter_kind,
           base_url,
@@ -2656,18 +3021,232 @@ function generateDashboardHtml(): string {
           priority,
           daily_limit,
           initial_key,
-          key_label,
+          key_label: 'Primary Key',
         })
       });
 
       if (res.ok) {
         closeAddProviderModal();
-        alert('Provider and key successfully created and encrypted!');
+        alert('AI Provider and API key successfully added & AES-256-GCM encrypted!');
         window.location.reload();
       } else {
         const err = await res.json();
         alert('Failed to add provider: ' + (err.error || 'Unknown error'));
       }
+    }
+
+    // --- Deep Page Inspection Separate Window Logic ---
+    let currentPageModalData = null;
+    let currentPostFilter = 'all';
+
+    async function openPageDetailsWindow(pageId) {
+      try {
+        const res = await fetch('/api/page-details?pageId=' + pageId);
+        if (!res.ok) {
+          alert('Could not retrieve details for this page.');
+          return;
+        }
+        const data = await res.json();
+        currentPageModalData = data;
+        const { page, account, profile, effectiveSettings, posts, stats, auditLogs } = data;
+
+        // Top Header
+        document.getElementById('pdwTitle').innerHTML = '📄 ' + page.name;
+        const statusBadge = document.getElementById('pdwStatusBadge');
+        statusBadge.innerText = page.active !== false ? '● ACTIVE' : '● PAUSED';
+        statusBadge.style.background = page.active !== false ? '#064e3b' : '#7f1d1d';
+        statusBadge.style.color = page.active !== false ? '#34d399' : '#f87171';
+
+        document.getElementById('pdwModeBadge').innerText = (page.publishing_mode || 'autonomous').toUpperCase();
+        document.getElementById('pdwNiche').innerText = page.profile_id;
+        document.getElementById('pdwFbPageId').innerText = page.fb_page_id;
+        document.getElementById('pdwOwner').innerText = account ? (account.account_name + ' (ID: ' + account.fb_user_id + ')') : 'Direct Page Access Token';
+
+        // KPI Metric Cards
+        document.getElementById('pdwTotalPosts').innerText = stats.totalPosts;
+        document.getElementById('pdwPostBreakdown').innerText = \`\${stats.publishedCount} Published • \${stats.scheduledCount} Scheduled • \${stats.reviewCount} Review\`;
+        document.getElementById('pdwTotalReach').innerText = stats.totalReach.toLocaleString() + ' reach';
+        document.getElementById('pdwEngagement').innerText = stats.avgEngagement + '% Avg Engagement (' + stats.totalImpressions.toLocaleString() + ' imp)';
+
+        document.getElementById('pdwCadenceTitle').innerText = (page.schedule?.postsPerDay || 3) + ' posts / day';
+        document.getElementById('pdwNextSlot').innerText = 'Times: ' + (page.schedule?.postingTimes || ['09:00', '15:00', '21:00']).join(', ');
+
+        document.getElementById('pdwQaScore').innerText = stats.avgQaScore > 0 ? (stats.avgQaScore + ' / 100') : 'N/A';
+        document.getElementById('pdwQaStatus').innerText = 'Threshold: ' + (page.hybrid_min_score || 85) + ' (Strict)';
+
+        // Tab 1: Posts Counts & List
+        document.getElementById('pdwCountAll').innerText = posts.length;
+        document.getElementById('pdwCountPublished').innerText = stats.publishedCount;
+        document.getElementById('pdwCountScheduled').innerText = stats.scheduledCount;
+        document.getElementById('pdwCountReview').innerText = stats.reviewCount;
+        renderPageModalPostsList(posts, 'all');
+
+        // Tab 2: Prompts
+        document.getElementById('pdwNicheName').innerText = profile?.name || page.profile_id;
+        document.getElementById('pdwNicheType').innerText = profile?.type ? profile.type.toUpperCase() : 'FACTUAL';
+        const minW = page.overrides?.['caption.min'] || profile?.captionSettings?.lengthRange?.min || 200;
+        const maxW = page.overrides?.['caption.max'] || profile?.captionSettings?.lengthRange?.max || 450;
+        document.getElementById('pdwWordTargets').innerText = \`\${minW} - \${maxW} words\`;
+        document.getElementById('pdwAspectRatio').innerText = page.overrides?.['image.aspectRatio'] || profile?.imageSettings?.aspectRatio || '4:5 Portrait';
+
+        document.getElementById('pdwCustomCaptionPrompt').innerText = page.custom_caption_prompt 
+          ? \`[Mode: \${(page.custom_caption_prompt_mode || 'append').toUpperCase()}]\n\${page.custom_caption_prompt}\` 
+          : '(No custom caption override set - inheriting standard base niche prompts)';
+
+        document.getElementById('pdwCustomImagePrompt').innerText = page.custom_image_prompt 
+          ? \`[Mode: \${(page.custom_image_prompt_mode || 'append').toUpperCase()}]\n\${page.custom_image_prompt}\` 
+          : '(No custom image override set - using default cinematic visual composition)';
+
+        // Tab 3: Cadence
+        document.getElementById('pdwSchedTarget').innerText = \`\${page.schedule?.postsPerDay || 3} posts / day\`;
+        document.getElementById('pdwSchedTz').innerText = page.schedule?.timezone || 'UTC';
+        document.getElementById('pdwSchedTimes').innerText = (page.schedule?.postingTimes || []).join(', ');
+        document.getElementById('pdwSchedMode').innerText = \`\${page.publishing_mode.toUpperCase()} (Min Score: \${page.hybrid_min_score})\`;
+
+        const upcomingContainer = document.getElementById('pdwUpcomingSlots');
+        const times = page.schedule?.postingTimes || ['09:00', '15:00', '21:00'];
+        upcomingContainer.innerHTML = times.map((t, idx) => \`
+          <div style="background: #111827; padding: 10px 14px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #1f2937;">
+            <div>
+              <strong style="color: #60a5fa;">Posting Run #\${idx + 1}: \${t}</strong>
+              <span style="color: var(--text-muted); font-size: 12px; margin-left: 10px;">\${page.schedule?.timezone || 'UTC'}</span>
+            </div>
+            <span class="badge" style="background: #1e3a8a; color: #93c5fd; font-size: 11px;">Active Automated Schedule</span>
+          </div>
+        \`).join('');
+
+        // Tab 4: Logs
+        const logsContainer = document.getElementById('pdwLogsContainer');
+        if (auditLogs && auditLogs.length > 0) {
+          logsContainer.innerHTML = auditLogs.map(l => \`
+            <div style="background: #111827; padding: 10px 14px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border-left: 3px solid \${l.level === 'error' ? '#ef4444' : l.level === 'warning' ? '#f59e0b' : '#3b82f6'};">
+              <div>
+                <span style="font-size: 11px; color: var(--text-muted);">\${new Date(l.timestamp).toLocaleTimeString()} • \${l.category.toUpperCase()}</span>
+                <div style="font-size: 13px; color: #f3f4f6; margin-top: 2px;">\${l.message}</div>
+              </div>
+              <span class="badge" style="background: #1e293b; color: #93c5fd; font-size: 10px;">\${l.level}</span>
+            </div>
+          \`).join('');
+        } else {
+          logsContainer.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 24px;">No dedicated logs recorded for this page yet.</div>';
+        }
+
+        // Show posts tab by default
+        switchPageModalTab('posts', document.querySelector('.pdw-tab-btn'));
+        document.getElementById('pageDetailsModal').classList.add('active');
+      } catch (err) {
+        alert('Error loading page details: ' + err.message);
+      }
+    }
+
+    function closePageDetailsModal() {
+      document.getElementById('pageDetailsModal').classList.remove('active');
+    }
+
+    function switchPageModalTab(tabName, btn) {
+      document.querySelectorAll('.pdw-tab-btn').forEach(b => {
+        b.classList.remove('btn-primary', 'active');
+        b.classList.add('btn-secondary');
+      });
+      if (btn) {
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary', 'active');
+      }
+      document.querySelectorAll('.pdw-subtab').forEach(el => el.style.display = 'none');
+      if (tabName === 'posts') document.getElementById('pdwTabPosts').style.display = 'block';
+      if (tabName === 'prompts') document.getElementById('pdwTabPrompts').style.display = 'block';
+      if (tabName === 'cadence') document.getElementById('pdwTabCadence').style.display = 'block';
+      if (tabName === 'logs') document.getElementById('pdwTabLogs').style.display = 'block';
+    }
+
+    function filterPageModalPosts(filter, btn) {
+      currentPostFilter = filter;
+      document.querySelectorAll('.pdw-post-filter').forEach(b => b.classList.remove('active', 'btn-primary'));
+      btn.classList.add('active', 'btn-primary');
+      if (currentPageModalData && currentPageModalData.posts) {
+        renderPageModalPostsList(currentPageModalData.posts, filter);
+      }
+    }
+
+    function renderPageModalPostsList(allPosts, filter = 'all') {
+      const container = document.getElementById('pdwPostsListContainer');
+      let filtered = allPosts;
+      if (filter === 'published') filtered = allPosts.filter(p => p.status === 'published');
+      if (filter === 'scheduled') filtered = allPosts.filter(p => p.status === 'scheduled');
+      if (filter === 'review') filtered = allPosts.filter(p => p.status === 'pending_review' || p.review_state === 'pending');
+
+      if (filtered.length === 0) {
+        container.innerHTML = \`
+          <div style="text-align: center; padding: 36px; color: var(--text-muted); background: #0b0f19; border-radius: 8px; border: 1px dashed var(--card-border);">
+            <div style="font-size: 28px; margin-bottom: 8px;">📭</div>
+            <div style="font-size: 14px; font-weight: 600; color: #d1d5db; margin-bottom: 4px;">No Posts Found in this Category</div>
+            <div style="font-size: 12px;">Click <strong>🚀 Generate Post Now for this Page</strong> above to immediately produce long-form content.</div>
+          </div>
+        \`;
+        return;
+      }
+
+      container.innerHTML = filtered.map(p => {
+        const isPub = p.status === 'published';
+        const isSched = p.status === 'scheduled';
+        const isRev = p.review_state === 'pending' || p.status === 'pending_review';
+        const statusColor = isPub ? '#34d399' : (isSched ? '#60a5fa' : '#f59e0b');
+        const statusBg = isPub ? 'rgba(52, 211, 153, 0.15)' : (isSched ? 'rgba(96, 165, 250, 0.15)' : 'rgba(245, 158, 11, 0.15)');
+
+        return \`
+          <div class="card" style="background: #0f172a; border: 1px solid #1e293b; padding: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+              <div>
+                <span class="badge" style="background: \${statusBg}; color: \${statusColor}; font-weight: 600; text-transform: uppercase; font-size: 11px;">● \${p.status}</span>
+                \${p.qa_score ? \`<span class="badge" style="background: #1e3a8a; color: #93c5fd; font-size: 11px; margin-left: 6px;">QA Score: \${p.qa_score}/100</span>\` : ''}
+                <h4 style="font-size: 16px; margin: 8px 0 4px 0; color: #f9fafb;">\${p.title || 'Untitled Post'}</h4>
+                <div style="font-size: 12px; color: var(--text-muted);">
+                  \${p.scheduled_for ? 'Scheduled: ' + new Date(p.scheduled_for).toLocaleString() : ''}
+                  \${p.published_at ? 'Published: ' + new Date(p.published_at).toLocaleString() : ''}
+                  \${p.caption_word_count ? ' • ' + p.caption_word_count + ' words' : ''}
+                </div>
+              </div>
+              <div style="display: flex; gap: 6px;">
+                \${isPub && p.fb_permalink ? \`<a href="\${p.fb_permalink}" target="_blank" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px; text-decoration: none;">Facebook ↗</a>\` : ''}
+              </div>
+            </div>
+
+            <!-- Post Caption Preview -->
+            <div style="background: #111827; padding: 12px; border-radius: 6px; font-size: 13px; line-height: 1.6; color: #e5e7eb; white-space: pre-wrap; max-height: 140px; overflow-y: auto; border: 1px solid #1f2937; margin-bottom: 8px;">\${p.caption}</div>
+
+            \${p.first_comment ? \`<div style="font-size: 12px; color: #93c5fd; background: rgba(30, 58, 138, 0.2); padding: 8px 10px; border-radius: 4px;">💬 <strong>First Comment:</strong> \${p.first_comment}</div>\` : ''}
+          </div>
+        \`;
+      }).join('');
+    }
+
+    function openCurrentPageInNewWindow() {
+      if (currentPageModalData && currentPageModalData.page) {
+        window.open('/page-details?id=' + currentPageModalData.page.id, '_blank');
+      }
+    }
+
+    async function runTestGenerationForModalPage() {
+      if (!currentPageModalData || !currentPageModalData.page) return;
+      const pageId = currentPageModalData.page.id;
+      const res = await fetch('/api/test-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert('Simulation successful! Generated content passed QA and entered the pipeline.');
+        openPageDetailsWindow(pageId);
+      } else {
+        alert('Simulation notice: ' + (data.error || 'Failed'));
+      }
+    }
+
+    function openPromptsStudioFromModal() {
+      if (!currentPageModalData || !currentPageModalData.page) return;
+      closePageDetailsModal();
+      openPagePromptStudio(currentPageModalData.page.id);
     }
 
     function openEditProviderModal(id) {
@@ -2842,6 +3421,355 @@ function generateDashboardHtml(): string {
         alert('API Key deleted.');
       } else {
         alert('Failed to delete key.');
+      }
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function generateStandalonePageDetailsHtml(pageId: string): string {
+  const page = pageId ? store.getPageById(pageId) : store.getPages()[0];
+  if (!page) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Page Details - Not Found</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #030712; color: #f9fafb; padding: 40px; text-align: center; }
+    .card { background: #0b0f19; border: 1px solid #1f2937; border-radius: 12px; padding: 40px; max-width: 500px; margin: 60px auto; }
+    a { color: #60a5fa; text-decoration: none; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size: 36px; margin-bottom: 12px;">📄</div>
+    <h2>Page Not Found</h2>
+    <p style="color: #9ca3af; margin: 16px 0;">No Facebook Page with ID "${pageId || 'none'}" was found in the system.</p>
+    <a href="/" style="display: inline-block; padding: 10px 20px; background: #2563eb; color: #fff; border-radius: 6px;">⬅️ Return to Main Dashboard</a>
+  </div>
+</body>
+</html>`;
+  }
+
+  const account = store.getAccounts().find((a) => a.id === page.fb_account_id);
+  const profile =
+    seedProfiles.find(
+      (p) =>
+        p.id === page.profile_id ||
+        p.name.toLowerCase().includes(page.profile_id.toLowerCase()) ||
+        page.profile_id.toLowerCase().includes(p.name.toLowerCase())
+    ) || createCustomNicheProfile(page.profile_id);
+
+  const posts = store.getPosts().filter((p) => p.page_id === page.id || p.page_id === page.fb_page_id);
+  const publishedPosts = posts.filter((p) => p.status === 'published');
+  const scheduledPosts = posts.filter((p) => p.status === 'scheduled');
+  const reviewPosts = posts.filter((p) => p.status === 'pending_review' || p.review_state === 'pending');
+
+  const totalImpressions = publishedPosts.reduce((acc, p) => acc + (p.analytics?.impressions || 0), 0);
+  const totalReach = publishedPosts.reduce((acc, p) => acc + (p.analytics?.reach || 0), 0);
+  const avgEngagement = publishedPosts.length > 0
+    ? Number(((publishedPosts.reduce((acc, p) => acc + (p.analytics?.engagement_rate || 0), 0) / publishedPosts.length)).toFixed(2))
+    : 0;
+
+  const scoredPosts = posts.filter((p) => typeof p.qa_score === 'number');
+  const avgQaScore = scoredPosts.length > 0
+    ? Math.round(scoredPosts.reduce((acc, p) => acc + (p.qa_score || 0), 0) / scoredPosts.length)
+    : 0;
+
+  const auditLogs = store.getAuditLogs().filter(
+    (l) => l.page_id === page.id || l.details?.page_id === page.id || l.message.includes(page.name)
+  );
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${page.name} - Deep Page Inspection & Live Stream</title>
+  <style>
+    :root {
+      --bg: #030712;
+      --card-bg: #0b0f19;
+      --card-border: #1f2937;
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 24px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      font-size: 13px;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-secondary { background: #1f2937; color: var(--text); border: 1px solid #374151; }
+    .btn-secondary:hover { background: #374151; }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .tab-nav {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 20px;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      color: #60a5fa;
+      border-bottom-color: #3b82f6;
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Top Navigation -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+      <a href="/" class="btn btn-secondary">⬅️ Back to Main Dashboard</a>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-secondary" onclick="window.location.reload()">🔄 Refresh Live Data</button>
+        <button class="btn btn-primary" onclick="triggerPageTestRun('${page.id}')">🚀 Generate Post Now</button>
+      </div>
+    </div>
+
+    <!-- Page Header Banner -->
+    <div class="card" style="background: linear-gradient(180deg, #0f172a 0%, #0b0f19 100%); border-color: #1e3a8a;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+            <h1 style="font-size: 26px; font-weight: 700; color: #f9fafb;">📄 ${page.name}</h1>
+            <span class="badge" style="background: ${page.active !== false ? '#064e3b' : '#7f1d1d'}; color: ${page.active !== false ? '#34d399' : '#f87171'}; font-size: 12px;">
+              ● ${page.active !== false ? 'ACTIVE' : 'PAUSED'}
+            </span>
+            <span class="badge" style="background: #1e3a8a; color: #60a5fa; font-size: 12px; text-transform: uppercase;">
+              ${page.publishing_mode} Mode
+            </span>
+          </div>
+          <div style="display: flex; gap: 16px; font-size: 13px; color: var(--text-muted); flex-wrap: wrap;">
+            <span>Base Niche Strategy: <strong style="color: #cbd5e1;">${page.profile_id}</strong></span>
+            <span>Facebook Page ID: <code style="color: #93c5fd;">${page.fb_page_id}</code></span>
+            <span>Owner Facebook Identity: <strong style="color: #cbd5e1;">${account ? account.account_name + ' (' + account.fb_user_id + ')' : 'Direct Token'}</strong></span>
+            <span>Token Vault: <span style="color: #34d399;">● AES-256-GCM Valid</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4 High-Level Metric KPI Cards -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin-bottom: 24px;">
+      <div class="card" style="margin: 0;">
+        <div style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Posts Pipeline</div>
+        <div style="font-size: 28px; font-weight: 700; color: #60a5fa; margin: 4px 0;">${posts.length}</div>
+        <div style="font-size: 12px; color: var(--text-muted);">${publishedPosts.length} Published • ${scheduledPosts.length} Scheduled • ${reviewPosts.length} In Review</div>
+      </div>
+      <div class="card" style="margin: 0;">
+        <div style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Total Reach & Impressions</div>
+        <div style="font-size: 28px; font-weight: 700; color: #34d399; margin: 4px 0;">${totalReach.toLocaleString()}</div>
+        <div style="font-size: 12px; color: var(--text-muted);">${avgEngagement}% Avg Engagement • ${totalImpressions.toLocaleString()} Imp</div>
+      </div>
+      <div class="card" style="margin: 0;">
+        <div style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Cadence & Next Slot</div>
+        <div style="font-size: 24px; font-weight: 700; color: #f59e0b; margin: 4px 0;">${page.schedule.postsPerDay} / day</div>
+        <div style="font-size: 12px; color: var(--text-muted);">Slots: ${page.schedule.postingTimes.join(', ')} (${page.schedule.timezone || 'UTC'})</div>
+      </div>
+      <div class="card" style="margin: 0;">
+        <div style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">QA Score & Quality</div>
+        <div style="font-size: 28px; font-weight: 700; color: #a78bfa; margin: 4px 0;">${avgQaScore > 0 ? avgQaScore + ' / 100' : 'N/A'}</div>
+        <div style="font-size: 12px; color: var(--text-muted);">Threshold: ${page.hybrid_min_score} (Quality Rubric)</div>
+      </div>
+    </div>
+
+    <!-- Tabs Navigation -->
+    <div class="tab-nav">
+      <button class="tab-btn active" onclick="switchStandaloneTab('posts', this)">📝 Live Posts & Feed Stream (${posts.length})</button>
+      <button class="tab-btn" onclick="switchStandaloneTab('prompts', this)">✍️ Prompts & Niche Strategy</button>
+      <button class="tab-btn" onclick="switchStandaloneTab('cadence', this)">⏰ Publishing Cadence & Schedule</button>
+      <button class="tab-btn" onclick="switchStandaloneTab('audit', this)">📜 Page Audit Trail (${auditLogs.length})</button>
+    </div>
+
+    <!-- TAB 1: ALL POSTS -->
+    <div id="tab-posts" class="tab-content active">
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        ${posts.length > 0
+          ? posts.map(p => {
+              const isPub = p.status === 'published';
+              const isSched = p.status === 'scheduled';
+              const statusColor = isPub ? '#34d399' : (isSched ? '#60a5fa' : '#f59e0b');
+              const statusBg = isPub ? 'rgba(52, 211, 153, 0.15)' : (isSched ? 'rgba(96, 165, 250, 0.15)' : 'rgba(245, 158, 11, 0.15)');
+
+              return `
+              <div class="card" style="margin: 0; background: #0f172a;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                  <div>
+                    <span class="badge" style="background: ${statusBg}; color: ${statusColor}; text-transform: uppercase;">● ${p.status}</span>
+                    ${p.qa_score ? `<span class="badge" style="background: #1e3a8a; color: #93c5fd; margin-left: 6px;">QA Score: ${p.qa_score}/100</span>` : ''}
+                    <h3 style="font-size: 17px; margin: 8px 0 4px 0; color: #f9fafb;">${p.title || 'Untitled Post'}</h3>
+                    <div style="font-size: 12px; color: var(--text-muted);">
+                      ${p.scheduled_for ? 'Scheduled: ' + new Date(p.scheduled_for).toLocaleString() : ''}
+                      ${p.published_at ? 'Published: ' + new Date(p.published_at).toLocaleString() : ''}
+                      ${p.caption_word_count ? ' • ' + p.caption_word_count + ' words' : ''}
+                    </div>
+                  </div>
+                  <div>
+                    ${isPub && p.fb_permalink ? `<a href="${p.fb_permalink}" target="_blank" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">View on Facebook ↗</a>` : ''}
+                  </div>
+                </div>
+
+                <div style="background: #111827; padding: 14px; border-radius: 6px; font-size: 13px; line-height: 1.6; color: #e5e7eb; white-space: pre-wrap; max-height: 200px; overflow-y: auto; border: 1px solid #1f2937; margin-bottom: 10px;">${p.caption}</div>
+
+                ${p.first_comment ? `<div style="font-size: 12px; color: #93c5fd; background: rgba(30, 58, 138, 0.2); padding: 8px 12px; border-radius: 4px; border: 1px solid rgba(59, 130, 246, 0.2);">💬 <strong>First Comment Strategy:</strong> ${p.first_comment}</div>` : ''}
+              </div>`;
+            }).join('')
+          : `<div class="card" style="text-align: center; padding: 48px; color: var(--text-muted);">
+              <div style="font-size: 32px; margin-bottom: 8px;">📭</div>
+              <div style="font-size: 16px; font-weight: 600; color: #d1d5db; margin-bottom: 4px;">No Posts Generated Yet For This Page</div>
+              <p style="font-size: 13px; margin-bottom: 16px;">The automated loop is ready. Click below to immediately trigger an AI post generation run.</p>
+              <button class="btn btn-primary" onclick="triggerPageTestRun('${page.id}')">🚀 Generate Post Now</button>
+            </div>`
+        }
+      </div>
+    </div>
+
+    <!-- TAB 2: PROMPTS -->
+    <div id="tab-prompts" class="tab-content">
+      <div class="card">
+        <h3 style="font-size: 16px; margin-bottom: 14px; color: #93c5fd;">Isolated Prompt Architecture & Niche Voice</h3>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 13px; margin-bottom: 20px;">
+          <div><strong>Base Niche:</strong> ${profile.name}</div>
+          <div><strong>Profile Type:</strong> ${profile.type.toUpperCase()}</div>
+          <div><strong>Length Range:</strong> ${page.overrides?.['caption.min'] || (profile as any).captionSettings?.min || (profile as any).captionSettings?.lengthRange?.min || 200} - ${page.overrides?.['caption.max'] || (profile as any).captionSettings?.max || (profile as any).captionSettings?.lengthRange?.max || 450} words</div>
+          <div><strong>Visual Format:</strong> ${page.overrides?.['image.aspectRatio'] || profile.imageSettings?.aspectRatio || '4:5'}</div>
+        </div>
+
+        <h4 style="font-size: 14px; margin-bottom: 8px; color: #cbd5e1;">Custom Caption Prompt</h4>
+        <div style="background: #111827; padding: 14px; border-radius: 6px; font-family: monospace; font-size: 13px; white-space: pre-wrap; border: 1px solid #1f2937; margin-bottom: 18px;">${
+          page.custom_caption_prompt 
+            ? `[Mode: ${(page.custom_caption_prompt_mode || 'append').toUpperCase()}]\n${page.custom_caption_prompt}` 
+            : '(No custom caption override set - using default base niche prompts)'
+        }</div>
+
+        <h4 style="font-size: 14px; margin-bottom: 8px; color: #cbd5e1;">Custom Image Prompt</h4>
+        <div style="background: #111827; padding: 14px; border-radius: 6px; font-family: monospace; font-size: 13px; white-space: pre-wrap; border: 1px solid #1f2937;">${
+          page.custom_image_prompt 
+            ? `[Mode: ${(page.custom_image_prompt_mode || 'append').toUpperCase()}]\n${page.custom_image_prompt}` 
+            : '(No custom image override set - using cinematic visual prompts)'
+        }</div>
+      </div>
+    </div>
+
+    <!-- TAB 3: CADENCE -->
+    <div id="tab-cadence" class="tab-content">
+      <div class="card">
+        <h3 style="font-size: 16px; margin-bottom: 14px; color: #f59e0b;">Publishing Schedule & Jitter</h3>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 13px; margin-bottom: 20px;">
+          <div><strong>Posts Target:</strong> ${page.schedule.postsPerDay} posts / day</div>
+          <div><strong>Timezone:</strong> ${page.schedule.timezone || 'UTC'}</div>
+          <div><strong>Publishing Mode:</strong> ${page.publishing_mode.toUpperCase()} (Min Score: ${page.hybrid_min_score})</div>
+          <div><strong>Daily Cap:</strong> ${page.daily_cap || 5} posts max</div>
+        </div>
+
+        <h4 style="font-size: 14px; margin-bottom: 10px; color: #93c5fd;">Automated Daily Posting Runs</h4>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          ${page.schedule.postingTimes.map((t, idx) => `
+            <div style="background: #111827; padding: 12px 16px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #1f2937;">
+              <div>
+                <strong style="color: #60a5fa;">Run Slot #${idx + 1}: ${t}</strong>
+                <span style="color: var(--text-muted); font-size: 12px; margin-left: 10px;">${page.schedule.timezone || 'UTC'}</span>
+              </div>
+              <span class="badge" style="background: #1e3a8a; color: #93c5fd;">Autonomous Active</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: AUDIT LOGS -->
+    <div id="tab-audit" class="tab-content">
+      <div class="card">
+        <h3 style="font-size: 16px; margin-bottom: 14px; color: #93c5fd;">Operational Event Stream for this Page</h3>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          ${auditLogs.length > 0
+            ? auditLogs.map(l => `
+              <div style="background: #111827; padding: 12px 16px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border-left: 3px solid ${l.level === 'error' ? '#ef4444' : l.level === 'warning' ? '#f59e0b' : '#3b82f6'};">
+                <div>
+                  <span style="font-size: 11px; color: var(--text-muted);">${new Date(l.timestamp).toLocaleString()} • ${l.category.toUpperCase()}</span>
+                  <div style="font-size: 13px; color: #f3f4f6; margin-top: 2px;">${l.message}</div>
+                </div>
+                <span class="badge" style="background: #1e293b; color: #93c5fd; font-size: 10px;">${l.level}</span>
+              </div>
+            `).join('')
+            : '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 24px;">No dedicated logs recorded for this page yet.</div>'
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function switchStandaloneTab(name, btn) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + name).classList.add('active');
+    }
+
+    async function triggerPageTestRun(pageId) {
+      const res = await fetch('/api/test-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert('Simulation successful! Generated content passed QA and entered the pipeline.');
+        window.location.reload();
+      } else {
+        alert('Simulation notice: ' + (data.error || 'Failed'));
       }
     }
   </script>

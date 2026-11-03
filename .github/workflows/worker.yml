@@ -1,19 +1,27 @@
-name: Worker Cron Fallback
+name: Autonomous Publishing Worker
 
 on:
   schedule:
-    # Run every 30 minutes as documented standby fallback
-    - cron: '*/30 * * * *'
+    # Executes every 15 minutes around the clock
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
+# Ensure only one scheduled run executes at a time; do not cancel in-progress runs
+concurrency:
+  group: worker-execution
+  cancel-in-progress: false
+
 jobs:
-  run-worker-cycle:
+  run-worker-job:
+    name: Run Autonomous Worker Cycle
     runs-on: ubuntu-latest
+    timeout-minutes: 14
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -39,13 +47,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build monorepo
+      - name: Build monorepo packages
         run: pnpm -r run build
 
-      - name: Execute single worker reconciliation cycle
+      - name: Run worker with 11-minute time budget
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          NODE_ENV: production
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
-        run: node -e "console.log('Worker cron heartbeat cycle executed at', new Date().toISOString());"
+          FACEBOOK_APP_ID: ${{ secrets.FACEBOOK_APP_ID }}
+          FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
+          WORKER_TIME_BUDGET: 11m
+        run: npm run worker:once -- --time-budget=11m
 
