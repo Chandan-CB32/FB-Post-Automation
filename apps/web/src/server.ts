@@ -31,7 +31,7 @@ import {
   findPresetById,
   ProviderPreset,
 } from '@fb-auto/core';
-import { SystemStore, StoredPage } from './server/storage';
+import { SystemStore, StoredPage, StoredProvider, StoredProviderKey, parseRawKeysInput } from './server/storage';
 import { getDashboardOverviewMetrics } from './index';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -1038,41 +1038,110 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             let daily_limit = Number(data.daily_limit) || 1000;
             let priority = Number(data.priority) || 1;
 
+            let existingProvider: StoredProvider | undefined = undefined;
+
             if (data.preset_id) {
-              const preset = findPresetById(data.preset_id);
+              const preset =
+                findPresetById(data.preset_id) ||
+                PROVIDER_PRESETS.find(
+                  (p) =>
+                    p.id === data.preset_id ||
+                    p.id === `preset-${data.preset_id}` ||
+                    p.name.toLowerCase().includes(data.preset_id.toLowerCase())
+                );
               if (preset) {
                 name = name || preset.name;
                 adapter_kind = adapter_kind || preset.kind;
                 base_url = base_url || preset.baseUrl;
                 model_name = model_name || preset.defaultTextModel || preset.defaultImageModel;
                 daily_limit = data.daily_limit ? Number(data.daily_limit) : preset.rpdLimit;
+
+                existingProvider = store.getProviders().find(
+                  (p) =>
+                    p.id === data.preset_id ||
+                    p.id === preset.id ||
+                    p.name.toLowerCase().trim() === preset.name.toLowerCase().trim()
+                );
               }
+            }
+
+            if (!existingProvider && name) {
+              existingProvider = store.getProviders().find(
+                (p) => p.name.toLowerCase().trim() === name.toLowerCase().trim()
+              );
             }
 
             if (!name || !adapter_kind) {
               return sendJson({ error: 'Provider name and adapter_kind are required.' }, 400);
             }
 
-            const newProvider = store.createProvider({
-              name,
-              adapter_kind,
-              base_url,
-              model_name,
-              daily_limit,
-              priority,
-              enabled: data.enabled !== false,
-            });
-
-            let addedKey = null;
-            if (data.initial_key && data.initial_key.trim()) {
-              addedKey = store.addProviderKey({
-                provider_id: newProvider.id,
-                raw_key: data.initial_key.trim(),
-                label: data.key_label || 'Primary Key',
+            let targetProvider: StoredProvider;
+            if (existingProvider) {
+              targetProvider = store.updateProvider(existingProvider.id, {
+                base_url: base_url || existingProvider.base_url,
+                model_name: model_name || existingProvider.model_name,
+                daily_limit: daily_limit || existingProvider.daily_limit,
+                priority: priority || existingProvider.priority,
+                enabled: data.enabled !== false,
+              });
+            } else {
+              targetProvider = store.createProvider({
+                name,
+                adapter_kind,
+                base_url,
+                model_name,
+                daily_limit,
+                priority,
+                enabled: data.enabled !== false,
               });
             }
 
-            return sendJson({ success: true, provider: newProvider, key: addedKey }, 201);
+            const rawKeysInput = data.initial_key || data.initial_keys || data.raw_key || data.keys || '';
+            const parsedKeys = parseRawKeysInput(rawKeysInput);
+            const addedKeys: StoredProviderKey[] = [];
+
+            for (let i = 0; i < parsedKeys.length; i++) {
+              const k = parsedKeys[i];
+              const keyLabel = parsedKeys.length > 1
+                ? `${data.key_label || 'Key'} #${i + 1}`
+                : (data.key_label || 'Primary Key');
+              const addedKey = store.addProviderKey({
+                provider_id: targetProvider.id,
+                raw_key: k,
+                label: keyLabel,
+              });
+              addedKeys.push(addedKey);
+            }
+
+            const currentKeys = store.getProviderKeys(targetProvider.id);
+            return sendJson(
+              {
+                success: true,
+                is_existing: Boolean(existingProvider),
+                provider: targetProvider,
+                addedKeys: addedKeys.map((k) => ({
+                  id: k.id,
+                  provider_id: k.provider_id,
+                  masked_key: k.masked_key,
+                  label: k.label,
+                  is_active: k.is_active,
+                  created_at: k.created_at,
+                })),
+                key: addedKeys[0]
+                  ? {
+                      id: addedKeys[0].id,
+                      provider_id: addedKeys[0].provider_id,
+                      masked_key: addedKeys[0].masked_key,
+                      label: addedKeys[0].label,
+                      is_active: addedKeys[0].is_active,
+                      created_at: addedKeys[0].created_at,
+                    }
+                  : null,
+                totalKeys: currentKeys.length,
+                activeKeys: currentKeys.filter((k) => k.is_active).length,
+              },
+              existingProvider ? 200 : 201
+            );
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
           }
@@ -1090,7 +1159,36 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               return sendJson({ error: 'Provider ID is required.' }, 400);
             }
             const updated = store.updateProvider(data.id, data);
-            return sendJson({ success: true, provider: updated });
+
+            const rawNewKeys = data.new_keys || data.raw_key || data.key || '';
+            const addedKeys: StoredProviderKey[] = [];
+            if (rawNewKeys) {
+              const parsed = parseRawKeysInput(rawNewKeys);
+              for (let i = 0; i < parsed.length; i++) {
+                const added = store.addProviderKey({
+                  provider_id: data.id,
+                  raw_key: parsed[i],
+                  label: parsed.length > 1 ? `Key #${i + 1}` : (data.key_label || undefined),
+                });
+                addedKeys.push(added);
+              }
+            }
+
+            const currentKeys = store.getProviderKeys(data.id);
+            return sendJson({
+              success: true,
+              provider: updated,
+              addedKeys: addedKeys.map((k) => ({
+                id: k.id,
+                provider_id: k.provider_id,
+                masked_key: k.masked_key,
+                label: k.label,
+                is_active: k.is_active,
+                created_at: k.created_at,
+              })),
+              totalKeys: currentKeys.length,
+              activeKeys: currentKeys.filter((k) => k.is_active).length,
+            });
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
           }
@@ -1140,26 +1238,52 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           try {
             const data = JSON.parse(body || '{}');
             const providerId = data.provider_id || data.providerId;
-            const rawKey = data.raw_key || data.key;
-            if (!providerId || !rawKey) {
-              return sendJson({ error: 'provider_id and key are required.' }, 400);
+            const rawKeyInput = data.raw_key || data.key || data.raw_keys || data.keys;
+            if (!providerId || !rawKeyInput) {
+              return sendJson({ error: 'provider_id and raw_key are required.' }, 400);
             }
-            const newKey = store.addProviderKey({
-              provider_id: providerId,
-              raw_key: rawKey,
-              label: data.label,
-            });
+            const parsedKeys = parseRawKeysInput(rawKeyInput);
+            if (parsedKeys.length === 0) {
+              return sendJson({ error: 'No valid API keys found in input.' }, 400);
+            }
+
+            const addedKeys: StoredProviderKey[] = [];
+            for (let i = 0; i < parsedKeys.length; i++) {
+              const k = parsedKeys[i];
+              const label = parsedKeys.length > 1
+                ? `${data.label || 'Key'} #${i + 1}`
+                : (data.label || undefined);
+              const newKey = store.addProviderKey({
+                provider_id: providerId,
+                raw_key: k,
+                label,
+              });
+              addedKeys.push(newKey);
+            }
+
+            const currentKeys = store.getProviderKeys(providerId);
             return sendJson(
               {
                 success: true,
+                count: addedKeys.length,
+                addedKeys: addedKeys.map((k) => ({
+                  id: k.id,
+                  provider_id: k.provider_id,
+                  masked_key: k.masked_key,
+                  label: k.label,
+                  is_active: k.is_active,
+                  created_at: k.created_at,
+                })),
                 key: {
-                  id: newKey.id,
-                  provider_id: newKey.provider_id,
-                  masked_key: newKey.masked_key,
-                  label: newKey.label,
-                  is_active: newKey.is_active,
-                  created_at: newKey.created_at,
+                  id: addedKeys[0].id,
+                  provider_id: addedKeys[0].provider_id,
+                  masked_key: addedKeys[0].masked_key,
+                  label: addedKeys[0].label,
+                  is_active: addedKeys[0].is_active,
+                  created_at: addedKeys[0].created_at,
                 },
+                totalKeys: currentKeys.length,
+                activeKeys: currentKeys.filter((k) => k.is_active).length,
               },
               201
             );
@@ -2532,11 +2656,11 @@ function generateDashboardHtml(): string {
         <!-- Step 2: API Key Input -->
         <div class="form-group" style="margin-bottom: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-            <label style="font-weight: 600; font-size: 13px; color: #f3f4f6;">2. API Key / Secret Token</label>
+            <label style="font-weight: 600; font-size: 13px; color: #f3f4f6;">2. API Key(s) / Secret Token(s)</label>
             <button type="button" onclick="toggleQuickKeyVisibility()" style="background: none; border: none; color: #60a5fa; font-size: 12px; cursor: pointer;">👁️ Show / Hide</button>
           </div>
-          <input type="password" id="quickApiKey" class="form-control" placeholder="Paste your API key here (leave blank for keyless providers like Pollinations / Ollama)" style="padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 13px;">
-          <small id="quickKeyHint" style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 4px;">AES-256-GCM encrypted upon saving. Never stored or logged in plaintext.</small>
+          <textarea id="quickApiKey" class="form-control" rows="2" placeholder="Paste API key(s) here. Supports multiple keys (one per line or comma-separated) for rotation pool. Leave blank for Pollinations / Ollama." style="padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 13px;"></textarea>
+          <small id="quickKeyHint" style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 4px;">AES-256-GCM encrypted upon saving. Multiple keys automatically rotate. If this provider is already configured, new keys are appended to its pool without overwriting or deleting previous keys!</small>
         </div>
 
         <!-- Collapsible Advanced Settings -->
@@ -2738,19 +2862,20 @@ function generateDashboardHtml(): string {
 
       <!-- Add New Key Form -->
       <div style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 16px;">
-        <h4 style="font-size: 12px; color: #60a5fa; margin-bottom: 12px; text-transform: uppercase;">➕ Add New API Key to this Pool</h4>
+        <h4 style="font-size: 12px; color: #60a5fa; margin-bottom: 12px; text-transform: uppercase;">➕ Add New API Key(s) to this Pool</h4>
         <form id="addKeyForm" onsubmit="submitAddKey(event)">
           <input type="hidden" id="keyPoolProviderId">
           <div class="form-group">
-            <label>Raw API Key * (AES-256-GCM Encrypted on save)</label>
-            <input type="password" id="keyPoolRawKey" class="form-control" placeholder="Paste new API key (e.g. AIza..., sk-...)" required>
+            <label>Raw API Key(s) * (AES-256-GCM Encrypted — paste 1 key or multiple keys, one per line or comma-separated)</label>
+            <textarea id="keyPoolRawKey" class="form-control" rows="3" placeholder="Paste API key(s) here:&#10;sk-proj-key1...&#10;sk-proj-key2..." required style="padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 13px;"></textarea>
+            <small style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 4px;">Supports multiple keys simultaneously. None of your previous keys will ever be replaced or deleted.</small>
           </div>
           <div class="form-group">
             <label>Key Label / Alias (Optional)</label>
             <input type="text" id="keyPoolLabel" class="form-control" placeholder="e.g. Backup Key 2, Team Workspace Key">
           </div>
           <div style="display: flex; justify-content: flex-end; gap: 10px;">
-            <button type="submit" class="btn btn-primary">➕ Encrypt & Add Key</button>
+            <button type="submit" class="btn btn-primary">➕ Encrypt & Add Key(s)</button>
           </div>
         </form>
       </div>
@@ -2759,7 +2884,7 @@ function generateDashboardHtml(): string {
 
   <!-- MODAL: EDIT PROVIDER -->
   <div class="modal" id="editProviderModal">
-    <div class="modal-content">
+    <div class="modal-content" style="max-width: 650px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
         <h3 style="font-size: 18px;">✏️ Edit Provider Settings</h3>
         <button onclick="closeEditProviderModal()" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
@@ -2808,6 +2933,20 @@ function generateDashboardHtml(): string {
         <div class="form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
           <input type="checkbox" id="editProviderEnabled" style="width: 18px; height: 18px; accent-color: var(--primary);">
           <label for="editProviderEnabled" style="margin: 0; cursor: pointer; text-transform: none; font-size: 14px;">Provider Enabled & Active</label>
+        </div>
+
+        <!-- Key Pool Summary & Append Section -->
+        <div style="border-top: 1px solid var(--card-border); padding-top: 14px; margin-top: 16px; background: #0b0f19; border-radius: 8px; padding: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <label style="font-size: 13px; font-weight: 600; color: #f3f4f6; margin: 0;">🔑 Key Rotation Pool</label>
+            <button type="button" class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="openManageKeysFromEditModal()">Manage All Keys</button>
+          </div>
+          <div id="editProviderKeysSummary" style="margin-bottom: 12px; font-size: 12px;"></div>
+          <div class="form-group" style="margin-bottom: 0;">
+            <label style="font-size: 12px; color: #93c5fd;">➕ Append Additional API Key(s) to Pool (Optional)</label>
+            <textarea id="editProviderNewKeys" class="form-control" rows="2" placeholder="Paste extra key(s) here (one per line or comma-separated) to add to rotation pool" style="font-family: 'JetBrains Mono', monospace; font-size: 12px;"></textarea>
+            <small style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 4px;">Any keys you enter will be added to the existing pool. Existing keys are never deleted.</small>
+          </div>
         </div>
 
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
@@ -3410,8 +3549,13 @@ function generateDashboardHtml(): string {
       });
 
       if (res.ok) {
+        const data = await res.json();
         closeAddProviderModal();
-        alert('AI Provider and API key successfully added & AES-256-GCM encrypted!');
+        if (data.is_existing) {
+          alert('Provider "' + data.provider.name + '" updated! Added ' + (data.addedKeys ? data.addedKeys.length : 0) + ' API key(s) to its existing rotation pool (Total in pool: ' + data.totalKeys + '). Existing keys are preserved!');
+        } else {
+          alert('AI Provider "' + data.provider.name + '" successfully connected and ' + (data.addedKeys ? data.addedKeys.length : 0) + ' API key(s) encrypted!');
+        }
         window.location.reload();
       } else {
         const err = await res.json();
@@ -3644,7 +3788,28 @@ function generateDashboardHtml(): string {
       document.getElementById('editProviderPriority').value = p.priority;
       document.getElementById('editProviderDailyLimit').value = p.daily_limit;
       document.getElementById('editProviderEnabled').checked = p.enabled !== false;
+
+      // Populate key summary
+      const keys = providerKeysData.filter(k => k.provider_id === p.id);
+      const summary = document.getElementById('editProviderKeysSummary');
+      if (summary) {
+        if (keys.length === 0) {
+          summary.innerHTML = '<span style="color: var(--text-muted); font-style: italic;">No keys in pool yet. Add one below or via Key Manager.</span>';
+        } else {
+          const badges = keys.map(k => '<span class="badge" style="background: ' + (k.is_active ? '#1e293b' : '#27272a') + '; color: ' + (k.is_active ? '#93c5fd' : '#71717a') + '; font-family: monospace; font-size: 11px; margin: 2px; display: inline-block;">' + k.masked_key + (k.label ? ' (' + k.label + ')' : '') + '</span>').join('');
+          summary.innerHTML = '<div style="margin-bottom: 4px;">' + badges + '</div><span style="color: #34d399; font-size: 11px; font-weight: 600;">● ' + keys.filter(k => k.is_active).length + ' active / ' + keys.length + ' total keys</span>';
+        }
+      }
+      const newKeysInput = document.getElementById('editProviderNewKeys');
+      if (newKeysInput) newKeysInput.value = '';
+
       document.getElementById('editProviderModal').classList.add('active');
+    }
+
+    function openManageKeysFromEditModal() {
+      const id = document.getElementById('editProviderId').value;
+      closeEditProviderModal();
+      if (id) openManageKeysModal(id);
     }
 
     function closeEditProviderModal() {
@@ -3661,6 +3826,7 @@ function generateDashboardHtml(): string {
       const priority = parseInt(document.getElementById('editProviderPriority').value, 10) || 1;
       const daily_limit = parseInt(document.getElementById('editProviderDailyLimit').value, 10) || 1000;
       const enabled = document.getElementById('editProviderEnabled').checked;
+      const new_keys = document.getElementById('editProviderNewKeys')?.value || '';
 
       const res = await fetch('/api/providers', {
         method: 'PUT',
@@ -3674,12 +3840,13 @@ function generateDashboardHtml(): string {
           priority,
           daily_limit,
           enabled,
+          new_keys,
         })
       });
 
       if (res.ok) {
         closeEditProviderModal();
-        alert('Provider successfully updated!');
+        alert('Provider settings and keys successfully saved!');
         window.location.reload();
       } else {
         const err = await res.json();
@@ -3747,6 +3914,28 @@ function generateDashboardHtml(): string {
       \`).join('');
     }
 
+    function updateProviderTableRow(providerId) {
+      const row = document.getElementById('provider-row-' + providerId);
+      if (!row) return;
+      const keys = providerKeysData.filter(k => k.provider_id === providerId);
+      const activeKeys = keys.filter(k => k.is_active);
+      const keyBadges = keys.length > 0
+        ? keys.map(k => '<span class="badge" style="background: ' + (k.is_active ? '#1e293b' : '#27272a') + '; color: ' + (k.is_active ? '#93c5fd' : '#71717a') + '; font-family: monospace; font-size: 11px; margin: 2px; display: inline-block;">' + k.masked_key + '</span>').join('')
+        : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
+
+      const keyCell = row.cells[4];
+      if (keyCell) {
+        keyCell.innerHTML = '<div style="margin-bottom: 4px; max-width: 280px;">' + keyBadges + '</div>' +
+          '<span style="font-size: 11px; color: ' + (activeKeys.length > 0 ? '#34d399' : '#f59e0b') + ';">● ' +
+          activeKeys.length + ' active key' + (activeKeys.length === 1 ? '' : 's') + '</span>';
+      }
+      const actionsCell = row.cells[6];
+      if (actionsCell) {
+        const keysBtn = actionsCell.querySelector('button');
+        if (keysBtn) keysBtn.innerHTML = '🔑 Keys (' + keys.length + ')';
+      }
+    }
+
     async function submitAddKey(e) {
       e.preventDefault();
       const providerId = document.getElementById('keyPoolProviderId').value;
@@ -3765,11 +3954,21 @@ function generateDashboardHtml(): string {
 
       if (res.ok) {
         const result = await res.json();
-        providerKeysData.push(result.key);
+        const newKeys = result.addedKeys || (result.key ? [result.key] : []);
+        for (const nk of newKeys) {
+          const idx = providerKeysData.findIndex(k => k.id === nk.id);
+          if (idx !== -1) {
+            providerKeysData[idx] = nk;
+          } else {
+            providerKeysData.push(nk);
+          }
+        }
         document.getElementById('keyPoolRawKey').value = '';
         document.getElementById('keyPoolLabel').value = '';
         renderKeysList(providerId);
-        alert('API Key encrypted and added to rotation pool!');
+        updateProviderTableRow(providerId);
+        const activeCount = providerKeysData.filter(k => k.provider_id === providerId && k.is_active).length;
+        alert('Success: ' + newKeys.length + ' API key(s) encrypted and added to rotation pool! (Total active in pool: ' + activeCount + '). Previous keys remain intact.');
       } else {
         const err = await res.json();
         alert('Failed to add key: ' + (err.error || 'Unknown error'));
@@ -3787,6 +3986,7 @@ function generateDashboardHtml(): string {
         const idx = providerKeysData.findIndex(k => k.id === keyId);
         if (idx !== -1) providerKeysData[idx] = result.key;
         renderKeysList(providerId);
+        updateProviderTableRow(providerId);
       } else {
         alert('Failed to toggle key status.');
       }
@@ -3802,6 +4002,7 @@ function generateDashboardHtml(): string {
       if (res.ok) {
         providerKeysData = providerKeysData.filter(k => k.id !== keyId);
         renderKeysList(providerId);
+        updateProviderTableRow(providerId);
         alert('API Key deleted.');
       } else {
         alert('Failed to delete key.');

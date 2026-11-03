@@ -16,7 +16,7 @@ describe('Monorepo Workspace Scaffold', () => {
 
   it('connects @fb-auto/web with core', () => {
     expect(WEB_APP_STATUS.coreVersion).toBe(CORE_VERSION);
-    expect(WEB_APP_STATUS.name).toBe('FB Post Automation Web App');
+    expect(WEB_APP_STATUS.name).toBe('FB Auto 247');
   });
 });
 

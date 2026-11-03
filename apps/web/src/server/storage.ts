@@ -141,8 +141,47 @@ export interface SystemStoreData {
   workerHeartbeat: string;
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const STORE_FILE = path.join(DATA_DIR, 'system-store.json');
+export function parseRawKeysInput(input: string): string[] {
+  if (!input || typeof input !== 'string') return [];
+  const lines = input.split(/[\r\n,]+/);
+  const keys: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawLine of lines) {
+    let cleaned = rawLine.trim();
+    if (!cleaned || cleaned.startsWith('#')) continue;
+    if (cleaned.includes(' #')) {
+      cleaned = cleaned.split(' #')[0].trim();
+    }
+    if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+      cleaned = cleaned.slice(1, -1).trim();
+    }
+    if (cleaned.length > 0 && !seen.has(cleaned)) {
+      seen.add(cleaned);
+      keys.push(cleaned);
+    }
+  }
+  return keys;
+}
+
+function resolveStoreFile(): string {
+  const cwd = process.cwd();
+  // Check if cwd is monorepo root
+  if (fs.existsSync(path.join(cwd, 'pnpm-workspace.yaml'))) {
+    return path.join(cwd, 'data', 'system-store.json');
+  }
+  // Check if parent of parent has pnpm-workspace.yaml (running in apps/web or worker)
+  const rootFromSub = path.resolve(/*turbopackIgnore: true*/ cwd, '..', '..');
+  if (fs.existsSync(path.join(rootFromSub, 'pnpm-workspace.yaml'))) {
+    return path.join(rootFromSub, 'data', 'system-store.json');
+  }
+  // Check if parent has pnpm-workspace.yaml (e.g. running one level down)
+  const parentRoot = path.resolve(/*turbopackIgnore: true*/ cwd, '..');
+  if (fs.existsSync(path.join(parentRoot, 'pnpm-workspace.yaml'))) {
+    return path.join(parentRoot, 'data', 'system-store.json');
+  }
+  return path.join(cwd, 'data', 'system-store.json');
+}
 
 function getInitialStore(): SystemStoreData {
   return {
@@ -160,8 +199,11 @@ function getInitialStore(): SystemStoreData {
 export class SystemStore {
   private static instance: SystemStore;
   private data: SystemStoreData;
+  private storeFile: string;
+  private lastMtimeMs = 0;
 
   private constructor() {
+    this.storeFile = resolveStoreFile();
     this.data = this.load();
   }
 
@@ -172,45 +214,52 @@ export class SystemStore {
     return SystemStore.instance;
   }
 
+  private normalizeStoreData(loaded: Partial<SystemStoreData>): SystemStoreData {
+    return {
+      accounts: Array.isArray(loaded.accounts) ? loaded.accounts : [],
+      providers: Array.isArray(loaded.providers) ? loaded.providers : [],
+      providerKeys: Array.isArray(loaded.providerKeys) ? loaded.providerKeys : [],
+      pages: Array.isArray(loaded.pages) ? loaded.pages : [],
+      posts: Array.isArray(loaded.posts) ? loaded.posts : [],
+      auditLogs: Array.isArray(loaded.auditLogs) ? loaded.auditLogs : [],
+      killSwitchActive: Boolean(loaded.killSwitchActive),
+      workerHeartbeat: loaded.workerHeartbeat || new Date().toISOString(),
+    };
+  }
+
+  private reloadIfChanged(): void {
+    try {
+      if (fs.existsSync(this.storeFile)) {
+        const stat = fs.statSync(this.storeFile);
+        if (stat.mtimeMs > this.lastMtimeMs) {
+          const raw = fs.readFileSync(this.storeFile, 'utf-8');
+          const loaded: SystemStoreData = JSON.parse(raw);
+          this.data = this.normalizeStoreData(loaded);
+          this.lastMtimeMs = stat.mtimeMs;
+        }
+      }
+    } catch {
+      // Keep existing memory copy if reading fails transiently
+    }
+  }
+
   private load(): SystemStoreData {
     const initial = getInitialStore();
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
+      const dataDir = path.dirname(this.storeFile);
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
       }
 
-      if (fs.existsSync(STORE_FILE)) {
-        const raw = fs.readFileSync(STORE_FILE, 'utf-8');
+      if (fs.existsSync(this.storeFile)) {
+        const raw = fs.readFileSync(this.storeFile, 'utf-8');
         const loaded: SystemStoreData = JSON.parse(raw);
-        let changed = false;
-        if (!Array.isArray(loaded.accounts)) {
-          loaded.accounts = [];
-          changed = true;
-        }
-        if (!Array.isArray(loaded.auditLogs)) {
-          loaded.auditLogs = [];
-          changed = true;
-        }
-        if (!Array.isArray(loaded.providers)) {
-          loaded.providers = [];
-          changed = true;
-        }
-        if (!Array.isArray(loaded.providerKeys)) {
-          loaded.providerKeys = [];
-          changed = true;
-        }
-        if (!Array.isArray(loaded.pages)) {
-          loaded.pages = [];
-          changed = true;
-        }
-        if (!Array.isArray(loaded.posts)) {
-          loaded.posts = [];
-          changed = true;
-        }
-        if (changed) {
-          this.save(loaded);
-        }
-        return loaded;
+        const normalized = this.normalizeStoreData(loaded);
+        try {
+          const stat = fs.statSync(this.storeFile);
+          this.lastMtimeMs = stat.mtimeMs;
+        } catch {}
+        return normalized;
       }
     } catch (e) {
       console.warn('[SystemStore] Could not load store file, initializing new store:', e);
@@ -222,10 +271,15 @@ export class SystemStore {
 
   private save(data = this.data): void {
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
+      const dataDir = path.dirname(this.storeFile);
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
       }
-      fs.writeFileSync(STORE_FILE, JSON.stringify(data, null, 2), 'utf-8');
+      fs.writeFileSync(this.storeFile, JSON.stringify(data, null, 2), 'utf-8');
+      try {
+        const stat = fs.statSync(this.storeFile);
+        this.lastMtimeMs = stat.mtimeMs;
+      } catch {}
     } catch (e) {
       console.error('[SystemStore] Failed to save store file:', e);
     }
@@ -233,10 +287,12 @@ export class SystemStore {
 
   // --- Facebook Accounts / Identities CRUD ---
   public getAccounts(): StoredFacebookAccount[] {
+    this.reloadIfChanged();
     return this.data.accounts || [];
   }
 
   public getAccountById(id: string): StoredFacebookAccount | undefined {
+    this.reloadIfChanged();
     return (this.data.accounts || []).find((a) => a.id === id);
   }
 
@@ -315,11 +371,13 @@ export class SystemStore {
 
   // --- Pages CRUD ---
   public getPages(): StoredPage[] {
-    return this.data.pages;
+    this.reloadIfChanged();
+    return this.data.pages || [];
   }
 
   public getPageById(id: string): StoredPage | undefined {
-    return this.data.pages.find((p) => p.id === id);
+    this.reloadIfChanged();
+    return (this.data.pages || []).find((p) => p.id === id);
   }
 
   public createPage(input: {
@@ -412,11 +470,13 @@ export class SystemStore {
 
   // --- Posts CRUD ---
   public getPosts(): StoredPost[] {
-    return this.data.posts;
+    this.reloadIfChanged();
+    return this.data.posts || [];
   }
 
   public getPostById(id: string): StoredPost | undefined {
-    return this.data.posts.find((p) => p.id === id);
+    this.reloadIfChanged();
+    return (this.data.posts || []).find((p) => p.id === id);
   }
 
   public updatePost(id: string, updates: Partial<StoredPost>): StoredPost {
@@ -465,11 +525,27 @@ export class SystemStore {
 
   // --- Providers & Keys CRUD ---
   public getProviders(): StoredProvider[] {
-    return this.data.providers;
+    this.reloadIfChanged();
+    return this.data.providers || [];
   }
 
   public getProviderById(id: string): StoredProvider | undefined {
-    return this.data.providers.find((p) => p.id === id);
+    this.reloadIfChanged();
+    return (this.data.providers || []).find((p) => p.id === id);
+  }
+
+  public findProviderByNameOrPreset(nameOrPreset: string): StoredProvider | undefined {
+    this.reloadIfChanged();
+    const query = nameOrPreset.toLowerCase().trim();
+    return (this.data.providers || []).find((p) => {
+      const pName = p.name.toLowerCase().trim();
+      return (
+        pName === query ||
+        p.id === nameOrPreset ||
+        pName.includes(query) ||
+        query.includes(pName)
+      );
+    });
   }
 
   public createProvider(input: {
@@ -481,6 +557,21 @@ export class SystemStore {
     enabled?: boolean;
     priority?: number;
   }): StoredProvider {
+    this.reloadIfChanged();
+    // Safety check: if provider with exact name already exists, update and return it rather than creating a duplicate
+    const existing = (this.data.providers || []).find(
+      (p) => p.name.toLowerCase().trim() === input.name.toLowerCase().trim()
+    );
+    if (existing) {
+      return this.updateProvider(existing.id, {
+        base_url: input.base_url || existing.base_url,
+        model_name: input.model_name || existing.model_name,
+        daily_limit: input.daily_limit ? Number(input.daily_limit) : existing.daily_limit,
+        priority: input.priority ? Number(input.priority) : existing.priority,
+        enabled: input.enabled !== false,
+      });
+    }
+
     const id = `provider_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const newProvider: StoredProvider = {
       id,
@@ -495,13 +586,15 @@ export class SystemStore {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    if (!this.data.providers) this.data.providers = [];
     this.data.providers.push(newProvider);
     this.save();
     return newProvider;
   }
 
   public updateProvider(id: string, updates: Partial<StoredProvider>): StoredProvider {
-    const idx = this.data.providers.findIndex((p) => p.id === id);
+    this.reloadIfChanged();
+    const idx = (this.data.providers || []).findIndex((p) => p.id === id);
     if (idx === -1) {
       throw new Error(`Provider with ID ${id} not found.`);
     }
@@ -516,10 +609,11 @@ export class SystemStore {
   }
 
   public deleteProvider(id: string): boolean {
-    const initialLen = this.data.providers.length;
-    this.data.providers = this.data.providers.filter((p) => p.id !== id);
+    this.reloadIfChanged();
+    const initialLen = (this.data.providers || []).length;
+    this.data.providers = (this.data.providers || []).filter((p) => p.id !== id);
     // Cascade delete associated keys
-    this.data.providerKeys = this.data.providerKeys.filter((k) => k.provider_id !== id);
+    this.data.providerKeys = (this.data.providerKeys || []).filter((k) => k.provider_id !== id);
     if (this.data.providers.length !== initialLen) {
       this.save();
       return true;
@@ -528,6 +622,8 @@ export class SystemStore {
   }
 
   public getProviderKeys(providerId?: string): StoredProviderKey[] {
+    this.reloadIfChanged();
+    if (!this.data.providerKeys) this.data.providerKeys = [];
     if (providerId) {
       return this.data.providerKeys.filter((k) => k.provider_id === providerId);
     }
@@ -539,6 +635,7 @@ export class SystemStore {
     raw_key: string;
     label?: string;
   }): StoredProviderKey {
+    this.reloadIfChanged();
     const provider = this.getProviderById(input.provider_id);
     if (!provider) {
       throw new Error(`Provider with ID ${input.provider_id} does not exist.`);
@@ -547,9 +644,25 @@ export class SystemStore {
     if (!trimmed) {
       throw new Error('API key cannot be empty.');
     }
+    if (!this.data.providerKeys) this.data.providerKeys = [];
+
+    const masked_key = maskSecret(trimmed);
+
+    // If key already exists in rotation pool for this provider, do not duplicate: reactivate and keep
+    const existingKey = this.data.providerKeys.find(
+      (k) => k.provider_id === input.provider_id && k.masked_key === masked_key
+    );
+    if (existingKey) {
+      existingKey.is_active = true;
+      if (input.label && !existingKey.label) {
+        existingKey.label = input.label.trim();
+      }
+      this.save();
+      return existingKey;
+    }
+
     const id = `key_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const encrypted_key = encrypt(trimmed);
-    const masked_key = maskSecret(trimmed);
     const newKey: StoredProviderKey = {
       id,
       provider_id: input.provider_id,
@@ -564,7 +677,33 @@ export class SystemStore {
     return newKey;
   }
 
+  public addProviderKeysBulk(input: {
+    provider_id: string;
+    raw_keys: string[];
+    base_label?: string;
+  }): StoredProviderKey[] {
+    const results: StoredProviderKey[] = [];
+    const keys = Array.isArray(input.raw_keys) ? input.raw_keys : [];
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i].trim();
+      if (!k) continue;
+      const label =
+        keys.length > 1 && input.base_label
+          ? `${input.base_label} #${i + 1}`
+          : input.base_label;
+      const added = this.addProviderKey({
+        provider_id: input.provider_id,
+        raw_key: k,
+        label,
+      });
+      results.push(added);
+    }
+    return results;
+  }
+
   public deleteProviderKey(keyId: string): boolean {
+    this.reloadIfChanged();
+    if (!this.data.providerKeys) this.data.providerKeys = [];
     const initialLen = this.data.providerKeys.length;
     this.data.providerKeys = this.data.providerKeys.filter((k) => k.id !== keyId);
     if (this.data.providerKeys.length !== initialLen) {
@@ -575,6 +714,8 @@ export class SystemStore {
   }
 
   public toggleProviderKey(keyId: string, isActive?: boolean): StoredProviderKey {
+    this.reloadIfChanged();
+    if (!this.data.providerKeys) this.data.providerKeys = [];
     const key = this.data.providerKeys.find((k) => k.id === keyId);
     if (!key) {
       throw new Error(`Key with ID ${keyId} not found.`);
@@ -586,10 +727,12 @@ export class SystemStore {
 
   // --- Audit Logs CRUD ---
   public getAuditLogs(limit = 100): StoredAuditLog[] {
+    this.reloadIfChanged();
     return (this.data.auditLogs || []).slice(0, limit);
   }
 
   public addAuditLog(entry: Omit<StoredAuditLog, 'id' | 'timestamp'>): StoredAuditLog {
+    this.reloadIfChanged();
     const newLog: StoredAuditLog = {
       id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       timestamp: new Date().toISOString(),
@@ -606,10 +749,12 @@ export class SystemStore {
 
   // --- Kill Switch & Heartbeat ---
   public getKillSwitch(): boolean {
-    return this.data.killSwitchActive;
+    this.reloadIfChanged();
+    return Boolean(this.data.killSwitchActive);
   }
 
   public setKillSwitch(active: boolean): boolean {
+    this.reloadIfChanged();
     this.data.killSwitchActive = active;
     this.save();
     return this.data.killSwitchActive;
