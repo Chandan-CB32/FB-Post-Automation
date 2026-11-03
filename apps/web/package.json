@@ -17,7 +17,7 @@
   },
   "scripts": {
     "type-check": "tsc --noEmit",
-    "build": "next build",
+    "build": "pnpm --filter @fb-auto/core run build && next build",
     "build:types": "tsc -b",
     "start": "next start",
     "dev": "next dev",

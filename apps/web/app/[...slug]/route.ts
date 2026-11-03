@@ -22,3 +22,4 @@ export async function DELETE(request: Request) {
 export async function OPTIONS(request: Request) {
   return forwardNextToNode(request, handleRequest);
 }
+
