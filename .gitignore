@@ -10,7 +10,9 @@ node_modules
 *.pem
 *.key
 data/*.json
+**/data/*.json
 !data/.gitkeep
+!**/data/.gitkeep
 
 # Build outputs
 dist

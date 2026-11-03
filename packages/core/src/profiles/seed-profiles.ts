@@ -291,9 +291,9 @@ export function getSeedProfiles(promptsDir?: string): ContentProfile[] {
   ];
 
   for (const item of promptFiles) {
-    const fullPath = path.join(dir, item.file);
-    if (fs.existsSync(fullPath)) {
-      const content = fs.readFileSync(fullPath, 'utf8');
+    const fullPath = path.resolve(dir, item.file);
+    if (fs.existsSync(/* turbopackIgnore: true */ fullPath)) {
+      const content = fs.readFileSync(/* turbopackIgnore: true */ fullPath, 'utf8');
       const profile = importMasterPrompt(content, {
         name: item.name,
         niche: item.niche,

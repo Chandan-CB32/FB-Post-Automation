@@ -31,8 +31,8 @@ import {
   findPresetById,
   ProviderPreset,
 } from '@fb-auto/core';
-import { SystemStore, StoredPage } from './server/storage.js';
-import { getDashboardOverviewMetrics } from './index.js';
+import { SystemStore, StoredPage } from './server/storage';
+import { getDashboardOverviewMetrics } from './index';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const store = SystemStore.getInstance();

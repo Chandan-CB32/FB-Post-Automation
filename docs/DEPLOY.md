@@ -159,10 +159,11 @@ Your GitHub Actions worker needs access to your database and encryption keys to 
 3. Under *Import Git Repository*, find your `FB-Post-Automation` repository and click **Import**.
 4. Configure Project Settings:
    - **Project Name:** `fb-post-automation`
-   - **Framework Preset:** `Other`
-   - **Root Directory:** `./`
-   - **Build Command:** `pnpm build`
-   - **Output Directory:** `public`
+   - **Framework Preset:** `Next.js`
+   - **Root Directory:** `apps/web` (Enable: "Include source files outside of the Root Directory in the Build Step")
+   - **Build Command:** Leave default (`next build`)
+   - **Output Directory:** Leave default (`.next`)
+   - **Install Command:** Leave default (`pnpm install`)
 5. Expand the **Environment Variables** section and add:
    - `NEXT_PUBLIC_SUPABASE_URL`: `https://your-project.supabase.co`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: (Publishable anon key)
