@@ -113,3 +113,4 @@ verifyPersistence().catch(err => {
   console.error('\n[VERIFICATION ERROR]', err);
   process.exit(1);
 });
+
