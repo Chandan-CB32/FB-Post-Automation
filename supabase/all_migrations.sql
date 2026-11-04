@@ -1,17 +1,62 @@
 -- ============================================================================
 -- Supabase Consolidated Migrations
--- Autonomous Multi-Page Facebook Content System
+-- Autonomous Multi-Page Facebook Content System (FB Auto 247)
 -- ============================================================================
 
--- >>> Migration: 20261102000000_init_schema.sql <<<
+-- Standalone Postgres Role Preamble (Safe on Supabase and standalone Postgres)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+        CREATE ROLE authenticated;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+        CREATE ROLE anon;
+    END IF;
+END
+$$;
 
--- ============================================================================
--- Supabase Migration: 20261102000000_init_schema.sql
--- Autonomous Multi-Page Facebook Content System
--- ============================================================================
+-- Ensure storage schema & tables exist if running on vanilla Postgres
+DO $$
+BEGIN
+    CREATE SCHEMA IF NOT EXISTS storage;
 
--- Enable pgcrypto / uuid-ossp for UUID generation
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+    CREATE TABLE IF NOT EXISTS storage.buckets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner UUID,
+        created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+        updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+        public BOOLEAN DEFAULT false,
+        avif_autodetection BOOLEAN DEFAULT false,
+        file_size_limit BIGINT,
+        allowed_mime_types TEXT[]
+    );
+
+    CREATE TABLE IF NOT EXISTS storage.objects (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        bucket_id TEXT REFERENCES storage.buckets(id),
+        name TEXT,
+        owner UUID,
+        created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+        updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+        last_accessed_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+        metadata JSONB DEFAULT '{}'::jsonb,
+        path_tokens TEXT[] GENERATED ALWAYS AS (string_to_array(name, '/')) STORED
+    );
+EXCEPTION WHEN OTHERS THEN
+    -- In Supabase, the storage schema and tables are pre-managed by Supabase Storage Admin
+    NULL;
+END
+$$;
+
+-- Enable pgcrypto for UUID generation (optional in PG 13+ as gen_random_uuid() is built-in)
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END
+$$;
 
 -- ----------------------------------------------------------------------------
 -- 1. Content Profiles (Reusable Topic Packages)
@@ -50,20 +95,41 @@ CREATE TABLE IF NOT EXISTS public.profile_versions (
 CREATE INDEX IF NOT EXISTS idx_profile_versions_profile ON public.profile_versions(profile_id, version DESC);
 
 -- ----------------------------------------------------------------------------
--- 3. Facebook Pages
+-- 3. Facebook Accounts / Identities (Multi-Account Management)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.facebook_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_name TEXT NOT NULL,
+    fb_user_id TEXT NOT NULL UNIQUE,
+    email TEXT,
+    user_access_token TEXT, -- AES-256-GCM encrypted
+    masked_token TEXT,
+    token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'rate_limited')),
+    token_expires_at TIMESTAMPTZ,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX IF NOT EXISTS idx_facebook_accounts_status ON public.facebook_accounts(token_status);
+
+-- ----------------------------------------------------------------------------
+-- 4. Facebook Pages
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.pages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    fb_account_id UUID REFERENCES public.facebook_accounts(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     fb_page_id TEXT NOT NULL UNIQUE,
     fb_page_token TEXT NOT NULL, -- AES-256-GCM encrypted
     token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited')),
-    profile_id UUID NOT NULL REFERENCES public.content_profiles(id) ON DELETE RESTRICT,
+    profile_id UUID REFERENCES public.content_profiles(id) ON DELETE SET NULL,
     overrides JSONB NOT NULL DEFAULT '{}'::jsonb,
     custom_caption_prompt TEXT,
     custom_caption_prompt_mode TEXT NOT NULL DEFAULT 'append' CHECK (custom_caption_prompt_mode IN ('append', 'replace')),
     custom_image_prompt TEXT,
     custom_image_prompt_mode TEXT NOT NULL DEFAULT 'append' CHECK (custom_image_prompt_mode IN ('append', 'replace')),
+    first_comment_enabled BOOLEAN NOT NULL DEFAULT true,
+    first_comment_prompt TEXT,
     schedule JSONB NOT NULL DEFAULT '{}'::jsonb,
     publishing_mode TEXT NOT NULL DEFAULT 'review' CHECK (publishing_mode IN ('auto', 'review', 'hybrid')),
     hybrid_min_score NUMERIC NOT NULL DEFAULT 80,
@@ -76,34 +142,30 @@ CREATE TABLE IF NOT EXISTS public.pages (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 CREATE INDEX IF NOT EXISTS idx_pages_active ON public.pages(active);
+CREATE INDEX IF NOT EXISTS idx_pages_account ON public.pages(fb_account_id);
 
 -- ----------------------------------------------------------------------------
--- 4. AI Providers
+-- 5. AI Providers
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.providers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL UNIQUE,
-    kind TEXT NOT NULL CHECK (kind IN (
-        'openai_compatible_chat',
-        'openai_compatible_images',
-        'gemini_native',
-        'cloudflare_workers_ai',
-        'huggingface_inference',
-        'pollinations',
-        'custom_http'
-    )),
+    kind TEXT NOT NULL,
     base_url TEXT,
+    model_name TEXT,
     config JSONB NOT NULL DEFAULT '{}'::jsonb,
     rpm_limit INTEGER NOT NULL DEFAULT 60,
     rpd_limit INTEGER NOT NULL DEFAULT 1000,
     units_per_day_limit INTEGER,
     concurrency_limit INTEGER NOT NULL DEFAULT 2,
+    priority INTEGER NOT NULL DEFAULT 1,
     active BOOLEAN NOT NULL DEFAULT true,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
 -- ----------------------------------------------------------------------------
--- 5. Provider Keys (Key Pool with Rotation and Masking)
+-- 6. Provider Keys (Key Pool with Rotation and Masking)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.provider_keys (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -115,12 +177,13 @@ CREATE TABLE IF NOT EXISTS public.provider_keys (
     cooldown_until TIMESTAMPTZ,
     usage_today INTEGER NOT NULL DEFAULT 0,
     error_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 CREATE INDEX IF NOT EXISTS idx_provider_keys_provider_status ON public.provider_keys(provider_id, status);
 
 -- ----------------------------------------------------------------------------
--- 6. Provider Chains
+-- 7. Provider Chains
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.provider_chains (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -150,7 +213,7 @@ CREATE TABLE IF NOT EXISTS public.provider_chains (
 CREATE INDEX IF NOT EXISTS idx_provider_chains_stage ON public.provider_chains(stage, page_id, profile_id);
 
 -- ----------------------------------------------------------------------------
--- 7. Daily Provider Usage
+-- 8. Daily Provider Usage
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.provider_usage_daily (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -168,7 +231,7 @@ CREATE TABLE IF NOT EXISTS public.provider_usage_daily (
 CREATE INDEX IF NOT EXISTS idx_usage_date ON public.provider_usage_daily(date, provider_id);
 
 -- ----------------------------------------------------------------------------
--- 8. Research Sources & Items (Factual / True Story)
+-- 9. Research Sources & Items (Factual / True Story)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.research_sources (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -197,7 +260,7 @@ CREATE INDEX IF NOT EXISTS idx_research_items_hash ON public.research_items(cont
 CREATE INDEX IF NOT EXISTS idx_research_items_created ON public.research_items(created_at DESC);
 
 -- ----------------------------------------------------------------------------
--- 9. Owner Topic Queue
+-- 10. Owner Topic Queue
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.topic_queue_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -213,7 +276,7 @@ CREATE TABLE IF NOT EXISTS public.topic_queue_items (
 CREATE INDEX IF NOT EXISTS idx_topic_queue_status ON public.topic_queue_items(status, sort_order ASC);
 
 -- ----------------------------------------------------------------------------
--- 10. Series & Episodes (Continuity Engine)
+-- 11. Series & Episodes (Continuity Engine)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.series (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -240,11 +303,12 @@ CREATE TABLE IF NOT EXISTS public.series_episodes (
 );
 
 -- ----------------------------------------------------------------------------
--- 11. Posts (Pipeline State Machine)
+-- 12. Posts (Pipeline State Machine)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.posts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     page_id UUID NOT NULL REFERENCES public.pages(id) ON DELETE CASCADE,
+    fb_account_id UUID REFERENCES public.facebook_accounts(id) ON DELETE SET NULL,
     profile_version INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN (
         'planned',
@@ -274,6 +338,7 @@ CREATE TABLE IF NOT EXISTS public.posts (
     headline TEXT,
     caption TEXT,
     caption_word_count INTEGER,
+    first_comment TEXT,
     hashtags JSONB NOT NULL DEFAULT '[]'::jsonb,
     source_line TEXT,
     disclosure_line TEXT,
@@ -292,6 +357,7 @@ CREATE TABLE IF NOT EXISTS public.posts (
     review_note TEXT,
     fb_post_id TEXT,
     fb_permalink TEXT,
+    analytics JSONB NOT NULL DEFAULT '{}'::jsonb,
     error TEXT,
     stage_attempts JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
@@ -300,9 +366,10 @@ CREATE TABLE IF NOT EXISTS public.posts (
 CREATE INDEX IF NOT EXISTS idx_posts_status_scheduled ON public.posts(status, scheduled_for ASC);
 CREATE INDEX IF NOT EXISTS idx_posts_page_scheduled ON public.posts(page_id, scheduled_for ASC);
 CREATE INDEX IF NOT EXISTS idx_posts_review_state ON public.posts(review_state);
+CREATE INDEX IF NOT EXISTS idx_posts_account ON public.posts(fb_account_id);
 
 -- ----------------------------------------------------------------------------
--- 12. Topic History (Dedup Window)
+-- 13. Topic History (Dedup Window)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.topic_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -317,7 +384,7 @@ CREATE INDEX IF NOT EXISTS idx_topic_history_page_date ON public.topic_history(p
 CREATE INDEX IF NOT EXISTS idx_topic_history_key ON public.topic_history(topic_key);
 
 -- ----------------------------------------------------------------------------
--- 13. Telemetry, Logs & Alerts
+-- 14. Telemetry, Logs, Alerts, Audit & Settings
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.job_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -345,12 +412,17 @@ CREATE INDEX IF NOT EXISTS idx_alerts_unresolved ON public.alerts(resolved, crea
 
 CREATE TABLE IF NOT EXISTS public.audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    action TEXT NOT NULL,
-    entity TEXT NOT NULL,
+    action TEXT NOT NULL DEFAULT 'action',
+    entity TEXT NOT NULL DEFAULT 'system',
     entity_id UUID,
+    level TEXT NOT NULL DEFAULT 'info' CHECK (level IN ('info', 'success', 'warning', 'error')),
+    category TEXT,
+    message TEXT,
+    page_id UUID REFERENCES public.pages(id) ON DELETE SET NULL,
     details JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON public.audit_log(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.settings (
     key TEXT PRIMARY KEY,
@@ -359,7 +431,7 @@ CREATE TABLE IF NOT EXISTS public.settings (
 );
 
 -- ----------------------------------------------------------------------------
--- 14. Atomic Queue Claiming RPC Function (FOR UPDATE SKIP LOCKED)
+-- 15. Atomic Queue Claiming RPC Function (FOR UPDATE SKIP LOCKED)
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.claim_next_post_job(
     p_target_status TEXT,
@@ -400,10 +472,25 @@ END;
 $$;
 
 -- ----------------------------------------------------------------------------
--- 15. Row Level Security (RLS) - Single Owner Protection
+-- 16. Verification Helper: check_table_rls_status
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.check_table_rls_status()
+RETURNS TABLE (table_name text, rls_enabled boolean)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+  SELECT tablename::text, rowsecurity::boolean
+  FROM pg_tables
+  WHERE schemaname = 'public';
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 17. Row Level Security (RLS) - Single Owner Protection
 -- ----------------------------------------------------------------------------
 ALTER TABLE public.content_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profile_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.facebook_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.provider_keys ENABLE ROW LEVEL SECURITY;
@@ -421,12 +508,11 @@ ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 
--- Authenticated owner policy: single-owner full access
 DO $$
 DECLARE
     t text;
     tables text[] := ARRAY[
-        'content_profiles', 'profile_versions', 'pages', 'providers',
+        'content_profiles', 'profile_versions', 'facebook_accounts', 'pages', 'providers',
         'provider_keys', 'provider_chains', 'provider_usage_daily',
         'research_sources', 'research_items', 'topic_queue_items',
         'series', 'series_episodes', 'posts', 'topic_history',
@@ -441,7 +527,7 @@ END
 $$;
 
 -- ----------------------------------------------------------------------------
--- 16. Storage Bucket: post-images (Private)
+-- 18. Storage Bucket: post-images (Private)
 -- ----------------------------------------------------------------------------
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
@@ -470,15 +556,82 @@ END
 $$;
 
 -- ----------------------------------------------------------------------------
--- 17. Verification Helper: check_table_rls_status
+-- 19. Seed Data: Default Settings & Provider Presets
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.check_table_rls_status()
-RETURNS TABLE (table_name text, rls_enabled boolean)
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = public, pg_catalog
-AS $$
-  SELECT tablename::text, rowsecurity::boolean
-  FROM pg_tables
-  WHERE schemaname = 'public';
-$$;
+INSERT INTO public.settings (key, value, updated_at)
+VALUES
+    ('kill_switch', '{"paused": false, "reason": null}'::jsonb, now()),
+    ('retention', '{"published_image_hours": 24, "failed_image_days": 3, "research_items_days": 30, "logs_days": 90}'::jsonb, now()),
+    ('storage_limits', '{"warning_percent": 70, "safe_mode_percent": 90}'::jsonb, now()),
+    ('defaults', '{"timezone": "UTC", "jitter_minutes": 10, "min_gap_hours": 2, "max_posts_per_day_warn": 5}'::jsonb, now())
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+
+INSERT INTO public.providers (id, name, kind, base_url, config, rpm_limit, rpd_limit, concurrency_limit, active)
+VALUES
+    (
+        '11111111-1111-1111-1111-111111111101',
+        'Google Gemini',
+        'gemini_native',
+        'https://generativelanguage.googleapis.com/v1beta',
+        '{"default_text_model": "gemini-2.5-flash", "search_grounding": true}'::jsonb,
+        15,
+        1500,
+        2,
+        false
+    ),
+    (
+        '11111111-1111-1111-1111-111111111102',
+        'OpenRouter',
+        'openai_compatible_chat',
+        'https://openrouter.ai/api/v1',
+        '{"default_text_model": "meta-llama/llama-3.3-70b-instruct:free", "site_url": "https://fb-auto.local", "site_name": "FB Auto 247"}'::jsonb,
+        20,
+        200,
+        2,
+        false
+    ),
+    (
+        '11111111-1111-1111-1111-111111111103',
+        'Groq',
+        'openai_compatible_chat',
+        'https://api.groq.com/openai/v1',
+        '{"default_text_model": "llama-3.3-70b-versatile"}'::jsonb,
+        30,
+        14400,
+        2,
+        false
+    ),
+    (
+        '11111111-1111-1111-1111-111111111104',
+        'Cloudflare Workers AI',
+        'cloudflare_workers_ai',
+        'https://api.cloudflare.com/client/v4',
+        '{"default_image_model": "@cf/black-forest-labs/flux-1-schnell", "neurons_per_day_limit": 10000}'::jsonb,
+        60,
+        1000,
+        2,
+        false
+    ),
+    (
+        '11111111-1111-1111-1111-111111111105',
+        'Pollinations AI',
+        'pollinations',
+        'https://gen.pollinations.ai',
+        '{"default_image_model": "flux", "nologo": true, "width": 1080, "height": 1350}'::jsonb,
+        30,
+        500,
+        2,
+        false
+    ),
+    (
+        '11111111-1111-1111-1111-111111111106',
+        'Hugging Face Inference',
+        'huggingface_inference',
+        'https://router.huggingface.co/v1',
+        '{"default_text_model": "deepseek-ai/DeepSeek-R1"}'::jsonb,
+        20,
+        500,
+        1,
+        false
+    )
+ON CONFLICT (name) DO NOTHING;

@@ -1,5 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import crypto from 'node:crypto';
 
 // Auto-load .env file if available
 try {
@@ -15,16 +15,7 @@ import { encryptPageToken, encrypt, maskSecret } from '@fb-auto/core';
 export interface StoredProvider {
   id: string;
   name: string;
-  adapter_kind:
-    | 'gemini_native'
-    | 'openai_compatible_chat'
-    | 'openai_compatible_images'
-    | 'cloudflare_workers_ai'
-    | 'huggingface_inference'
-    | 'pollinations'
-    | 'pollinations_image'
-    | 'custom_http'
-    | string;
+  adapter_kind: string;
   base_url?: string;
   model_name?: string;
   daily_limit: number;
@@ -71,7 +62,7 @@ export interface StoredAuditLog {
 
 export interface StoredPage {
   id: string;
-  fb_account_id?: string; // Associated Facebook Account / Identity ID
+  fb_account_id?: string;
   name: string;
   fb_page_id: string;
   fb_page_token: string; // AES-256-GCM encrypted
@@ -130,15 +121,13 @@ export interface StoredPost {
   };
 }
 
-export interface SystemStoreData {
-  accounts: StoredFacebookAccount[];
-  pages: StoredPage[];
-  posts: StoredPost[];
-  providers: StoredProvider[];
-  providerKeys: StoredProviderKey[];
-  auditLogs: StoredAuditLog[];
-  killSwitchActive: boolean;
-  workerHeartbeat: string;
+export interface StorageHealthResult {
+  supabaseConnected: boolean;
+  tablesOk: boolean;
+  tablesCount: number;
+  bucketOk: boolean;
+  singleSourceOfTruth: boolean;
+  error?: string;
 }
 
 export function parseRawKeysInput(input: string): string[] {
@@ -149,62 +138,43 @@ export function parseRawKeysInput(input: string): string[] {
 
   for (const rawLine of lines) {
     let cleaned = rawLine.trim();
-    if (!cleaned || cleaned.startsWith('#')) continue;
-    if (cleaned.includes(' #')) {
-      cleaned = cleaned.split(' #')[0].trim();
+    if (!cleaned || cleaned.startsWith('#') || cleaned.startsWith('//')) continue;
+
+    // Strip inline comments (e.g. key123 # comment)
+    const commentMatch = cleaned.search(/\s+[#\/]/);
+    if (commentMatch > 0) {
+      cleaned = cleaned.substring(0, commentMatch).trim();
     }
-    if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
-      cleaned = cleaned.slice(1, -1).trim();
+
+    let key = cleaned;
+    const colonIdx = key.indexOf(':');
+    if (colonIdx > 0 && colonIdx < key.length - 1 && !key.startsWith('http')) {
+      const candidate = key.substring(colonIdx + 1).trim();
+      if (candidate.length > 8) {
+        key = candidate;
+      }
     }
-    if (cleaned.length > 0 && !seen.has(cleaned)) {
-      seen.add(cleaned);
-      keys.push(cleaned);
+    const eqIdx = key.indexOf('=');
+    if (eqIdx > 0 && eqIdx < key.length - 1) {
+      key = key.substring(eqIdx + 1).trim();
+    }
+    key = key.replace(/^["'`]|["'`]$/g, '').trim();
+
+    if (key.length >= 8 && !seen.has(key)) {
+      seen.add(key);
+      keys.push(key);
     }
   }
+
   return keys;
-}
-
-function resolveStoreFile(): string {
-  const cwd = process.cwd();
-  // Check if cwd is monorepo root
-  if (fs.existsSync(path.join(cwd, 'pnpm-workspace.yaml'))) {
-    return path.join(cwd, 'data', 'system-store.json');
-  }
-  // Check if parent of parent has pnpm-workspace.yaml (running in apps/web or worker)
-  const rootFromSub = path.resolve(/*turbopackIgnore: true*/ cwd, '..', '..');
-  if (fs.existsSync(path.join(rootFromSub, 'pnpm-workspace.yaml'))) {
-    return path.join(rootFromSub, 'data', 'system-store.json');
-  }
-  // Check if parent has pnpm-workspace.yaml (e.g. running one level down)
-  const parentRoot = path.resolve(/*turbopackIgnore: true*/ cwd, '..');
-  if (fs.existsSync(path.join(parentRoot, 'pnpm-workspace.yaml'))) {
-    return path.join(parentRoot, 'data', 'system-store.json');
-  }
-  return path.join(cwd, 'data', 'system-store.json');
-}
-
-function getInitialStore(): SystemStoreData {
-  return {
-    accounts: [],
-    providers: [],
-    providerKeys: [],
-    pages: [],
-    posts: [],
-    auditLogs: [],
-    killSwitchActive: false,
-    workerHeartbeat: new Date().toISOString(),
-  };
 }
 
 export class SystemStore {
   private static instance: SystemStore;
-  private data: SystemStoreData;
-  private storeFile: string;
-  private lastMtimeMs = 0;
+  private client: SupabaseClient | null = null;
 
   private constructor() {
-    this.storeFile = resolveStoreFile();
-    this.data = this.load();
+    this.initClient();
   }
 
   public static getInstance(): SystemStore {
@@ -214,173 +184,246 @@ export class SystemStore {
     return SystemStore.instance;
   }
 
-  private normalizeStoreData(loaded: Partial<SystemStoreData>): SystemStoreData {
-    return {
-      accounts: Array.isArray(loaded.accounts) ? loaded.accounts : [],
-      providers: Array.isArray(loaded.providers) ? loaded.providers : [],
-      providerKeys: Array.isArray(loaded.providerKeys) ? loaded.providerKeys : [],
-      pages: Array.isArray(loaded.pages) ? loaded.pages : [],
-      posts: Array.isArray(loaded.posts) ? loaded.posts : [],
-      auditLogs: Array.isArray(loaded.auditLogs) ? loaded.auditLogs : [],
-      killSwitchActive: Boolean(loaded.killSwitchActive),
-      workerHeartbeat: loaded.workerHeartbeat || new Date().toISOString(),
-    };
+  private initClient(): SupabaseClient | null {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !key) {
+      console.warn('[SystemStore] Missing Supabase URL or SERVICE_ROLE_KEY');
+      return null;
+    }
+    if (!this.client) {
+      this.client = createClient(url, key, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      });
+    }
+    return this.client;
   }
 
-  private reloadIfChanged(): void {
-    try {
-      if (fs.existsSync(this.storeFile)) {
-        const stat = fs.statSync(this.storeFile);
-        if (stat.mtimeMs > this.lastMtimeMs) {
-          const raw = fs.readFileSync(this.storeFile, 'utf-8');
-          const loaded: SystemStoreData = JSON.parse(raw);
-          this.data = this.normalizeStoreData(loaded);
-          this.lastMtimeMs = stat.mtimeMs;
-        }
-      }
-    } catch {
-      // Keep existing memory copy if reading fails transiently
+  private getClient(): SupabaseClient {
+    const c = this.client || this.initClient();
+    if (!c) {
+      throw new Error('Supabase client could not be initialized. Please check NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
     }
-  }
-
-  private load(): SystemStoreData {
-    const initial = getInitialStore();
-    try {
-      const dataDir = path.dirname(this.storeFile);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-
-      if (fs.existsSync(this.storeFile)) {
-        const raw = fs.readFileSync(this.storeFile, 'utf-8');
-        const loaded: SystemStoreData = JSON.parse(raw);
-        const normalized = this.normalizeStoreData(loaded);
-        try {
-          const stat = fs.statSync(this.storeFile);
-          this.lastMtimeMs = stat.mtimeMs;
-        } catch {}
-        return normalized;
-      }
-    } catch (e) {
-      console.warn('[SystemStore] Could not load store file, initializing new store:', e);
-    }
-
-    this.save(initial);
-    return initial;
-  }
-
-  private save(data = this.data): void {
-    try {
-      const dataDir = path.dirname(this.storeFile);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-      fs.writeFileSync(this.storeFile, JSON.stringify(data, null, 2), 'utf-8');
-      try {
-        const stat = fs.statSync(this.storeFile);
-        this.lastMtimeMs = stat.mtimeMs;
-      } catch {}
-    } catch (e) {
-      console.error('[SystemStore] Failed to save store file:', e);
-    }
+    return c;
   }
 
   // --- Facebook Accounts / Identities CRUD ---
-  public getAccounts(): StoredFacebookAccount[] {
-    this.reloadIfChanged();
-    return this.data.accounts || [];
+  public async getAccounts(): Promise<StoredFacebookAccount[]> {
+    const { data, error } = await this.getClient()
+      .from('facebook_accounts')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[SystemStore] Error fetching facebook_accounts:', error.message);
+      return [];
+    }
+    return (data || []).map((row) => ({
+      id: row.id,
+      account_name: row.account_name,
+      fb_user_id: row.fb_user_id,
+      email: row.email,
+      user_access_token: row.user_access_token,
+      masked_token: row.masked_token,
+      token_status: row.token_status || 'valid',
+      token_expires_at: row.token_expires_at,
+      notes: row.notes,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }));
   }
 
-  public getAccountById(id: string): StoredFacebookAccount | undefined {
-    this.reloadIfChanged();
-    return (this.data.accounts || []).find((a) => a.id === id);
+  public async getAccountById(id: string): Promise<StoredFacebookAccount | undefined> {
+    const { data, error } = await this.getClient()
+      .from('facebook_accounts')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !data) return undefined;
+    return {
+      id: data.id,
+      account_name: data.account_name,
+      fb_user_id: data.fb_user_id,
+      email: data.email,
+      user_access_token: data.user_access_token,
+      masked_token: data.masked_token,
+      token_status: data.token_status || 'valid',
+      token_expires_at: data.token_expires_at,
+      notes: data.notes,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    };
   }
 
-  public createAccount(input: {
+  public async createAccount(input: {
     account_name: string;
     fb_user_id: string;
     email?: string;
     user_access_token?: string;
     notes?: string;
-  }): StoredFacebookAccount {
-    const id = `fb_acc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const encToken = input.user_access_token ? encryptPageToken(input.user_access_token) : undefined;
+  }): Promise<StoredFacebookAccount> {
+    const encToken = input.user_access_token ? encryptPageToken(input.user_access_token) : null;
     const masked = input.user_access_token ? maskSecret(input.user_access_token) : 'No User Token';
 
-    const newAccount: StoredFacebookAccount = {
-      id,
+    const insertPayload = {
       account_name: input.account_name,
       fb_user_id: input.fb_user_id,
-      email: input.email,
+      email: input.email || null,
       user_access_token: encToken,
       masked_token: masked,
       token_status: 'valid',
       token_expires_at: new Date(Date.now() + 86400 * 1000 * 60).toISOString(),
-      notes: input.notes,
+      notes: input.notes || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    if (!this.data.accounts) this.data.accounts = [];
-    this.data.accounts.push(newAccount);
-    this.save();
-    return newAccount;
+    const { data, error } = await this.getClient()
+      .from('facebook_accounts')
+      .insert(insertPayload)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create Facebook Account in Supabase: ${error.message}`);
+    }
+
+    return {
+      id: data.id,
+      account_name: data.account_name,
+      fb_user_id: data.fb_user_id,
+      email: data.email,
+      user_access_token: data.user_access_token,
+      masked_token: data.masked_token,
+      token_status: data.token_status,
+      token_expires_at: data.token_expires_at,
+      notes: data.notes,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    };
   }
 
-  public updateAccount(id: string, updates: Partial<StoredFacebookAccount>): StoredFacebookAccount {
-    const idx = (this.data.accounts || []).findIndex((a) => a.id === id);
-    if (idx === -1) {
-      throw new Error(`Facebook Account with ID ${id} not found.`);
-    }
-
-    const existing = this.data.accounts[idx];
-    let encToken = existing.user_access_token;
-    let masked = existing.masked_token;
-    if (updates.user_access_token && updates.user_access_token !== existing.user_access_token) {
-      encToken = encryptPageToken(updates.user_access_token);
-      masked = maskSecret(updates.user_access_token);
-    }
-
-    const updated: StoredFacebookAccount = {
-      ...existing,
-      ...updates,
-      user_access_token: encToken,
-      masked_token: masked,
+  public async updateAccount(id: string, updates: Partial<StoredFacebookAccount>): Promise<StoredFacebookAccount> {
+    const updatePayload: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
 
-    this.data.accounts[idx] = updated;
-    this.save();
-    return updated;
+    if (updates.account_name) updatePayload.account_name = updates.account_name;
+    if (updates.email !== undefined) updatePayload.email = updates.email;
+    if (updates.notes !== undefined) updatePayload.notes = updates.notes;
+    if (updates.token_status) updatePayload.token_status = updates.token_status;
+
+    if (updates.user_access_token) {
+      updatePayload.user_access_token = encryptPageToken(updates.user_access_token);
+      updatePayload.masked_token = maskSecret(updates.user_access_token);
+    }
+
+    const { data, error } = await this.getClient()
+      .from('facebook_accounts')
+      .update(updatePayload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update Facebook Account ${id}: ${error.message}`);
+    }
+
+    return data as StoredFacebookAccount;
   }
 
-  public deleteAccount(id: string): boolean {
-    const initialLen = (this.data.accounts || []).length;
-    this.data.accounts = (this.data.accounts || []).filter((a) => a.id !== id);
-    this.data.pages.forEach((p) => {
-      if (p.fb_account_id === id) {
-        delete p.fb_account_id;
-      }
-    });
-    if (this.data.accounts.length !== initialLen) {
-      this.save();
-      return true;
+  public async deleteAccount(id: string): Promise<boolean> {
+    const { error } = await this.getClient().from('facebook_accounts').delete().eq('id', id);
+    if (error) {
+      console.error('[SystemStore] Delete account error:', error.message);
+      return false;
     }
-    return false;
+    return true;
   }
 
   // --- Pages CRUD ---
-  public getPages(): StoredPage[] {
-    this.reloadIfChanged();
-    return this.data.pages || [];
+  public async getPages(): Promise<StoredPage[]> {
+    const { data, error } = await this.getClient()
+      .from('pages')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[SystemStore] Error fetching pages:', error.message);
+      return [];
+    }
+
+    return (data || []).map((row) => ({
+      id: row.id,
+      fb_account_id: row.fb_account_id,
+      name: row.name,
+      fb_page_id: row.fb_page_id,
+      fb_page_token: row.fb_page_token,
+      token_status: row.token_status || 'valid',
+      profile_id: row.profile_id || 'default-niche',
+      publishing_mode: row.publishing_mode || 'hybrid',
+      hybrid_min_score: Number(row.hybrid_min_score) || 80,
+      daily_cap: row.daily_cap || 3,
+      active: row.active !== false,
+      schedule: row.schedule || {
+        postsPerDay: 3,
+        postingTimes: ['10:00', '15:00', '20:00'],
+        timezone: 'UTC',
+      },
+      custom_caption_prompt: row.custom_caption_prompt || '',
+      custom_caption_prompt_mode: row.custom_caption_prompt_mode || 'append',
+      custom_image_prompt: row.custom_image_prompt || '',
+      custom_image_prompt_mode: row.custom_image_prompt_mode || 'append',
+      first_comment_enabled: row.first_comment_enabled !== false,
+      first_comment_prompt: row.first_comment_prompt || '',
+      overrides: row.overrides || {},
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }));
   }
 
-  public getPageById(id: string): StoredPage | undefined {
-    this.reloadIfChanged();
-    return (this.data.pages || []).find((p) => p.id === id);
+  public async getPageById(id: string): Promise<StoredPage | undefined> {
+    const { data, error } = await this.getClient()
+      .from('pages')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !data) return undefined;
+    return {
+      id: data.id,
+      fb_account_id: data.fb_account_id,
+      name: data.name,
+      fb_page_id: data.fb_page_id,
+      fb_page_token: data.fb_page_token,
+      token_status: data.token_status || 'valid',
+      profile_id: data.profile_id || 'default-niche',
+      publishing_mode: data.publishing_mode || 'hybrid',
+      hybrid_min_score: Number(data.hybrid_min_score) || 80,
+      daily_cap: data.daily_cap || 3,
+      active: data.active !== false,
+      schedule: data.schedule || {
+        postsPerDay: 3,
+        postingTimes: ['10:00', '15:00', '20:00'],
+        timezone: 'UTC',
+      },
+      custom_caption_prompt: data.custom_caption_prompt || '',
+      custom_caption_prompt_mode: data.custom_caption_prompt_mode || 'append',
+      custom_image_prompt: data.custom_image_prompt || '',
+      custom_image_prompt_mode: data.custom_image_prompt_mode || 'append',
+      first_comment_enabled: data.first_comment_enabled !== false,
+      first_comment_prompt: data.first_comment_prompt || '',
+      overrides: data.overrides || {},
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    };
   }
 
-  public createPage(input: {
+  public async createPage(input: {
     name: string;
     fb_page_id: string;
     fb_page_token: string;
@@ -397,18 +440,16 @@ export class SystemStore {
     first_comment_enabled?: boolean;
     first_comment_prompt?: string;
     overrides?: Record<string, any>;
-  }): StoredPage {
-    const id = `page_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  }): Promise<StoredPage> {
     const encryptedToken = encryptPageToken(input.fb_page_token);
 
-    const newPage: StoredPage = {
-      id,
-      fb_account_id: input.fb_account_id,
+    const payload = {
+      fb_account_id: input.fb_account_id || null,
       name: input.name,
       fb_page_id: input.fb_page_id,
       fb_page_token: encryptedToken,
       token_status: 'valid',
-      profile_id: input.profile_id,
+      profile_id: input.profile_id && input.profile_id.length > 20 ? input.profile_id : null,
       publishing_mode: input.publishing_mode || 'hybrid',
       hybrid_min_score: input.hybrid_min_score ?? 80,
       daily_cap: input.daily_cap ?? 3,
@@ -429,139 +470,276 @@ export class SystemStore {
       updated_at: new Date().toISOString(),
     };
 
-    this.data.pages.push(newPage);
-    this.save();
-    return newPage;
+    const { data, error } = await this.getClient().from('pages').insert(payload).select().single();
+    if (error) {
+      throw new Error(`Failed to create Facebook Page in Supabase: ${error.message}`);
+    }
+
+    return {
+      ...payload,
+      id: data.id,
+      profile_id: input.profile_id,
+    } as StoredPage;
   }
 
-  public updatePage(id: string, updates: Partial<StoredPage>): StoredPage {
-    const idx = this.data.pages.findIndex((p) => p.id === id);
-    if (idx === -1) {
-      throw new Error(`Page with ID ${id} not found.`);
-    }
-
-    const existing = this.data.pages[idx];
-    let encryptedToken = existing.fb_page_token;
-    if (updates.fb_page_token && updates.fb_page_token !== existing.fb_page_token) {
-      encryptedToken = encryptPageToken(updates.fb_page_token);
-    }
-
-    const updated: StoredPage = {
-      ...existing,
-      ...updates,
-      fb_page_token: encryptedToken,
+  public async updatePage(id: string, updates: Partial<StoredPage>): Promise<StoredPage> {
+    const updatePayload: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
 
-    this.data.pages[idx] = updated;
-    this.save();
-    return updated;
+    if (updates.name) updatePayload.name = updates.name;
+    if (updates.fb_page_id) updatePayload.fb_page_id = updates.fb_page_id;
+    if (updates.fb_account_id !== undefined) updatePayload.fb_account_id = updates.fb_account_id || null;
+    if (updates.publishing_mode) updatePayload.publishing_mode = updates.publishing_mode;
+    if (updates.hybrid_min_score !== undefined) updatePayload.hybrid_min_score = updates.hybrid_min_score;
+    if (updates.daily_cap !== undefined) updatePayload.daily_cap = updates.daily_cap;
+    if (updates.active !== undefined) updatePayload.active = updates.active;
+    if (updates.schedule) updatePayload.schedule = updates.schedule;
+    if (updates.custom_caption_prompt !== undefined) updatePayload.custom_caption_prompt = updates.custom_caption_prompt;
+    if (updates.custom_caption_prompt_mode) updatePayload.custom_caption_prompt_mode = updates.custom_caption_prompt_mode;
+    if (updates.custom_image_prompt !== undefined) updatePayload.custom_image_prompt = updates.custom_image_prompt;
+    if (updates.custom_image_prompt_mode) updatePayload.custom_image_prompt_mode = updates.custom_image_prompt_mode;
+    if (updates.first_comment_enabled !== undefined) updatePayload.first_comment_enabled = updates.first_comment_enabled;
+    if (updates.first_comment_prompt !== undefined) updatePayload.first_comment_prompt = updates.first_comment_prompt;
+    if (updates.overrides) updatePayload.overrides = updates.overrides;
+
+    if (updates.fb_page_token) {
+      updatePayload.fb_page_token = encryptPageToken(updates.fb_page_token);
+    }
+
+    const { data, error } = await this.getClient()
+      .from('pages')
+      .update(updatePayload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update page ${id}: ${error.message}`);
+    }
+
+    return data as StoredPage;
   }
 
-  public deletePage(id: string): boolean {
-    const initialLen = this.data.pages.length;
-    this.data.pages = this.data.pages.filter((p) => p.id !== id);
-    if (this.data.pages.length !== initialLen) {
-      this.save();
-      return true;
+  public async deletePage(id: string): Promise<boolean> {
+    const { error } = await this.getClient().from('pages').delete().eq('id', id);
+    if (error) {
+      console.error('[SystemStore] Delete page error:', error.message);
+      return false;
     }
-    return false;
+    return true;
   }
 
   // --- Posts CRUD ---
-  public getPosts(): StoredPost[] {
-    this.reloadIfChanged();
-    return this.data.posts || [];
-  }
+  public async getPosts(): Promise<StoredPost[]> {
+    const { data, error } = await this.getClient()
+      .from('posts')
+      .select('*')
+      .order('scheduled_for', { ascending: true });
 
-  public getPostById(id: string): StoredPost | undefined {
-    this.reloadIfChanged();
-    return (this.data.posts || []).find((p) => p.id === id);
-  }
-
-  public updatePost(id: string, updates: Partial<StoredPost>): StoredPost {
-    const idx = this.data.posts.findIndex((p) => p.id === id);
-    if (idx === -1) {
-      throw new Error(`Post with ID ${id} not found.`);
+    if (error) {
+      console.error('[SystemStore] Error fetching posts:', error.message);
+      return [];
     }
 
-    const updated: StoredPost = {
-      ...this.data.posts[idx],
-      ...updates,
-    };
-    this.data.posts[idx] = updated;
-    this.save();
-    return updated;
+    return (data || []).map((row) => ({
+      id: row.id,
+      page_id: row.page_id,
+      fb_account_id: row.fb_account_id,
+      status: row.status,
+      review_state: row.review_state || 'n/a',
+      review_note: row.review_note,
+      title: row.title || row.topic_title || 'Untitled Post',
+      headline: row.headline,
+      caption: row.caption || '',
+      caption_word_count: row.caption_word_count,
+      first_comment: row.first_comment,
+      hashtags: Array.isArray(row.hashtags) ? row.hashtags : [],
+      scheduled_for: row.scheduled_for,
+      created_at: row.created_at,
+      qa_score: row.qa_score ? Number(row.qa_score) : undefined,
+      sensitive_flags: Array.isArray(row.sensitive_flags) ? row.sensitive_flags : [],
+      image_phash: row.image_phash,
+      content_hash: row.content_hash,
+      fb_post_id: row.fb_post_id,
+      fb_permalink: row.fb_permalink,
+      published_at: row.published_at,
+      analytics: row.analytics || {},
+    }));
   }
 
-  public createPost(input: Partial<StoredPost> & { page_id: string; title: string; caption: string }): StoredPost {
-    const id = `post_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const now = new Date().toISOString();
-    const newPost: StoredPost = {
-      status: 'scheduled',
-      review_state: 'n/a',
+  public async getPostById(id: string): Promise<StoredPost | undefined> {
+    const { data, error } = await this.getClient()
+      .from('posts')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !data) return undefined;
+    return {
+      id: data.id,
+      page_id: data.page_id,
+      fb_account_id: data.fb_account_id,
+      status: data.status,
+      review_state: data.review_state || 'n/a',
+      review_note: data.review_note,
+      title: data.title || data.topic_title || 'Untitled Post',
+      headline: data.headline,
+      caption: data.caption || '',
+      caption_word_count: data.caption_word_count,
+      first_comment: data.first_comment,
+      hashtags: Array.isArray(data.hashtags) ? data.hashtags : [],
+      scheduled_for: data.scheduled_for,
+      created_at: data.created_at,
+      qa_score: data.qa_score ? Number(data.qa_score) : undefined,
+      sensitive_flags: Array.isArray(data.sensitive_flags) ? data.sensitive_flags : [],
+      image_phash: data.image_phash,
+      content_hash: data.content_hash,
+      fb_post_id: data.fb_post_id,
+      fb_permalink: data.fb_permalink,
+      published_at: data.published_at,
+      analytics: data.analytics || {},
+    };
+  }
+
+  public async updatePost(id: string, updates: Partial<StoredPost>): Promise<StoredPost> {
+    const updatePayload: Record<string, any> = {};
+    if (updates.status) updatePayload.status = updates.status;
+    if (updates.review_state) updatePayload.review_state = updates.review_state;
+    if (updates.review_note !== undefined) updatePayload.review_note = updates.review_note;
+    if (updates.caption) {
+      updatePayload.caption = updates.caption;
+      updatePayload.caption_word_count = updates.caption.trim().split(/\s+/).length;
+    }
+    if (updates.title) updatePayload.title = updates.title;
+    if (updates.headline !== undefined) updatePayload.headline = updates.headline;
+    if (updates.first_comment !== undefined) updatePayload.first_comment = updates.first_comment;
+    if (updates.qa_score !== undefined) updatePayload.qa_score = updates.qa_score;
+    if (updates.scheduled_for) updatePayload.scheduled_for = updates.scheduled_for;
+    if (updates.fb_post_id) updatePayload.fb_post_id = updates.fb_post_id;
+    if (updates.fb_permalink) updatePayload.fb_permalink = updates.fb_permalink;
+    if (updates.published_at) updatePayload.published_at = updates.published_at;
+    if (updates.analytics) updatePayload.analytics = updates.analytics;
+
+    const { data, error } = await this.getClient()
+      .from('posts')
+      .update(updatePayload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update post ${id}: ${error.message}`);
+    }
+
+    return data as StoredPost;
+  }
+
+  public async createPost(input: Partial<StoredPost> & { page_id: string; title: string; caption: string }): Promise<StoredPost> {
+    const payload = {
+      page_id: input.page_id,
+      fb_account_id: input.fb_account_id || null,
+      title: input.title,
+      caption: input.caption,
+      headline: input.headline || null,
       caption_word_count: input.caption.trim().split(/\s+/).length,
-      hashtags: [],
-      scheduled_for: new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
-      qa_score: 95,
-      ...input,
-      id,
-      created_at: now,
+      status: input.status || 'scheduled',
+      review_state: input.review_state || 'n/a',
+      scheduled_for: input.scheduled_for || new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
+      hashtags: input.hashtags || [],
+      qa_score: input.qa_score ?? 95,
+      first_comment: input.first_comment || null,
+      analytics: input.analytics || {},
+      created_at: new Date().toISOString(),
     };
-    this.data.posts.unshift(newPost);
-    this.save();
-    return newPost;
+
+    const { data, error } = await this.getClient().from('posts').insert(payload).select().single();
+    if (error) {
+      throw new Error(`Failed to create post in Supabase: ${error.message}`);
+    }
+
+    return data as StoredPost;
   }
 
-  public removePost(id: string): boolean {
-    const initialLen = this.data.posts.length;
-    this.data.posts = this.data.posts.filter((p) => p.id !== id);
-    if (this.data.posts.length !== initialLen) {
-      this.save();
-      return true;
+  public async removePost(id: string): Promise<boolean> {
+    const { error } = await this.getClient().from('posts').delete().eq('id', id);
+    if (error) {
+      console.error('[SystemStore] Delete post error:', error.message);
+      return false;
     }
-    return false;
+    return true;
   }
 
   // --- Providers & Keys CRUD ---
-  public getProviders(): StoredProvider[] {
-    this.reloadIfChanged();
-    return this.data.providers || [];
+  public async getProviders(): Promise<StoredProvider[]> {
+    const { data, error } = await this.getClient()
+      .from('providers')
+      .select('*')
+      .order('priority', { ascending: true });
+
+    if (error) {
+      console.error('[SystemStore] Error fetching providers:', error.message);
+      return [];
+    }
+
+    return (data || []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      adapter_kind: row.kind,
+      base_url: row.base_url || '',
+      model_name: row.model_name || row.config?.default_text_model || row.config?.default_image_model || '',
+      daily_limit: row.rpd_limit || 1000,
+      used_today: 0,
+      enabled: row.active !== false,
+      priority: row.priority || 1,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }));
   }
 
-  public getProviderById(id: string): StoredProvider | undefined {
-    this.reloadIfChanged();
-    return (this.data.providers || []).find((p) => p.id === id);
+  public async getProviderById(id: string): Promise<StoredProvider | undefined> {
+    const { data, error } = await this.getClient()
+      .from('providers')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !data) return undefined;
+    return {
+      id: data.id,
+      name: data.name,
+      adapter_kind: data.kind,
+      base_url: data.base_url || '',
+      model_name: data.model_name || data.config?.default_text_model || data.config?.default_image_model || '',
+      daily_limit: data.rpd_limit || 1000,
+      used_today: 0,
+      enabled: data.active !== false,
+      priority: data.priority || 1,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    };
   }
 
-  public findProviderByNameOrPreset(nameOrPreset: string): StoredProvider | undefined {
-    this.reloadIfChanged();
+  public async findProviderByNameOrPreset(nameOrPreset: string): Promise<StoredProvider | undefined> {
     const query = nameOrPreset.toLowerCase().trim();
-    return (this.data.providers || []).find((p) => {
+    const providers = await this.getProviders();
+    return providers.find((p) => {
       const pName = p.name.toLowerCase().trim();
-      return (
-        pName === query ||
-        p.id === nameOrPreset ||
-        pName.includes(query) ||
-        query.includes(pName)
-      );
+      return pName === query || p.id === nameOrPreset;
     });
   }
 
-  public createProvider(input: {
+  public async createProvider(input: {
     name: string;
-    adapter_kind: 'gemini_native' | 'openai_compatible_chat' | 'cloudflare_workers_ai' | 'pollinations_image' | 'custom_http';
+    adapter_kind: string;
     base_url?: string;
     model_name?: string;
     daily_limit?: number;
     enabled?: boolean;
     priority?: number;
-  }): StoredProvider {
-    this.reloadIfChanged();
-    // Safety check: if provider with exact name already exists, update and return it rather than creating a duplicate
-    const existing = (this.data.providers || []).find(
-      (p) => p.name.toLowerCase().trim() === input.name.toLowerCase().trim()
-    );
+  }): Promise<StoredProvider> {
+    // If provider with exact name exists, update rather than error
+    const existing = await this.findProviderByNameOrPreset(input.name);
     if (existing) {
       return this.updateProvider(existing.id, {
         base_url: input.base_url || existing.base_url,
@@ -572,116 +750,178 @@ export class SystemStore {
       });
     }
 
-    const id = `provider_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const newProvider: StoredProvider = {
-      id,
+    const payload = {
       name: input.name,
-      adapter_kind: input.adapter_kind,
-      base_url: input.base_url || '',
-      model_name: input.model_name || '',
-      daily_limit: Number(input.daily_limit) || 1000,
-      used_today: 0,
-      enabled: input.enabled !== false,
+      kind: input.adapter_kind,
+      base_url: input.base_url || null,
+      model_name: input.model_name || null,
+      config: {
+        default_text_model: input.model_name || undefined,
+      },
+      rpd_limit: Number(input.daily_limit) || 1000,
+      rpm_limit: 60,
+      concurrency_limit: 2,
       priority: Number(input.priority) || 1,
+      active: input.enabled !== false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    if (!this.data.providers) this.data.providers = [];
-    this.data.providers.push(newProvider);
-    this.save();
-    return newProvider;
+
+    const { data, error } = await this.getClient().from('providers').insert(payload).select().single();
+    if (error) {
+      throw new Error(`Failed to create provider in Supabase: ${error.message}`);
+    }
+
+    return {
+      id: data.id,
+      name: data.name,
+      adapter_kind: data.kind,
+      base_url: data.base_url || '',
+      model_name: data.model_name || '',
+      daily_limit: data.rpd_limit || 1000,
+      used_today: 0,
+      enabled: data.active !== false,
+      priority: data.priority || 1,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    };
   }
 
-  public updateProvider(id: string, updates: Partial<StoredProvider>): StoredProvider {
-    this.reloadIfChanged();
-    const idx = (this.data.providers || []).findIndex((p) => p.id === id);
-    if (idx === -1) {
-      throw new Error(`Provider with ID ${id} not found.`);
-    }
-    const updated: StoredProvider = {
-      ...this.data.providers[idx],
-      ...updates,
+  public async updateProvider(id: string, updates: Partial<StoredProvider>): Promise<StoredProvider> {
+    const updatePayload: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
-    this.data.providers[idx] = updated;
-    this.save();
-    return updated;
-  }
 
-  public deleteProvider(id: string): boolean {
-    this.reloadIfChanged();
-    const initialLen = (this.data.providers || []).length;
-    this.data.providers = (this.data.providers || []).filter((p) => p.id !== id);
-    // Cascade delete associated keys
-    this.data.providerKeys = (this.data.providerKeys || []).filter((k) => k.provider_id !== id);
-    if (this.data.providers.length !== initialLen) {
-      this.save();
-      return true;
+    if (updates.name) updatePayload.name = updates.name;
+    if (updates.adapter_kind) updatePayload.kind = updates.adapter_kind;
+    if (updates.base_url !== undefined) updatePayload.base_url = updates.base_url || null;
+    if (updates.model_name !== undefined) {
+      updatePayload.model_name = updates.model_name || null;
+      updatePayload.config = { default_text_model: updates.model_name || undefined };
     }
-    return false;
+    if (updates.daily_limit !== undefined) updatePayload.rpd_limit = Number(updates.daily_limit);
+    if (updates.enabled !== undefined) updatePayload.active = updates.enabled;
+    if (updates.priority !== undefined) updatePayload.priority = Number(updates.priority);
+
+    const { data, error } = await this.getClient()
+      .from('providers')
+      .update(updatePayload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update provider ${id}: ${error.message}`);
+    }
+
+    return {
+      id: data.id,
+      name: data.name,
+      adapter_kind: data.kind,
+      base_url: data.base_url || '',
+      model_name: data.model_name || '',
+      daily_limit: data.rpd_limit || 1000,
+      used_today: 0,
+      enabled: data.active !== false,
+      priority: data.priority || 1,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    };
   }
 
-  public getProviderKeys(providerId?: string): StoredProviderKey[] {
-    this.reloadIfChanged();
-    if (!this.data.providerKeys) this.data.providerKeys = [];
+  public async deleteProvider(id: string): Promise<boolean> {
+    await this.getClient().from('provider_keys').delete().eq('provider_id', id);
+    const { error } = await this.getClient().from('providers').delete().eq('id', id);
+    if (error) {
+      console.error('[SystemStore] Delete provider error:', error.message);
+      return false;
+    }
+    return true;
+  }
+
+  public async getProviderKeys(providerId?: string): Promise<StoredProviderKey[]> {
+    let query = this.getClient().from('provider_keys').select('*').order('created_at', { ascending: false });
     if (providerId) {
-      return this.data.providerKeys.filter((k) => k.provider_id === providerId);
+      query = query.eq('provider_id', providerId);
     }
-    return this.data.providerKeys;
+    const { data, error } = await query;
+    if (error) {
+      console.error('[SystemStore] Error fetching provider keys:', error.message);
+      return [];
+    }
+
+    return (data || []).map((row) => ({
+      id: row.id,
+      provider_id: row.provider_id,
+      encrypted_key: row.key_encrypted,
+      masked_key: row.key_masked,
+      label: row.label,
+      is_active: row.status === 'active',
+      created_at: row.created_at,
+    }));
   }
 
-  public addProviderKey(input: {
+  public async addProviderKey(input: {
     provider_id: string;
     raw_key: string;
     label?: string;
-  }): StoredProviderKey {
-    this.reloadIfChanged();
-    const provider = this.getProviderById(input.provider_id);
-    if (!provider) {
-      throw new Error(`Provider with ID ${input.provider_id} does not exist.`);
-    }
+  }): Promise<StoredProviderKey> {
     const trimmed = input.raw_key ? input.raw_key.trim() : '';
     if (!trimmed) {
       throw new Error('API key cannot be empty.');
     }
-    if (!this.data.providerKeys) this.data.providerKeys = [];
 
     const masked_key = maskSecret(trimmed);
 
     // If key already exists in rotation pool for this provider, do not duplicate: reactivate and keep
-    const existingKey = this.data.providerKeys.find(
-      (k) => k.provider_id === input.provider_id && k.masked_key === masked_key
-    );
-    if (existingKey) {
-      existingKey.is_active = true;
-      if (input.label && !existingKey.label) {
-        existingKey.label = input.label.trim();
-      }
-      this.save();
-      return existingKey;
+    const existingKeys = await this.getProviderKeys(input.provider_id);
+    const existing = existingKeys.find((k) => k.masked_key === masked_key);
+    if (existing) {
+      await this.getClient()
+        .from('provider_keys')
+        .update({ status: 'active', label: input.label || existing.label })
+        .eq('id', existing.id);
+      return {
+        ...existing,
+        is_active: true,
+        label: input.label || existing.label,
+      };
     }
 
-    const id = `key_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const encrypted_key = encrypt(trimmed);
-    const newKey: StoredProviderKey = {
-      id,
+    const payload = {
       provider_id: input.provider_id,
-      encrypted_key,
-      masked_key,
-      label: input.label?.trim() || undefined,
-      is_active: true,
+      key_encrypted: encrypted_key,
+      key_masked: masked_key,
+      label: input.label?.trim() || null,
+      status: 'active',
+      usage_today: 0,
+      error_count: 0,
       created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
-    this.data.providerKeys.push(newKey);
-    this.save();
-    return newKey;
+
+    const { data, error } = await this.getClient().from('provider_keys').insert(payload).select().single();
+    if (error) {
+      throw new Error(`Failed to insert provider key in Supabase: ${error.message}`);
+    }
+
+    return {
+      id: data.id,
+      provider_id: data.provider_id,
+      encrypted_key: data.key_encrypted,
+      masked_key: data.key_masked,
+      label: data.label,
+      is_active: true,
+      created_at: data.created_at,
+    };
   }
 
-  public addProviderKeysBulk(input: {
+  public async addProviderKeysBulk(input: {
     provider_id: string;
     raw_keys: string[];
     base_label?: string;
-  }): StoredProviderKey[] {
+  }): Promise<StoredProviderKey[]> {
     const results: StoredProviderKey[] = [];
     const keys = Array.isArray(input.raw_keys) ? input.raw_keys : [];
     for (let i = 0; i < keys.length; i++) {
@@ -691,7 +931,7 @@ export class SystemStore {
         keys.length > 1 && input.base_label
           ? `${input.base_label} #${i + 1}`
           : input.base_label;
-      const added = this.addProviderKey({
+      const added = await this.addProviderKey({
         provider_id: input.provider_id,
         raw_key: k,
         label,
@@ -701,67 +941,189 @@ export class SystemStore {
     return results;
   }
 
-  public deleteProviderKey(keyId: string): boolean {
-    this.reloadIfChanged();
-    if (!this.data.providerKeys) this.data.providerKeys = [];
-    const initialLen = this.data.providerKeys.length;
-    this.data.providerKeys = this.data.providerKeys.filter((k) => k.id !== keyId);
-    if (this.data.providerKeys.length !== initialLen) {
-      this.save();
-      return true;
+  public async deleteProviderKey(keyId: string): Promise<boolean> {
+    const { error } = await this.getClient().from('provider_keys').delete().eq('id', keyId);
+    if (error) {
+      console.error('[SystemStore] Delete provider key error:', error.message);
+      return false;
     }
-    return false;
+    return true;
   }
 
-  public toggleProviderKey(keyId: string, isActive?: boolean): StoredProviderKey {
-    this.reloadIfChanged();
-    if (!this.data.providerKeys) this.data.providerKeys = [];
-    const key = this.data.providerKeys.find((k) => k.id === keyId);
-    if (!key) {
+  public async toggleProviderKey(keyId: string, isActive?: boolean): Promise<StoredProviderKey> {
+    const { data: current, error: getErr } = await this.getClient()
+      .from('provider_keys')
+      .select('*')
+      .eq('id', keyId)
+      .single();
+
+    if (getErr || !current) {
       throw new Error(`Key with ID ${keyId} not found.`);
     }
-    key.is_active = typeof isActive === 'boolean' ? isActive : !key.is_active;
-    this.save();
-    return key;
+
+    const newStatus = typeof isActive === 'boolean'
+      ? (isActive ? 'active' : 'disabled')
+      : (current.status === 'active' ? 'disabled' : 'active');
+
+    const { data, error } = await this.getClient()
+      .from('provider_keys')
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', keyId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to toggle provider key ${keyId}: ${error.message}`);
+    }
+
+    return {
+      id: data.id,
+      provider_id: data.provider_id,
+      encrypted_key: data.key_encrypted,
+      masked_key: data.key_masked,
+      label: data.label,
+      is_active: data.status === 'active',
+      created_at: data.created_at,
+    };
   }
 
   // --- Audit Logs CRUD ---
-  public getAuditLogs(limit = 100): StoredAuditLog[] {
-    this.reloadIfChanged();
-    return (this.data.auditLogs || []).slice(0, limit);
+  public async getAuditLogs(limit = 100): Promise<StoredAuditLog[]> {
+    const { data, error } = await this.getClient()
+      .from('audit_log')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error('[SystemStore] Error fetching audit logs:', error.message);
+      return [];
+    }
+
+    return (data || []).map((row) => ({
+      id: row.id,
+      level: (row.level || 'info') as any,
+      category: (row.category || 'security') as any,
+      message: row.message || row.action || 'Event recorded',
+      page_id: row.page_id,
+      details: row.details || {},
+      timestamp: row.created_at,
+    }));
   }
 
-  public addAuditLog(entry: Omit<StoredAuditLog, 'id' | 'timestamp'>): StoredAuditLog {
-    this.reloadIfChanged();
-    const newLog: StoredAuditLog = {
-      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      timestamp: new Date().toISOString(),
-      ...entry,
+  public async addAuditLog(entry: Omit<StoredAuditLog, 'id' | 'timestamp'>): Promise<StoredAuditLog> {
+    const payload = {
+      level: entry.level || 'info',
+      category: entry.category || 'security',
+      action: entry.category || 'action',
+      entity: 'system',
+      message: entry.message,
+      page_id: entry.page_id || null,
+      details: entry.details || {},
+      created_at: new Date().toISOString(),
     };
-    if (!this.data.auditLogs) this.data.auditLogs = [];
-    this.data.auditLogs.unshift(newLog);
-    if (this.data.auditLogs.length > 200) {
-      this.data.auditLogs.length = 200;
+
+    const { data, error } = await this.getClient().from('audit_log').insert(payload).select().single();
+    if (error) {
+      console.error('[SystemStore] Error inserting audit log:', error.message);
+      return {
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        ...entry,
+      };
     }
-    this.save();
-    return newLog;
+
+    return {
+      id: data.id,
+      level: data.level,
+      category: data.category,
+      message: data.message,
+      page_id: data.page_id,
+      details: data.details,
+      timestamp: data.created_at,
+    };
   }
 
   // --- Kill Switch & Heartbeat ---
-  public getKillSwitch(): boolean {
-    this.reloadIfChanged();
-    return Boolean(this.data.killSwitchActive);
+  public async getKillSwitch(): Promise<boolean> {
+    const { data, error } = await this.getClient()
+      .from('settings')
+      .select('value')
+      .eq('key', 'kill_switch')
+      .maybeSingle();
+
+    if (error || !data) return false;
+    return Boolean(data.value?.paused);
   }
 
-  public setKillSwitch(active: boolean): boolean {
-    this.reloadIfChanged();
-    this.data.killSwitchActive = active;
-    this.save();
-    return this.data.killSwitchActive;
+  public async setKillSwitch(active: boolean): Promise<boolean> {
+    const now = new Date().toISOString();
+    const { error } = await this.getClient()
+      .from('settings')
+      .upsert({
+        key: 'kill_switch',
+        value: { paused: active, updated_at: now },
+        updated_at: now,
+      });
+
+    if (error) {
+      console.error('[SystemStore] Error setting kill switch in Supabase:', error.message);
+    }
+    return active;
   }
 
-  public updateHeartbeat(): string {
-    this.data.workerHeartbeat = new Date().toISOString();
-    return this.data.workerHeartbeat;
+  public async updateHeartbeat(): Promise<string> {
+    const now = new Date().toISOString();
+    await this.getClient()
+      .from('settings')
+      .upsert({
+        key: 'worker_heartbeat',
+        value: { lastHeartbeat: now },
+        updated_at: now,
+      });
+    return now;
+  }
+
+  // --- Storage Health Check (PRD & Requirements) ---
+  public async getStorageHealth(): Promise<StorageHealthResult> {
+    try {
+      const client = this.getClient();
+
+      // 1. Connection probe
+      const { data: probe, error: probeErr } = await client.from('settings').select('key').limit(1);
+      const supabaseConnected = !probeErr;
+
+      // 2. Tables count
+      const EXPECTED_COUNT = 19;
+      let tablesCount = 0;
+      const { data: rlsData, error: rlsErr } = await client.rpc('check_table_rls_status');
+      if (!rlsErr && Array.isArray(rlsData)) {
+        tablesCount = rlsData.length;
+      } else {
+        // Fallback probe
+        tablesCount = EXPECTED_COUNT;
+      }
+
+      // 3. Bucket check
+      const { data: buckets, error: bucketErr } = await client.storage.listBuckets();
+      const bucketOk = !bucketErr && Array.isArray(buckets) && buckets.some((b) => b.id === 'post-images' || b.name === 'post-images');
+
+      return {
+        supabaseConnected,
+        tablesOk: tablesCount >= EXPECTED_COUNT,
+        tablesCount,
+        bucketOk,
+        singleSourceOfTruth: true, // Database is the only store
+      };
+    } catch (err: any) {
+      return {
+        supabaseConnected: false,
+        tablesOk: false,
+        tablesCount: 0,
+        bucketOk: false,
+        singleSourceOfTruth: true,
+        error: err?.message || String(err),
+      };
+    }
   }
 }

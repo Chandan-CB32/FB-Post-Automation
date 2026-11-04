@@ -9,8 +9,8 @@ node_modules
 .env*.local
 *.pem
 *.key
-data/*.json
-**/data/*.json
+data/
+**/data/
 !data/.gitkeep
 !**/data/.gitkeep
 

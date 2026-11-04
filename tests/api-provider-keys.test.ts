@@ -9,9 +9,17 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
   const store = SystemStore.getInstance();
 
   beforeAll(async () => {
-    // Clear test providers
-    for (const p of store.getProviders()) {
-      store.deleteProvider(p.id);
+    // Clear test providers and keys
+    const provs = await store.getProviders();
+    for (const p of provs) {
+      if (p.name.includes('Test')) {
+        await store.deleteProvider(p.id);
+      } else if (p.name === 'Google Gemini') {
+        const keys = await store.getProviderKeys(p.id);
+        for (const k of keys) {
+          await store.deleteProviderKey(k.id);
+        }
+      }
     }
 
     server = createDashboardServer();
@@ -26,8 +34,11 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
 
   afterAll(async () => {
     // Clean up
-    for (const p of store.getProviders()) {
-      store.deleteProvider(p.id);
+    const provs = await store.getProviders();
+    for (const p of provs) {
+      if (p.name.includes('Test')) {
+        await store.deleteProvider(p.id);
+      }
     }
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
@@ -50,7 +61,7 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
     const providerId = data1.provider.id;
 
     // Verify 1 key exists
-    let keys = store.getProviderKeys(providerId);
+    let keys = await store.getProviderKeys(providerId);
     expect(keys.length).toBe(1);
     const key1Id = keys[0].id;
 
@@ -70,7 +81,7 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
     expect(data2.provider.id).toBe(providerId);
 
     // CRITICAL: Key 1 was NOT deleted! Both Key 1 and Key 2 exist!
-    keys = store.getProviderKeys(providerId);
+    keys = await store.getProviderKeys(providerId);
     expect(keys.length).toBe(2);
     expect(keys.map((k) => k.id)).toContain(key1Id);
 
@@ -89,7 +100,7 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
     expect(data3.count).toBe(2);
 
     // All 4 keys exist!
-    keys = store.getProviderKeys(providerId);
+    keys = await store.getProviderKeys(providerId);
     expect(keys.length).toBe(4);
 
     // 4. Update provider via PUT /api/providers with an extra key
@@ -105,7 +116,7 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
     expect(res4.status).toBe(200);
 
     // All 5 keys exist!
-    keys = store.getProviderKeys(providerId);
+    keys = await store.getProviderKeys(providerId);
     expect(keys.length).toBe(5);
 
     // 5. GET /api/providers enriched payload
@@ -115,5 +126,8 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
     expect(geminiProv.keyCount).toBe(5);
     expect(geminiProv.activeKeyCount).toBe(5);
     expect(geminiProv.keys.length).toBe(5);
+
+    // Cleanup
+    await store.deleteProvider(providerId);
   });
 });

@@ -8,6 +8,7 @@ import path from 'node:path';
 const EXPECTED_TABLES = [
   'content_profiles',
   'profile_versions',
+  'facebook_accounts',
   'pages',
   'providers',
   'provider_keys',
@@ -120,7 +121,7 @@ async function main() {
   }
 
   // 4. Check tables existence
-  console.log('\n3. Checking Expected Tables (18 Total):');
+  console.log(`\n3. Checking Expected Tables (${EXPECTED_TABLES.length} Total):`);
   const existingTables = [];
   const missingTables = [];
 

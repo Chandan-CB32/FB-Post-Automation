@@ -471,10 +471,11 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // 1. API: Overview Metrics
     if (url.pathname === '/api/overview') {
-      store.updateHeartbeat();
-      const pages = store.getPages();
-      const posts = store.getPosts();
-      const killSwitch = store.getKillSwitch();
+      await store.updateHeartbeat();
+      const pages = await store.getPages();
+      const posts = await store.getPosts();
+      const killSwitch = await store.getKillSwitch();
+      const providers = await store.getProviders();
 
       const metrics = getDashboardOverviewMetrics({
         lastHeartbeat: new Date().toISOString(),
@@ -495,7 +496,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
           },
         ],
-        providerDailyUsage: store.getProviders().map((p) => ({
+        providerDailyUsage: providers.map((p) => ({
           provider_id: p.id,
           requests_count: p.used_today || 0,
           daily_limit: p.daily_limit || 1000,
@@ -535,8 +536,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     // 2b. API: Facebook Accounts / Identities CRUD
     if (url.pathname === '/api/accounts') {
       if (req.method === 'GET') {
-        const accounts = store.getAccounts();
-        const pages = store.getPages();
+        const accounts = await store.getAccounts();
+        const pages = await store.getPages();
         const enriched = accounts.map((acc) => {
           const linkedPages = pages.filter((p) => p.fb_account_id === acc.id);
           return {
@@ -551,20 +552,20 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'POST') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             if (!data.account_name || !data.fb_user_id) {
               return sendJson({ error: 'account_name and fb_user_id are required.' }, 400);
             }
-            const newAcc = store.createAccount({
+            const newAcc = await store.createAccount({
               account_name: data.account_name,
               fb_user_id: data.fb_user_id,
               email: data.email,
               user_access_token: data.user_access_token,
               notes: data.notes,
             });
-            store.addAuditLog({
+            await store.addAuditLog({
               level: 'success',
               category: 'token',
               message: `Connected new Facebook Account identity: ${newAcc.account_name} (User ID: ${newAcc.fb_user_id})`,
@@ -581,11 +582,11 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'PUT') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             if (!data.id) return sendJson({ error: 'Account ID is required.' }, 400);
-            const updated = store.updateAccount(data.id, data);
+            const updated = await store.updateAccount(data.id, data);
             return sendJson({ success: true, account: updated });
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
@@ -597,12 +598,12 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'DELETE') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             const accId = data.id || url.searchParams.get('id');
             if (!accId) return sendJson({ error: 'Account ID is required.' }, 400);
-            const deleted = store.deleteAccount(accId);
+            const deleted = await store.deleteAccount(accId);
             return sendJson({ success: deleted });
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
@@ -614,9 +615,9 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // 2c. API: Analytics & Performance Metrics
     if (url.pathname === '/api/analytics') {
-      const posts = store.getPosts();
-      const pages = store.getPages();
-      const accounts = store.getAccounts();
+      const posts = await store.getPosts();
+      const pages = await store.getPages();
+      const accounts = await store.getAccounts();
 
       const published = posts.filter((p) => p.status === 'published' && p.analytics);
       const totalImpressions = published.reduce((acc, p) => acc + (p.analytics?.impressions || 0), 0);
@@ -668,7 +669,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // 2d. API: Audit Logs
     if (url.pathname === '/api/audit-logs') {
-      const logs = store.getAuditLogs();
+      const logs = await store.getAuditLogs();
       return sendJson(logs);
     }
 
@@ -676,7 +677,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     if (url.pathname === '/api/pages') {
       if (req.method === 'GET') {
         const accountId = url.searchParams.get('accountId');
-        let pages = store.getPages();
+        let pages = await store.getPages();
         if (accountId) {
           pages = pages.filter((p) => p.fb_account_id === accountId);
         }
@@ -686,7 +687,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'POST') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             if (!data.name || !data.fb_page_id || !data.fb_page_token) {
@@ -708,7 +709,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               resolvedProfileId = customProfile.id;
             }
 
-            const newPage = store.createPage({
+            const newPage = await store.createPage({
               name: data.name,
               fb_account_id: data.fb_account_id,
               fb_page_id: data.fb_page_id,
@@ -727,7 +728,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               overrides: data.overrides || {},
             });
 
-            store.addAuditLog({
+            await store.addAuditLog({
               level: 'info',
               category: 'publish',
               message: `Page added: ${newPage.name} (FB ID: ${newPage.fb_page_id}) under account ${newPage.fb_account_id || 'Direct'}`,
@@ -745,7 +746,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'PUT') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             if (!data.id) {
@@ -762,7 +763,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               data.profile_id = customProfile.id;
             }
 
-            const updated = store.updatePage(data.id, data);
+            const updated = await store.updatePage(data.id, data);
             return sendJson({ success: true, page: updated });
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
@@ -774,14 +775,14 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'DELETE') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             const pageId = data.id || url.searchParams.get('id');
             if (!pageId) {
               return sendJson({ error: 'Page ID is required.' }, 400);
             }
-            const deleted = store.deletePage(pageId);
+            const deleted = await store.deletePage(pageId);
             return sendJson({ success: deleted });
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
@@ -794,7 +795,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     // 4. API: Page-Specific Effective Settings & Prompts Resolution
     if (url.pathname === '/api/page-effective-settings') {
       const pageId = url.searchParams.get('pageId');
-      const page = pageId ? store.getPageById(pageId) : store.getPages()[0];
+      const page = pageId ? await store.getPageById(pageId) : (await store.getPages())[0];
       if (!page) {
         return sendJson({ error: 'Page not found' }, 404);
       }
@@ -830,7 +831,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // 5. API: Review Posts list
     if (url.pathname === '/api/review-posts') {
-      const posts = store.getPosts();
+      const posts = await store.getPosts();
       return sendJson(posts);
     }
 
@@ -838,15 +839,15 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     if (req.method === 'POST' && url.pathname === '/api/review-action') {
       let body = '';
       req.on('data', (chunk) => (body += chunk));
-      req.on('end', () => {
+      req.on('end', async () => {
         try {
           const { postId, action, reason, updates } = JSON.parse(body || '{}');
-          const target = store.getPostById(postId);
+          const target = await store.getPostById(postId);
           if (!target) return sendJson({ error: 'Post not found' }, 404);
 
           if (action === 'approve') {
             const approved = approveReviewPost(target as any);
-            store.updatePost(postId, {
+            await store.updatePost(postId, {
               review_state: 'approved',
               status: 'ready',
               scheduled_for: approved.scheduledFor,
@@ -857,7 +858,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
           if (action === 'reject') {
             const rejected = rejectReviewPost(target as any, reason || 'Rejected by owner');
-            store.updatePost(postId, {
+            await store.updatePost(postId, {
               review_state: 'rejected',
               status: 'skipped',
               review_note: reason || 'Rejected by owner',
@@ -867,7 +868,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
           if (action === 'edit') {
             const edited = editReviewPost(target as any, updates || {});
-            store.updatePost(postId, {
+            await store.updatePost(postId, {
               caption: edited.caption || target.caption,
               caption_word_count: edited.caption_word_count || target.caption_word_count || 0,
               title: edited.title || target.title,
@@ -886,8 +887,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // 7. API: Toggle Kill Switch
     if (req.method === 'POST' && url.pathname === '/api/kill-switch') {
-      const current = store.getKillSwitch();
-      const updated = store.setKillSwitch(!current);
+      const current = await store.getKillSwitch();
+      const updated = await store.setKillSwitch(!current);
       return sendJson({ success: true, killSwitchActive: updated });
     }
 
@@ -895,11 +896,11 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     if (req.method === 'POST' && url.pathname === '/api/test-run') {
       let body = '';
       req.on('data', (chunk) => (body += chunk));
-      req.on('end', () => {
+      req.on('end', async () => {
         try {
           const parsed = JSON.parse(body || '{}');
           const pageId = parsed.pageId;
-          const page = pageId ? store.getPageById(pageId) : store.getPages()[0];
+          const page = pageId ? await store.getPageById(pageId) : (await store.getPages())[0];
           if (!page) {
             return sendJson({ error: 'No Facebook Page found. Please connect a page first in the Pages tab.' }, 400);
           }
@@ -971,7 +972,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           // Save created post into the page production pipeline
           const postStatus = page.publishing_mode === 'review' ? 'pending_review' : 'scheduled';
           const reviewState = page.publishing_mode === 'review' ? 'pending' : 'approved';
-          const savedPost = store.createPost({
+          const savedPost = await store.createPost({
             page_id: page.id,
             fb_account_id: page.fb_account_id,
             title: topicTitle,
@@ -985,7 +986,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             scheduled_for: new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
           });
 
-          store.addAuditLog({
+          await store.addAuditLog({
             level: 'success',
             category: 'publish',
             message: `Automated post generated for "${page.name}": "${topicTitle}" (QA: 95/100)`,
@@ -1004,8 +1005,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     // 9. API: Providers CRUD
     if (url.pathname === '/api/providers') {
       if (req.method === 'GET') {
-        const providers = store.getProviders();
-        const allKeys = store.getProviderKeys();
+        const providers = await store.getProviders();
+        const allKeys = await store.getProviderKeys();
         const enriched = providers.map((p) => {
           const keys = allKeys.filter((k) => k.provider_id === p.id);
           return {
@@ -1028,7 +1029,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'POST') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             let name = data.name;
@@ -1056,7 +1057,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
                 model_name = model_name || preset.defaultTextModel || preset.defaultImageModel;
                 daily_limit = data.daily_limit ? Number(data.daily_limit) : preset.rpdLimit;
 
-                existingProvider = store.getProviders().find(
+                existingProvider = (await store.getProviders()).find(
                   (p) =>
                     p.id === data.preset_id ||
                     p.id === preset.id ||
@@ -1066,7 +1067,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             }
 
             if (!existingProvider && name) {
-              existingProvider = store.getProviders().find(
+              existingProvider = (await store.getProviders()).find(
                 (p) => p.name.toLowerCase().trim() === name.toLowerCase().trim()
               );
             }
@@ -1077,7 +1078,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
             let targetProvider: StoredProvider;
             if (existingProvider) {
-              targetProvider = store.updateProvider(existingProvider.id, {
+              targetProvider = await store.updateProvider(existingProvider.id, {
                 base_url: base_url || existingProvider.base_url,
                 model_name: model_name || existingProvider.model_name,
                 daily_limit: daily_limit || existingProvider.daily_limit,
@@ -1085,7 +1086,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
                 enabled: data.enabled !== false,
               });
             } else {
-              targetProvider = store.createProvider({
+              targetProvider = await store.createProvider({
                 name,
                 adapter_kind,
                 base_url,
@@ -1105,7 +1106,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               const keyLabel = parsedKeys.length > 1
                 ? `${data.key_label || 'Key'} #${i + 1}`
                 : (data.key_label || 'Primary Key');
-              const addedKey = store.addProviderKey({
+              const addedKey = await store.addProviderKey({
                 provider_id: targetProvider.id,
                 raw_key: k,
                 label: keyLabel,
@@ -1113,7 +1114,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               addedKeys.push(addedKey);
             }
 
-            const currentKeys = store.getProviderKeys(targetProvider.id);
+            const currentKeys = await store.getProviderKeys(targetProvider.id);
             return sendJson(
               {
                 success: true,
@@ -1152,20 +1153,20 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'PUT') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             if (!data.id) {
               return sendJson({ error: 'Provider ID is required.' }, 400);
             }
-            const updated = store.updateProvider(data.id, data);
+            const updated = await store.updateProvider(data.id, data);
 
             const rawNewKeys = data.new_keys || data.raw_key || data.key || '';
             const addedKeys: StoredProviderKey[] = [];
             if (rawNewKeys) {
               const parsed = parseRawKeysInput(rawNewKeys);
               for (let i = 0; i < parsed.length; i++) {
-                const added = store.addProviderKey({
+                const added = await store.addProviderKey({
                   provider_id: data.id,
                   raw_key: parsed[i],
                   label: parsed.length > 1 ? `Key #${i + 1}` : (data.key_label || undefined),
@@ -1174,7 +1175,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               }
             }
 
-            const currentKeys = store.getProviderKeys(data.id);
+            const currentKeys = await store.getProviderKeys(data.id);
             return sendJson({
               success: true,
               provider: updated,
@@ -1199,14 +1200,14 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'DELETE') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             const providerId = data.id || url.searchParams.get('id');
             if (!providerId) {
               return sendJson({ error: 'Provider ID is required.' }, 400);
             }
-            const deleted = store.deleteProvider(providerId);
+            const deleted = await store.deleteProvider(providerId);
             return sendJson({ success: deleted });
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
@@ -1220,7 +1221,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     if (url.pathname === '/api/provider-keys') {
       if (req.method === 'GET') {
         const providerId = url.searchParams.get('providerId') || undefined;
-        const keys = store.getProviderKeys(providerId).map((k) => ({
+        const keys = (await store.getProviderKeys(providerId)).map((k) => ({
           id: k.id,
           provider_id: k.provider_id,
           masked_key: k.masked_key,
@@ -1234,7 +1235,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'POST') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             const providerId = data.provider_id || data.providerId;
@@ -1253,7 +1254,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               const label = parsedKeys.length > 1
                 ? `${data.label || 'Key'} #${i + 1}`
                 : (data.label || undefined);
-              const newKey = store.addProviderKey({
+              const newKey = await store.addProviderKey({
                 provider_id: providerId,
                 raw_key: k,
                 label,
@@ -1261,7 +1262,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               addedKeys.push(newKey);
             }
 
-            const currentKeys = store.getProviderKeys(providerId);
+            const currentKeys = await store.getProviderKeys(providerId);
             return sendJson(
               {
                 success: true,
@@ -1297,14 +1298,14 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (req.method === 'DELETE') {
         let body = '';
         req.on('data', (c) => (body += c));
-        req.on('end', () => {
+        req.on('end', async () => {
           try {
             const data = JSON.parse(body || '{}');
             const keyId = data.id || url.searchParams.get('id');
             if (!keyId) {
               return sendJson({ error: 'Key ID is required.' }, 400);
             }
-            const deleted = store.deleteProviderKey(keyId);
+            const deleted = await store.deleteProviderKey(keyId);
             return sendJson({ success: deleted });
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
@@ -1318,13 +1319,13 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     if (req.method === 'POST' && url.pathname === '/api/provider-keys/toggle') {
       let body = '';
       req.on('data', (c) => (body += c));
-      req.on('end', () => {
+      req.on('end', async () => {
         try {
           const data = JSON.parse(body || '{}');
           if (!data.id) {
             return sendJson({ error: 'Key ID is required.' }, 400);
           }
-          const updated = store.toggleProviderKey(data.id, data.is_active);
+          const updated = await store.toggleProviderKey(data.id, data.is_active);
           return sendJson({
             success: true,
             key: {
@@ -1351,12 +1352,12 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     // 13. API: Page Details Inspection
     if (url.pathname === '/api/page-details') {
       const pageId = url.searchParams.get('pageId') || url.searchParams.get('id');
-      const page = pageId ? store.getPageById(pageId) : store.getPages()[0];
+      const page = pageId ? await store.getPageById(pageId) : (await store.getPages())[0];
       if (!page) {
         return sendJson({ error: 'Page not found' }, 404);
       }
 
-      const account = store.getAccounts().find((a) => a.id === page.fb_account_id);
+      const account = (await store.getAccounts()).find((a) => a.id === page.fb_account_id);
       const profile =
         seedProfiles.find(
           (p) =>
@@ -1378,7 +1379,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         },
       });
 
-      const pagePosts = store.getPosts().filter((p) => p.page_id === page.id || p.page_id === page.fb_page_id);
+      const pagePosts = (await store.getPosts()).filter((p) => p.page_id === page.id || p.page_id === page.fb_page_id);
       const publishedPosts = pagePosts.filter((p) => p.status === 'published');
       const scheduledPosts = pagePosts.filter((p) => p.status === 'scheduled');
       const reviewPosts = pagePosts.filter((p) => p.status === 'pending_review' || p.review_state === 'pending');
@@ -1397,7 +1398,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         ? Math.round(scoredPosts.reduce((acc, p) => acc + (p.qa_score || 0), 0) / scoredPosts.length)
         : 0;
 
-      const pageLogs = store.getAuditLogs().filter(
+      const pageLogs = (await store.getAuditLogs()).filter(
         (l) => l.page_id === page.id || l.details?.page_id === page.id || l.message.includes(page.name)
       );
 
@@ -1427,7 +1428,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     // 14. Dedicated Standalone Page Details Window
     if (req.method === 'GET' && url.pathname === '/page-details') {
       const pageId = url.searchParams.get('id') || url.searchParams.get('pageId') || '';
-      const html = generateStandalonePageDetailsHtml(pageId);
+      const html = await generateStandalonePageDetailsHtml(pageId);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
       return;
@@ -1435,10 +1436,16 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // 15. Web Dashboard HTML UI
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
-      const html = generateDashboardHtml();
+      const html = await generateDashboardHtml();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
       return;
+    }
+
+    // 16. API: Storage Health Status
+    if (url.pathname === '/api/health/storage') {
+      const health = await store.getStorageHealth();
+      return sendJson(health);
     }
 
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -1449,14 +1456,15 @@ export function createDashboardServer(): http.Server {
   return http.createServer(handleRequest);
 }
 
-function generateDashboardHtml(): string {
-  const accounts = store.getAccounts();
-  const pages = store.getPages();
-  const posts = store.getPosts();
-  const providers = store.getProviders();
-  const providerKeys = store.getProviderKeys();
-  const auditLogs = store.getAuditLogs();
-  const killSwitch = store.getKillSwitch();
+async function generateDashboardHtml(): Promise<string> {
+  const accounts = await store.getAccounts();
+  const pages = await store.getPages();
+  const posts = await store.getPosts();
+  const providers = await store.getProviders();
+  const providerKeys = await store.getProviderKeys();
+  const auditLogs = await store.getAuditLogs();
+  const killSwitch = await store.getKillSwitch();
+  const storageHealth = await store.getStorageHealth();
   const reviewPosts = posts.filter((p) => p.status === 'pending_review' || p.review_state === 'pending');
   const publishedPosts = posts.filter((p) => p.status === 'published' && p.analytics);
   const totalImpressions = publishedPosts.reduce((acc, p) => acc + (p.analytics?.impressions || 0), 0);
@@ -2423,6 +2431,52 @@ function generateDashboardHtml(): string {
 
     <!-- TAB 11: SETTINGS & CONTROLS -->
     <div id="tab-settings" class="tab-content">
+      <!-- Storage Health Check Card -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid ${storageHealth.supabaseConnected && storageHealth.tablesOk ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'};">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+          <h3 style="margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+            <span>💾</span> Supabase Database Storage Health & Source of Truth
+          </h3>
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; background: ${storageHealth.supabaseConnected && storageHealth.tablesOk ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'}; color: ${storageHealth.supabaseConnected && storageHealth.tablesOk ? '#34d399' : '#f87171'};">
+            ${storageHealth.supabaseConnected && storageHealth.tablesOk ? '● Production Database Active' : '● Degraded / Action Required'}
+          </span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 14px;">
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Supabase Connection Status</div>
+            <div style="font-size: 16px; font-weight: 700; color: ${storageHealth.supabaseConnected ? '#34d399' : '#f87171'};">
+              ${storageHealth.supabaseConnected ? '✅ Connected' : '❌ Failed'}
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">PostgREST + Service Role Active</div>
+          </div>
+
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Postgres Tables Status</div>
+            <div style="font-size: 16px; font-weight: 700; color: ${storageHealth.tablesOk ? '#34d399' : '#f87171'};">
+              ${storageHealth.tablesOk ? `✅ All ${storageHealth.tablesCount} Present` : `⚠️ ${storageHealth.tablesCount}/19 Present`}
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Public schema with RLS protection</div>
+          </div>
+
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Storage Bucket Status</div>
+            <div style="font-size: 16px; font-weight: 700; color: ${storageHealth.bucketOk ? '#34d399' : '#f87171'};">
+              ${storageHealth.bucketOk ? '✅ Connected (post-images)' : '⚠️ Warning / Missing'}
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Private (public = false), 10MB limit</div>
+          </div>
+
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Single Source of Truth</div>
+            <div style="font-size: 16px; font-weight: 700; color: #38bdf8;">
+              YES (Supabase Postgres)
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Zero in-memory/ephemeral JSON files</div>
+          </div>
+        </div>
+      </div>
+
       <div class="card" style="margin-bottom: 24px;">
         <h3 style="margin-bottom: 14px; font-size: 16px;">System Controls & Emergency Kill Switch</h3>
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--card-border);">
@@ -4013,8 +4067,8 @@ function generateDashboardHtml(): string {
 </html>`;
 }
 
-function generateStandalonePageDetailsHtml(pageId: string): string {
-  const page = pageId ? store.getPageById(pageId) : store.getPages()[0];
+async function generateStandalonePageDetailsHtml(pageId: string): Promise<string> {
+  const page = pageId ? await store.getPageById(pageId) : (await store.getPages())[0];
   if (!page) {
     return `<!DOCTYPE html>
 <html lang="en">
@@ -4038,7 +4092,7 @@ function generateStandalonePageDetailsHtml(pageId: string): string {
 </html>`;
   }
 
-  const account = store.getAccounts().find((a) => a.id === page.fb_account_id);
+  const account = (await store.getAccounts()).find((a) => a.id === page.fb_account_id);
   const profile =
     seedProfiles.find(
       (p) =>
@@ -4047,7 +4101,7 @@ function generateStandalonePageDetailsHtml(pageId: string): string {
         page.profile_id.toLowerCase().includes(p.name.toLowerCase())
     ) || createCustomNicheProfile(page.profile_id);
 
-  const posts = store.getPosts().filter((p) => p.page_id === page.id || p.page_id === page.fb_page_id);
+  const posts = (await store.getPosts()).filter((p) => p.page_id === page.id || p.page_id === page.fb_page_id);
   const publishedPosts = posts.filter((p) => p.status === 'published');
   const scheduledPosts = posts.filter((p) => p.status === 'scheduled');
   const reviewPosts = posts.filter((p) => p.status === 'pending_review' || p.review_state === 'pending');
@@ -4063,7 +4117,7 @@ function generateStandalonePageDetailsHtml(pageId: string): string {
     ? Math.round(scoredPosts.reduce((acc, p) => acc + (p.qa_score || 0), 0) / scoredPosts.length)
     : 0;
 
-  const auditLogs = store.getAuditLogs().filter(
+  const auditLogs = (await store.getAuditLogs()).filter(
     (l) => l.page_id === page.id || l.details?.page_id === page.id || l.message.includes(page.name)
   );
 

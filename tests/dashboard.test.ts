@@ -190,11 +190,11 @@ describe('Web Dashboard & UI Views (Milestone 11)', () => {
       expect(viewModel.quotaPercentUsed).toBe(40);
     });
 
-    it('performs full Provider & Key Pool CRUD with AES-256-GCM encryption in SystemStore', () => {
+    it('performs full Provider & Key Pool CRUD with AES-256-GCM encryption in SystemStore', async () => {
       const store = SystemStore.getInstance();
 
       // 1. Create a new provider
-      const provider = store.createProvider({
+      const provider = await store.createProvider({
         name: 'DeepSeek R1 on Groq',
         adapter_kind: 'openai_compatible_chat',
         base_url: 'https://api.groq.com/openai/v1',
@@ -209,7 +209,7 @@ describe('Web Dashboard & UI Views (Milestone 11)', () => {
 
       // 2. Add an encrypted API key to this provider
       const rawKey = 'gsk_test1234567890abcdefghijkSecretValue';
-      const keyItem = store.addProviderKey({
+      const keyItem = await store.addProviderKey({
         provider_id: provider.id,
         raw_key: rawKey,
         label: 'Production Primary Groq Key',
@@ -225,14 +225,14 @@ describe('Web Dashboard & UI Views (Milestone 11)', () => {
       expect(keyItem.encrypted_key).not.toContain(rawKey);
 
       // 3. Toggle key status
-      const paused = store.toggleProviderKey(keyItem.id, false);
+      const paused = await store.toggleProviderKey(keyItem.id, false);
       expect(paused.is_active).toBe(false);
 
-      const resumed = store.toggleProviderKey(keyItem.id, true);
+      const resumed = await store.toggleProviderKey(keyItem.id, true);
       expect(resumed.is_active).toBe(true);
 
       // 4. Update provider settings
-      const updated = store.updateProvider(provider.id, {
+      const updated = await store.updateProvider(provider.id, {
         daily_limit: 5000,
         priority: 2,
       });
@@ -240,15 +240,15 @@ describe('Web Dashboard & UI Views (Milestone 11)', () => {
       expect(updated.priority).toBe(2);
 
       // 5. Delete key
-      const keyDeleted = store.deleteProviderKey(keyItem.id);
+      const keyDeleted = await store.deleteProviderKey(keyItem.id);
       expect(keyDeleted).toBe(true);
-      const remainingKeys = store.getProviderKeys(provider.id);
+      const remainingKeys = await store.getProviderKeys(provider.id);
       expect(remainingKeys.length).toBe(0);
 
       // 6. Delete provider
-      const providerDeleted = store.deleteProvider(provider.id);
+      const providerDeleted = await store.deleteProvider(provider.id);
       expect(providerDeleted).toBe(true);
-      expect(store.getProviderById(provider.id)).toBeUndefined();
+      expect(await store.getProviderById(provider.id)).toBeUndefined();
     });
   });
 });
