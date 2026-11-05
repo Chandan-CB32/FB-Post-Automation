@@ -468,3 +468,4 @@ export function renderDataDeletionHtml(confirmationCode?: string): string {
 </body>
 </html>`;
 }
+
