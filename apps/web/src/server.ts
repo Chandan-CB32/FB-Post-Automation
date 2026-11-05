@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import http from 'node:http';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 
 // Auto-load .env file if available
 try {
@@ -30,7 +31,18 @@ import {
   PROVIDER_PRESETS,
   findPresetById,
   ProviderPreset,
+  generateFacebookAuthUrl,
+  exchangeCodeForUserToken,
+  exchangeForLongLivedUserToken,
+  fetchFacebookUserProfile,
+  fetchManagedPages,
+  parseFacebookDeletionSignedRequest,
 } from '@fb-auto/core';
+import {
+  renderPrivacyPolicyHtml,
+  renderTermsHtml,
+  renderDataDeletionHtml,
+} from './server/public-pages';
 import { SystemStore, StoredPage, StoredProvider, StoredProviderKey, parseRawKeysInput } from './server/storage';
 import { getDashboardOverviewMetrics } from './index';
 
@@ -452,21 +464,262 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       return sendJson({ authenticated: auth.authenticated, email: auth.user?.email || null });
     }
 
-    // F. Public Facebook OAuth Callback
-    if (url.pathname === '/api/auth/facebook/callback') {
-      // Allow through to Facebook handler
-    } else {
-      // Auth Gate: Protect all other routes
+    // F. Public Static Legal & Compliance Pages (No Login Required)
+    if (url.pathname === '/privacy') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderPrivacyPolicyHtml());
+      return;
+    }
+
+    if (url.pathname === '/terms') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderTermsHtml());
+      return;
+    }
+
+    if (url.pathname === '/data-deletion') {
+      const confirmationCode = url.searchParams.get('id') || undefined;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderDataDeletionHtml(confirmationCode));
+      return;
+    }
+
+    // G. Meta User Data Deletion Callback (POST /api/auth/facebook/data-deletion)
+    if (url.pathname === '/api/auth/facebook/data-deletion' && req.method === 'POST') {
+      let bodyText = '';
+      req.on('data', (chunk) => {
+        bodyText += chunk.toString();
+      });
+      req.on('end', async () => {
+        try {
+          const appSecret = process.env.FACEBOOK_APP_SECRET || '';
+          let userId: string | undefined = undefined;
+
+          if (bodyText.includes('signed_request=')) {
+            const parsed = new URLSearchParams(bodyText);
+            const signedReq = parsed.get('signed_request');
+            if (signedReq && appSecret) {
+              const resObj = parseFacebookDeletionSignedRequest(signedReq, appSecret);
+              userId = resObj.userId;
+            }
+          }
+
+          const confirmationCode = 'del_' + crypto.randomBytes(8).toString('hex');
+          const appUrl = process.env.APP_URL || `http://${req.headers.host || 'localhost'}`;
+          const statusUrl = `${appUrl.replace(/\/+$/, '')}/data-deletion?id=${confirmationCode}`;
+
+          await store.addAuditLog({
+            level: 'info',
+            category: 'security',
+            message: `Processed Facebook User Data Deletion Callback for user: ${userId || 'unknown'}. Confirmation: ${confirmationCode}`,
+            details: { userId, confirmationCode },
+          });
+
+          return sendJson({
+            url: statusUrl,
+            confirmation_code: confirmationCode,
+          });
+        } catch (err: any) {
+          return sendJson({ error: err.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // H. Facebook OAuth Initiation (GET /api/auth/facebook)
+    if (url.pathname === '/api/auth/facebook') {
       const auth = await verifyAuth(req);
       if (!auth.authenticated) {
-        if (url.pathname.startsWith('/api/')) {
-          return sendJson({ error: 'Unauthorized. Please sign in.' }, 401);
-        }
-        const redirectUrl = url.pathname === '/' ? '/login' : `/login?redirect=${encodeURIComponent(url.pathname + url.search)}`;
-        res.writeHead(302, { Location: redirectUrl });
+        res.writeHead(302, {
+          Location: `/login?redirect=${encodeURIComponent(url.pathname + url.search)}`,
+        });
         res.end();
         return;
       }
+
+      const appId = process.env.FACEBOOK_APP_ID;
+      const configId = process.env.FACEBOOK_LOGIN_CONFIG_ID;
+      const hostUrl = process.env.APP_URL || `http://${req.headers.host || 'localhost'}`;
+      const redirectUri =
+        process.env.FACEBOOK_REDIRECT_URI || `${hostUrl.replace(/\/+$/, '')}/api/auth/facebook/callback`;
+
+      if (!appId) {
+        res.writeHead(302, {
+          Location: `/?tab=pages&error=${encodeURIComponent('FACEBOOK_APP_ID is not configured in environment variables.')}`,
+        });
+        res.end();
+        return;
+      }
+
+      const state = crypto.randomBytes(24).toString('hex');
+      const reconnect =
+        url.searchParams.get('reconnect') === 'true' || url.searchParams.get('rerequest') === 'true';
+
+      const authUrl = generateFacebookAuthUrl({
+        appId,
+        redirectUri,
+        state,
+        configId,
+        reconnect,
+      });
+
+      res.writeHead(302, {
+        'Set-Cookie': `fb_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900`,
+        Location: authUrl,
+      });
+      res.end();
+      return;
+    }
+
+    // I. Facebook OAuth Callback (GET /api/auth/facebook/callback)
+    if (url.pathname === '/api/auth/facebook/callback') {
+      const error = url.searchParams.get('error');
+      const errorDescription =
+        url.searchParams.get('error_description') || url.searchParams.get('error_message') || '';
+      if (error) {
+        res.writeHead(302, {
+          'Set-Cookie':
+            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+          Location: `/?tab=pages&error=${encodeURIComponent(
+            `Facebook authorization declined: ${errorDescription || error}`
+          )}`,
+        });
+        res.end();
+        return;
+      }
+
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state');
+      const cookies = parseCookies(req);
+      const expectedState = cookies['fb_oauth_state'];
+
+      if (!state || !expectedState || state !== expectedState) {
+        res.writeHead(302, {
+          'Set-Cookie':
+            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+          Location: `/?tab=pages&error=${encodeURIComponent(
+            'OAuth state verification failed (possible CSRF or session expired). Please try again.'
+          )}`,
+        });
+        res.end();
+        return;
+      }
+
+      if (!code) {
+        res.writeHead(302, {
+          'Set-Cookie':
+            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+          Location: `/?tab=pages&error=${encodeURIComponent('No authorization code received from Facebook.')}`,
+        });
+        res.end();
+        return;
+      }
+
+      const appId = process.env.FACEBOOK_APP_ID;
+      const appSecret = process.env.FACEBOOK_APP_SECRET;
+      const hostUrl = process.env.APP_URL || `http://${req.headers.host || 'localhost'}`;
+      const redirectUri =
+        process.env.FACEBOOK_REDIRECT_URI || `${hostUrl.replace(/\/+$/, '')}/api/auth/facebook/callback`;
+
+      if (!appId || !appSecret) {
+        res.writeHead(302, {
+          'Set-Cookie':
+            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+          Location: `/?tab=pages&error=${encodeURIComponent(
+            'Server configuration error: FACEBOOK_APP_ID or FACEBOOK_APP_SECRET is not configured.'
+          )}`,
+        });
+        res.end();
+        return;
+      }
+
+      try {
+        const { accessToken: shortLivedToken } = await exchangeCodeForUserToken(
+          code,
+          appId,
+          appSecret,
+          redirectUri
+        );
+        const { accessToken: longLivedToken, expiresIn } = await exchangeForLongLivedUserToken(
+          shortLivedToken,
+          appId,
+          appSecret
+        );
+        const userProfile = await fetchFacebookUserProfile(longLivedToken);
+
+        const expiryDate = new Date(Date.now() + (expiresIn || 5184000) * 1000).toISOString();
+        const account = await store.upsertAccount({
+          account_name: userProfile.name || `Facebook User ${userProfile.id}`,
+          fb_user_id: userProfile.id,
+          email: userProfile.email,
+          user_access_token: longLivedToken,
+          token_expires_at: expiryDate,
+          notes: 'Connected via Facebook Login for Business',
+        });
+
+        const managedPages = await fetchManagedPages(longLivedToken);
+
+        if (!managedPages || managedPages.length === 0) {
+          res.writeHead(302, {
+            'Set-Cookie':
+              'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+            Location: `/?tab=pages&warning=${encodeURIComponent(
+              `Connected Facebook Identity "${userProfile.name}" (${userProfile.id}), but no managed Pages were returned. Make sure you are an admin or editor of at least one Facebook Page and granted permissions.`
+            )}`,
+          });
+          res.end();
+          return;
+        }
+
+        for (const p of managedPages) {
+          await store.upsertPageFromFacebook({
+            fb_account_id: account.id,
+            name: p.name,
+            fb_page_id: p.id,
+            fb_page_token: p.access_token,
+          });
+        }
+
+        await store.addAuditLog({
+          level: 'success',
+          category: 'token',
+          message: `Connected Facebook account "${userProfile.name}" (${userProfile.id}) and synced ${managedPages.length} Facebook Page(s) into encrypted vault.`,
+          details: { userId: userProfile.id, pagesCount: managedPages.length },
+        });
+
+        res.writeHead(302, {
+          'Set-Cookie':
+            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+          Location: `/?tab=pages&connected=true&count=${managedPages.length}`,
+        });
+        res.end();
+        return;
+      } catch (err: any) {
+        res.writeHead(302, {
+          'Set-Cookie':
+            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+          Location: `/?tab=pages&error=${encodeURIComponent(
+            `Facebook token exchange failed: ${err.message || 'Unknown error'}`
+          )}`,
+        });
+        res.end();
+        return;
+      }
+    }
+
+    // J. Auth Gate: Protect all other routes
+    const auth = await verifyAuth(req);
+    if (!auth.authenticated) {
+      if (url.pathname.startsWith('/api/')) {
+        return sendJson({ error: 'Unauthorized. Please sign in.' }, 401);
+      }
+      const redirectUrl =
+        url.pathname === '/'
+          ? '/login'
+          : `/login?redirect=${encodeURIComponent(url.pathname + url.search)}`;
+      res.writeHead(302, { Location: redirectUrl });
+      res.end();
+      return;
     }
 
     // 1. API: Overview Metrics
@@ -611,6 +864,24 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         });
         return;
       }
+    }
+
+    // 2b-2. API: Check Facebook Account Token Health
+    if (url.pathname === '/api/accounts/check-token' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          const accountId = data.accountId || data.id;
+          if (!accountId) return sendJson({ error: 'accountId is required' }, 400);
+          const result = await store.checkAccountTokenHealth(accountId);
+          return sendJson({ success: true, result });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
     }
 
     // 2c. API: Analytics & Performance Metrics
@@ -790,6 +1061,24 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         });
         return;
       }
+    }
+
+    // 3b. API: Check Facebook Page Token Health
+    if (url.pathname === '/api/pages/check-token' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          const pageId = data.pageId || data.id;
+          if (!pageId) return sendJson({ error: 'pageId is required' }, 400);
+          const result = await store.checkPageTokenHealth(pageId);
+          return sendJson({ success: true, result });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
     }
 
     // 4. API: Page-Specific Effective Settings & Prompts Resolution
@@ -1700,7 +1989,14 @@ async function generateDashboardHtml(): Promise<string> {
         </div>
       </div>
       <a href="/api/auth/logout" style="display: block; width: 100%; text-align: center; padding: 8px 12px; background: #1f2937; color: #f87171; border-radius: 6px; font-size: 12px; font-weight: 600; text-decoration: none; transition: background 0.15s;" onmouseover="this.style.background='#374151'" onmouseout="this.style.background='#1f2937'">🚪 Sign Out</a>
-      <div style="font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 14px; font-weight: 500; letter-spacing: 0.3px;">Made by <strong style="color: #60a5fa;">Chandan Biswas</strong></div>
+      <div style="font-size: 11px; color: var(--text-muted); display: flex; flex-direction: column; gap: 6px; margin-top: 14px; padding-top: 10px; border-top: 1px dashed rgba(255,255,255,0.08); text-align: center;">
+        <div style="display: flex; justify-content: center; gap: 8px;">
+          <a href="/privacy" target="_blank" style="color: #60a5fa; text-decoration: none;">Privacy</a> •
+          <a href="/terms" target="_blank" style="color: #60a5fa; text-decoration: none;">Terms</a> •
+          <a href="/data-deletion" target="_blank" style="color: #60a5fa; text-decoration: none;">Data Deletion</a>
+        </div>
+        <div style="font-weight: 500; letter-spacing: 0.3px;">Made by <strong style="color: #60a5fa;">Chandan Biswas</strong></div>
+      </div>
     </div>
   </aside>
 
@@ -1716,6 +2012,9 @@ async function generateDashboardHtml(): Promise<string> {
         <span>Worker Active & Heartbeat Healthy</span>
       </div>
     </header>
+
+    <!-- Dynamic Alert Banner for Facebook OAuth and Operations -->
+    <div id="urlAlertBanner" style="display: none; margin-bottom: 24px; padding: 14px 20px; border-radius: 8px; font-size: 14px; font-weight: 500;"></div>
 
     <!-- TAB 1: OVERVIEW -->
     <div id="tab-overview" class="tab-content active">
@@ -1772,14 +2071,19 @@ async function generateDashboardHtml(): Promise<string> {
     <!-- TAB 2: FB ACCOUNTS & IDENTITIES -->
     <div id="tab-accounts" class="tab-content">
       <div class="card" style="margin-bottom: 24px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 12px;">
           <div>
             <h3 style="font-size: 18px; margin-bottom: 4px;">Connected Facebook Accounts (Multiple Facebook IDs)</h3>
             <p style="color: var(--text-muted); font-size: 13px;">
               Manage 3-5+ distinct Facebook User IDs or Business Manager profiles. Create and run pages from different Facebook accounts with AES-256-GCM encrypted tokens.
             </p>
           </div>
-          <button class="btn btn-primary" onclick="openAddAccountModal()">➕ Connect Facebook Account (FB ID)</button>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <a href="/api/auth/facebook" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
+              🚀 Connect via Facebook Login for Business
+            </a>
+            <button class="btn btn-secondary" onclick="openAddAccountModal()">➕ Manual Token Entry</button>
+          </div>
         </div>
 
         <table>
@@ -1826,9 +2130,11 @@ async function generateDashboardHtml(): Promise<string> {
                       </div>
                     </td>
                     <td style="text-align: right; white-space: nowrap;">
-                      <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="addPageForAccount('${acc.id}')">➕ Add Page</button>
-                      <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openEditAccountModal('${acc.id}')">✏️ Edit</button>
-                      <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="deleteAccountAction('${acc.id}')">🗑️</button>
+                      <a href="/api/auth/facebook?reconnect=true" class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px; text-decoration: none;" title="Reconnect permissions via Meta Graph API">🔄 Reconnect</a>
+                      <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="checkAccountTokenHealth('${acc.id}')" title="Check live token validity">🩺 Check</button>
+                      <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="addPageForAccount('${acc.id}')">➕ Add Page</button>
+                      <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="openEditAccountModal('${acc.id}')">✏️ Edit</button>
+                      <button class="btn btn-danger" style="padding: 5px 8px; font-size: 12px;" onclick="deleteAccountAction('${acc.id}')">🗑️</button>
                     </td>
                   </tr>
                 `;
@@ -1848,12 +2154,17 @@ async function generateDashboardHtml(): Promise<string> {
     <!-- TAB 3: PAGES & ACCOUNTS -->
     <div id="tab-pages" class="tab-content">
       <div class="card" style="margin-bottom: 24px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
           <div>
             <h3 style="font-size: 18px;">Connected Facebook Pages</h3>
             <p style="color: var(--text-muted); font-size: 13px;">Manage pages across all your Facebook IDs. Each page has isolated prompts, voice, and publishing cadence.</p>
           </div>
-          <button class="btn btn-primary" onclick="openAddPageModal()">➕ Connect / Add New Page</button>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <a href="/api/auth/facebook" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
+              🚀 Connect Pages via Facebook Login
+            </a>
+            <button class="btn btn-secondary" onclick="openAddPageModal()">➕ Manual Page Entry</button>
+          </div>
         </div>
 
         <!-- Facebook Account Filter Toolbar -->
@@ -1906,9 +2217,11 @@ async function generateDashboardHtml(): Promise<string> {
                     </td>
                     <td>${p.schedule.postsPerDay} posts/day (${p.schedule.postingTimes.join(', ')})</td>
                     <td style="text-align: right;">
-                      <div style="display: flex; justify-content: flex-end; gap: 6px;">
-                        <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')">🔍 View Page Data</button>
-                        <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openPagePromptStudio('${p.id}')">✍️ Prompts</button>
+                      <div style="display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap;">
+                        <a href="/api/auth/facebook?reconnect=true" class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px; text-decoration: none;" title="Reconnect Page token">🔄 Reconnect</a>
+                        <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="checkPageTokenHealth('${p.id}')" title="Check token health">🩺 Check</button>
+                        <button class="btn btn-primary" style="padding: 5px 8px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')">🔍 Data</button>
+                        <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="openPagePromptStudio('${p.id}')">✍️ Prompts</button>
                         <button class="btn btn-danger" style="padding: 5px 8px; font-size: 12px;" onclick="deletePageAction('${p.id}')">🗑️</button>
                       </div>
                     </td>
@@ -4062,6 +4375,99 @@ async function generateDashboardHtml(): Promise<string> {
         alert('Failed to delete key.');
       }
     }
+
+    async function checkPageTokenHealth(pageId) {
+      const btn = event?.currentTarget;
+      if (btn) btn.innerText = 'Checking...';
+      try {
+        const res = await fetch('/api/pages/check-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const r = data.result;
+          const statusText = r.valid ? '✅ Valid & Active' : '⚠️ ' + (r.error || r.status);
+          alert('Facebook Page Token Inspection Result:\n\n' +
+            '• Status: ' + statusText + '\n' +
+            '• Token Type: ' + (r.type || 'PAGE') + '\n' +
+            '• Expiration: ' + (r.isNeverExpiring ? 'Never (Permanent Page Token)' : (r.expiresAt ? new Date(r.expiresAt * 1000).toLocaleString() : 'N/A')) + '\n' +
+            '• Granted Permissions: ' + (r.scopes?.join(', ') || 'none') + '\n' +
+            (r.missingRequiredScopes?.length ? '• Missing Permissions: ' + r.missingRequiredScopes.join(', ') : ''));
+          window.location.reload();
+        } else {
+          alert('Failed to check token: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Network error while checking token: ' + err.message);
+      } finally {
+        if (btn) btn.innerText = '🩺 Check';
+      }
+    }
+
+    async function checkAccountTokenHealth(accountId) {
+      const btn = event?.currentTarget;
+      if (btn) btn.innerText = 'Checking...';
+      try {
+        const res = await fetch('/api/accounts/check-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const r = data.result;
+          const statusText = r.valid ? '✅ Valid & Active' : '⚠️ ' + (r.error || r.status);
+          alert('Facebook User Account Token Inspection Result:\n\n' +
+            '• Status: ' + statusText + '\n' +
+            '• Token Type: ' + (r.type || 'USER') + '\n' +
+            '• Expiration: ' + (r.expiresAt ? new Date(r.expiresAt * 1000).toLocaleString() : 'Long-Lived (~60 Days)') + '\n' +
+            '• Granted Permissions: ' + (r.scopes?.join(', ') || 'none') + '\n' +
+            (r.missingRequiredScopes?.length ? '• Missing Permissions: ' + r.missingRequiredScopes.join(', ') : ''));
+          window.location.reload();
+        } else {
+          alert('Failed to check token: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Network error while checking token: ' + err.message);
+      } finally {
+        if (btn) btn.innerText = '🩺 Check';
+      }
+    }
+
+    // Auto-detect URL query banners (e.g. ?connected=true, ?error=..., ?tab=...)
+    (function handleUrlParams() {
+      const params = new URLSearchParams(window.location.search);
+      const banner = document.getElementById('urlAlertBanner');
+      if (banner) {
+        if (params.get('connected') === 'true') {
+          const count = params.get('count') || '0';
+          banner.style.display = 'block';
+          banner.style.background = '#064e3b';
+          banner.style.border = '1px solid #059669';
+          banner.style.color = '#a7f3d0';
+          banner.innerHTML = '🎉 <strong>Facebook Connected Successfully!</strong> Synced ' + count + ' Facebook Page(s) with encrypted tokens stored safely in the Supabase vault.';
+        } else if (params.get('error')) {
+          banner.style.display = 'block';
+          banner.style.background = '#7f1d1d';
+          banner.style.border = '1px solid #dc2626';
+          banner.style.color = '#fecaca';
+          banner.innerHTML = '⚠️ <strong>Facebook Connection Notice:</strong> ' + params.get('error');
+        } else if (params.get('warning')) {
+          banner.style.display = 'block';
+          banner.style.background = '#78350f';
+          banner.style.border = '1px solid #d97706';
+          banner.style.color = '#fde68a';
+          banner.innerHTML = '⚠️ <strong>Notice:</strong> ' + params.get('warning');
+        }
+      }
+
+      if (params.get('tab')) {
+        const tabBtn = document.querySelector(".nav-list .nav-item button[onclick*=\"'" + params.get('tab') + "'\"]");
+        if (tabBtn) showTab(params.get('tab'), tabBtn);
+      }
+    })();
   </script>
 </body>
 </html>`;

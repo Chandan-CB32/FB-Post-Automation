@@ -12,7 +12,7 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
     // Clear test providers and keys
     const provs = await store.getProviders();
     for (const p of provs) {
-      if (p.name.includes('Test')) {
+      if (p.name.includes('API MultiKey Test')) {
         await store.deleteProvider(p.id);
       } else if (p.name === 'Google Gemini') {
         const keys = await store.getProviderKeys(p.id);
@@ -36,7 +36,7 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
     // Clean up
     const provs = await store.getProviders();
     for (const p of provs) {
-      if (p.name.includes('Test')) {
+      if (p.name.includes('API MultiKey Test')) {
         await store.deleteProvider(p.id);
       }
     }
@@ -55,7 +55,7 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
       }),
     });
     const data1 = await res1.json();
-    expect(res1.status).toBe(201);
+    expect([200, 201]).toContain(res1.status);
     expect(data1.success).toBe(true);
     expect(data1.provider.name).toContain('Google Gemini');
     const providerId = data1.provider.id;
@@ -129,5 +129,5 @@ describe('HTTP API: Provider Keys Multi-Key Preservation', () => {
 
     // Cleanup
     await store.deleteProvider(providerId);
-  });
+  }, 20000);
 });

@@ -6,10 +6,10 @@ describe('Providers and Key Pool Management', () => {
 
   beforeEach(async () => {
     store = SystemStore.getInstance();
-    // Clean up test providers
+    // Clean up dedicated test providers
     const provs = await store.getProviders();
     for (const p of provs) {
-      if (p.name.includes('Test') || p.name.includes('Gemini 2.5 Flash')) {
+      if (p.name.includes('KeyPool Unique Fix')) {
         await store.deleteProvider(p.id);
       }
     }
@@ -34,7 +34,7 @@ describe('Providers and Key Pool Management', () => {
   it('keeps previous keys when adding multiple keys to a provider', async () => {
     // 1. Create provider
     const prov = await store.createProvider({
-      name: 'Google Gemini Test Suite',
+      name: 'KeyPool Unique Fix 1',
       adapter_kind: 'gemini_native',
       model_name: 'gemini-2.5-flash',
     });
@@ -100,7 +100,7 @@ describe('Providers and Key Pool Management', () => {
   it('prevents duplicate provider creation when adding another key for the same provider', async () => {
     // 1. Create provider
     const prov1 = await store.createProvider({
-      name: 'Google Gemini (Gemini 2.5 Flash)',
+      name: 'KeyPool Unique Fix 2',
       adapter_kind: 'gemini_native',
       model_name: 'gemini-2.5-flash',
     });
@@ -113,7 +113,7 @@ describe('Providers and Key Pool Management', () => {
 
     // 2. User tries to "create" or add provider again with the same name
     const prov2 = await store.createProvider({
-      name: 'Google Gemini (Gemini 2.5 Flash)',
+      name: 'KeyPool Unique Fix 2',
       adapter_kind: 'gemini_native',
       model_name: 'gemini-2.5-flash',
     });
@@ -129,7 +129,7 @@ describe('Providers and Key Pool Management', () => {
     });
 
     const allProvs = (await store.getProviders()).filter(
-      (p) => p.name === 'Google Gemini (Gemini 2.5 Flash)'
+      (p) => p.name === 'KeyPool Unique Fix 2'
     );
     expect(allProvs.length).toBe(1);
 

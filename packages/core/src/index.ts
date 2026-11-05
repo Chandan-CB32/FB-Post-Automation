@@ -50,6 +50,7 @@ export * from './validation/caption-validator.js';
 export * from './facebook/types.js';
 export * from './facebook/client.js';
 export * from './facebook/tokens.js';
+export * from './facebook/oauth.js';
 export * from './facebook/publisher.js';
 
 // Review Inbox State Machine

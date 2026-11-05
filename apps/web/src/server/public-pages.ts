@@ -1,0 +1,470 @@
+export function renderPrivacyPolicyHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - FB Auto 247</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --accent: #38bdf8;
+      --success: #10b981;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 48px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+    .header {
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 24px;
+      margin-bottom: 32px;
+    }
+    .brand-title {
+      font-size: 26px;
+      font-weight: 700;
+      color: #60a5fa;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .brand-sub {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    h1 { font-size: 28px; margin-bottom: 12px; color: #fff; }
+    h2 { font-size: 20px; margin-top: 32px; margin-bottom: 12px; color: #93c5fd; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px; }
+    h3 { font-size: 16px; margin-top: 20px; margin-bottom: 8px; color: #e2e8f0; }
+    p { margin-bottom: 16px; color: #d1d5db; font-size: 15px; }
+    ul { margin-bottom: 16px; padding-left: 24px; color: #d1d5db; font-size: 15px; }
+    li { margin-bottom: 8px; }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: #1e293b;
+      color: #38bdf8;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .callout {
+      background: #0b1329;
+      border-left: 4px solid #3b82f6;
+      padding: 16px 20px;
+      border-radius: 6px;
+      margin: 20px 0;
+      font-size: 14px;
+    }
+    .footer {
+      margin-top: 40px;
+      padding-top: 24px;
+      border-top: 1px solid var(--card-border);
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="brand-title">🛡️ FB Auto 247</div>
+      <div class="brand-sub">Autonomous Multi-Page Facebook Content Automation • Made by Chandan Biswas</div>
+    </div>
+
+    <h1>Privacy Policy</h1>
+    <div class="badge">Effective Date: November 2026 • Version 1.0</div>
+
+    <p>
+      At <strong>FB Auto 247</strong> ("we", "us", "our"), developed and maintained by Chandan Biswas, we respect your privacy and are committed to protecting the integrity and confidentiality of your data. This Privacy Policy outlines how our application collects, uses, encrypts, and handles Facebook user and page data when you connect via Facebook Login for Business and Meta Graph API.
+    </p>
+
+    <div class="callout">
+      <strong>Zero Data Selling Commitment:</strong> FB Auto 247 does not sell, rent, lease, or monetize your personal data, Facebook access tokens, page contents, or metrics to any third parties, advertisers, or data brokers. All data is processed exclusively to deliver autonomous page publishing services for your own Facebook Pages.
+    </div>
+
+    <h2>1. Data We Collect and Process</h2>
+    <p>When you authenticate with FB Auto 247 using Facebook Login for Business, we request and process only the minimal permissions necessary to operate autonomous content workflows:</p>
+    <ul>
+      <li><strong>Facebook Profile Information:</strong> Basic public identity information (your Facebook User ID and Full Name) solely to link and identify your administrative identity inside the application.</li>
+      <li><strong>Facebook Page Information:</strong> The list of Facebook Pages you own or manage, including Page Name, Page ID, and Category.</li>
+      <li><strong>Page Access Tokens:</strong> Permanent and long-lived Facebook Page Access Tokens issued by Meta's Graph API, required to programmatically schedule and publish posts on your behalf.</li>
+      <li><strong>Post Publishing Content:</strong> Captions, images, headline overlays, and first-comment text generated by your configured AI pipelines.</li>
+      <li><strong>Basic Engagement Metrics:</strong> Aggregate post metrics (reactions, shares, reach) retrieved from Meta Graph API to inform content scheduling optimization.</li>
+    </ul>
+
+    <h2>2. Permissions Requested via Facebook Login for Business</h2>
+    <p>We request the following granular Meta Graph API permissions:</p>
+    <ul>
+      <li><code>pages_show_list</code>: Grants permission to retrieve the list of Facebook Pages you manage so you can select and connect them to automation queues.</li>
+      <li><code>pages_read_engagement</code>: Grants permission to read post engagement metrics and ensure valid delivery of published posts.</li>
+      <li><code>pages_manage_posts</code>: Grants permission to create, schedule, publish, and manage feed posts and photos on your connected Facebook Pages.</li>
+    </ul>
+
+    <h2>3. Military-Grade Token Vault & Storage Security</h2>
+    <p>We prioritize world-class security for all credentials and tokens:</p>
+    <ul>
+      <li><strong>AES-256-GCM Encryption:</strong> All Facebook user and page access tokens are immediately encrypted at rest using authenticated AES-256-GCM cryptography with unique initialization vectors (IV) and authentication tags before writing to the database.</li>
+      <li><strong>Zero Plaintext Storage:</strong> Raw Facebook tokens are never stored in plaintext and never stored in cookies or web storage.</li>
+      <li><strong>Masked UI Display:</strong> Dashboard displays only safe masked representations (e.g., <code>EAABcd...1234</code>) so secrets are never leaked to client browsers.</li>
+      <li><strong>Isolated Database:</strong> All application data is stored in private PostgreSQL tables protected by Row Level Security (RLS) policies.</li>
+    </ul>
+
+    <h2>4. How We Use Your Data</h2>
+    <p>Your data is used strictly for:</p>
+    <ul>
+      <li>Authenticating your ownership of Facebook Pages.</li>
+      <li>Publishing scheduled content, media, and captions according to your configured niche schedules.</li>
+      <li>Verifying token validity and notifying you when token rotation or re-authentication is required.</li>
+    </ul>
+
+    <h2>5. Data Retention and User Data Deletion</h2>
+    <p>
+      We retain your access tokens and post configurations only for as long as your Facebook Page remains connected to the system. You have complete control over your data:
+    </p>
+    <ul>
+      <li><strong>Self-Service Disconnection:</strong> You can disconnect any Facebook Account or delete any Page from the dashboard at any time. Doing so immediately purges the encrypted token from the database.</li>
+      <li><strong>Data Deletion Request:</strong> You can request complete removal of all your data by following our <a href="/data-deletion">User Data Deletion Instructions</a> or submitting a request with your Facebook User ID.</li>
+      <li><strong>Meta App Settings Removal:</strong> If you remove the FB Auto 247 app from your Facebook Settings ("Apps and Websites"), our automated Data Deletion Callback endpoint immediately processes the request.</li>
+    </ul>
+
+    <h2>6. Developer & Contact Information</h2>
+    <p>If you have any questions, concerns, or requests regarding this Privacy Policy or your data, please contact the developer:</p>
+    <p>
+      <strong>Developer:</strong> Chandan Biswas<br>
+      <strong>Application:</strong> FB Auto 247<br>
+      <strong>Data Inquiries & Deletion:</strong> <a href="/data-deletion">User Data Deletion Portal</a>
+    </p>
+
+    <div class="footer">
+      <span>© 2026 FB Auto 247 • Made by Chandan Biswas</span>
+      <div style="display: flex; gap: 16px;">
+        <a href="/terms">Terms of Service</a>
+        <a href="/data-deletion">Data Deletion</a>
+        <a href="/login">Dashboard Sign In</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+export function renderTermsHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terms of Service - FB Auto 247</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      --primary: #2563eb;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 48px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+    .header {
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 24px;
+      margin-bottom: 32px;
+    }
+    .brand-title {
+      font-size: 26px;
+      font-weight: 700;
+      color: #60a5fa;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .brand-sub { color: var(--text-muted); font-size: 14px; }
+    h1 { font-size: 28px; margin-bottom: 12px; color: #fff; }
+    h2 { font-size: 20px; margin-top: 32px; margin-bottom: 12px; color: #93c5fd; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px; }
+    p { margin-bottom: 16px; color: #d1d5db; font-size: 15px; }
+    ul { margin-bottom: 16px; padding-left: 24px; color: #d1d5db; font-size: 15px; }
+    li { margin-bottom: 8px; }
+    .footer {
+      margin-top: 40px;
+      padding-top: 24px;
+      border-top: 1px solid var(--card-border);
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="brand-title">🛡️ FB Auto 247</div>
+      <div class="brand-sub">Autonomous Multi-Page Facebook Content Automation • Made by Chandan Biswas</div>
+    </div>
+
+    <h1>Terms of Service</h1>
+    <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 24px;">Last Updated: November 2026</p>
+
+    <p>
+      Welcome to <strong>FB Auto 247</strong>. By connecting your Facebook account, authorizing Meta permissions, or utilizing our publishing systems, you agree to comply with and be bound by the following Terms of Service.
+    </p>
+
+    <h2>1. Compliance with Meta Platform Terms</h2>
+    <p>
+      FB Auto 247 operates via the official Meta Graph API. All users and page administrators utilizing this platform must comply strictly with:
+    </p>
+    <ul>
+      <li><a href="https://developers.facebook.com/terms/" target="_blank">Meta Developer Terms and Policies</a></li>
+      <li><a href="https://transparency.fb.com/policies/community-standards/" target="_blank">Facebook Community Standards</a></li>
+      <li><a href="https://www.facebook.com/policies/pages_groups_events/" target="_blank">Facebook Pages, Groups and Events Policies</a></li>
+    </ul>
+
+    <h2>2. User Content & Administration Responsibility</h2>
+    <p>
+      You are solely responsible for the content generated, scheduled, and published to your Facebook Pages. FB Auto 247 provides prompt templates, safety checks, and review inbox mechanisms; however, you retain full editorial control and responsibility for all content broadcast under your brand or identity.
+    </p>
+
+    <h2>3. Token Vault & Revocation</h2>
+    <p>
+      You may disconnect your Facebook Page or revoke application permissions at any time via the FB Auto 247 dashboard or through your Facebook Account Settings. Upon disconnection, stored access tokens are purged.
+    </p>
+
+    <h2>4. Limitation of Liability</h2>
+    <p>
+      FB Auto 247 and its creator (Chandan Biswas) provide the service on an "as-is" and "as-available" basis without warranties of any kind. We are not liable for account suspensions, API rate limits imposed by Meta, or network downtime.
+    </p>
+
+    <div class="footer">
+      <span>© 2026 FB Auto 247 • Made by Chandan Biswas</span>
+      <div style="display: flex; gap: 16px;">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/data-deletion">Data Deletion</a>
+        <a href="/login">Dashboard Sign In</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+export function renderDataDeletionHtml(confirmationCode?: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Data Deletion Instructions - FB Auto 247</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      --primary: #2563eb;
+      --success: #10b981;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 48px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+    .header {
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 24px;
+      margin-bottom: 32px;
+    }
+    .brand-title {
+      font-size: 26px;
+      font-weight: 700;
+      color: #60a5fa;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .brand-sub { color: var(--text-muted); font-size: 14px; }
+    h1 { font-size: 28px; margin-bottom: 12px; color: #fff; }
+    h2 { font-size: 20px; margin-top: 32px; margin-bottom: 12px; color: #93c5fd; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px; }
+    p { margin-bottom: 16px; color: #d1d5db; font-size: 15px; }
+    ol, ul { margin-bottom: 16px; padding-left: 24px; color: #d1d5db; font-size: 15px; }
+    li { margin-bottom: 12px; }
+    .status-box {
+      background: #064e3b;
+      border: 1px solid #059669;
+      color: #a7f3d0;
+      padding: 20px 24px;
+      border-radius: 8px;
+      margin: 24px 0;
+    }
+    .step-box {
+      background: #1e293b;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+      border-left: 4px solid #3b82f6;
+    }
+    .footer {
+      margin-top: 40px;
+      padding-top: 24px;
+      border-top: 1px solid var(--card-border);
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { background: #0b0f19; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #93c5fd; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="brand-title">🛡️ FB Auto 247</div>
+      <div class="brand-sub">Autonomous Multi-Page Facebook Content Automation • Made by Chandan Biswas</div>
+    </div>
+
+    <h1>Facebook User Data Deletion Instructions</h1>
+    <p>
+      In accordance with Meta Platform Policy and Facebook Login for Business requirements, <strong>FB Auto 247</strong> provides a straightforward, transparent mechanism for users to delete all data associated with their Facebook account.
+    </p>
+
+    ${
+      confirmationCode
+        ? `
+      <div class="status-box">
+        <h3 style="color: #6ee7b7; margin-bottom: 8px;">✅ Data Deletion Request Processed</h3>
+        <p style="margin-bottom: 6px;">Confirmation Code: <code>${confirmationCode}</code></p>
+        <p style="margin-bottom: 0; font-size: 14px;">
+          All encrypted Facebook Page access tokens, user profile identifiers, and cached logs associated with this request have been permanently purged from our database vault.
+        </p>
+      </div>
+      `
+        : ''
+    }
+
+    <h2>How to Delete Your Data from FB Auto 247</h2>
+    <p>You can delete your data using any of the following 3 options:</p>
+
+    <div class="step-box">
+      <h3 style="color: #fff; margin-bottom: 6px;">Option 1: Direct Deletion via Dashboard (Fastest)</h3>
+      <ol style="margin-bottom: 0;">
+        <li>Log in to your <strong>FB Auto 247 Dashboard</strong>.</li>
+        <li>Navigate to the <strong>FB Accounts & IDs</strong> tab or the <strong>Pages & Accounts</strong> tab.</li>
+        <li>Click the <strong>🗑️ Delete / Disconnect</strong> button next to your Facebook Identity or Page.</li>
+        <li>Confirm the prompt. This immediately destroys the AES-256-GCM encrypted access tokens, schedules, and profile mappings from the database.</li>
+      </ol>
+    </div>
+
+    <div class="step-box">
+      <h3 style="color: #fff; margin-bottom: 6px;">Option 2: Revoke Access via Facebook App Settings</h3>
+      <ol style="margin-bottom: 0;">
+        <li>Go to your Facebook profile and click <strong>Settings & Privacy</strong> ➔ <strong>Settings</strong>.</li>
+        <li>Scroll down on the left navigation and click <strong>Apps and Websites</strong>.</li>
+        <li>Find <strong>FB Auto 247</strong> (or your registered Meta App) in the active apps list.</li>
+        <li>Click <strong>Remove</strong>. Facebook will automatically dispatch a secure Data Deletion webhook to our server, which immediately marks and purges your tokens and issues a deletion confirmation code.</li>
+      </ol>
+    </div>
+
+    <div class="step-box">
+      <h3 style="color: #fff; margin-bottom: 6px;">Option 3: Manual Deletion Request</h3>
+      <p style="margin-bottom: 0;">
+        If you no longer have access to the dashboard or your Facebook profile, you may submit a deletion request directly to the system maintainer (Chandan Biswas) with your Facebook User ID or Page ID. All records will be permanently expunged within 24 business hours.
+      </p>
+    </div>
+
+    <h2>Data That Is Purged</h2>
+    <p>When a deletion request is executed, the following items are permanently removed:</p>
+    <ul>
+      <li>All AES-256-GCM encrypted user and page access tokens.</li>
+      <li>Facebook User IDs, profile names, and email records.</li>
+      <li>Associated draft posts, queue schedules, and audit trail references.</li>
+    </ul>
+
+    <div class="footer">
+      <span>© 2026 FB Auto 247 • Made by Chandan Biswas</span>
+      <div style="display: flex; gap: 16px;">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/terms">Terms of Service</a>
+        <a href="/login">Dashboard Sign In</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}

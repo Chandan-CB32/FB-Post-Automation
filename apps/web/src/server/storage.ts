@@ -10,7 +10,14 @@ try {
   // Ignore
 }
 
-import { encryptPageToken, encrypt, maskSecret } from '@fb-auto/core';
+import {
+  encryptPageToken,
+  decryptPageToken,
+  encrypt,
+  maskSecret,
+  FacebookGraphClient,
+  type TokenInspectionResult,
+} from '@fb-auto/core';
 
 export interface StoredProvider {
   id: string;
@@ -264,6 +271,8 @@ export class SystemStore {
     fb_user_id: string;
     email?: string;
     user_access_token?: string;
+    token_status?: 'valid' | 'expired' | 'rate_limited';
+    token_expires_at?: string;
     notes?: string;
   }): Promise<StoredFacebookAccount> {
     const encToken = input.user_access_token ? encryptPageToken(input.user_access_token) : null;
@@ -275,8 +284,8 @@ export class SystemStore {
       email: input.email || null,
       user_access_token: encToken,
       masked_token: masked,
-      token_status: 'valid',
-      token_expires_at: new Date(Date.now() + 86400 * 1000 * 60).toISOString(),
+      token_status: input.token_status || 'valid',
+      token_expires_at: input.token_expires_at || new Date(Date.now() + 86400 * 1000 * 60).toISOString(),
       notes: input.notes || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -343,6 +352,59 @@ export class SystemStore {
       return false;
     }
     return true;
+  }
+
+  public async upsertAccount(input: {
+    account_name: string;
+    fb_user_id: string;
+    email?: string;
+    user_access_token?: string;
+    token_expires_at?: string;
+    notes?: string;
+  }): Promise<StoredFacebookAccount> {
+    const { data: existing } = await this.getClient()
+      .from('facebook_accounts')
+      .select('id')
+      .eq('fb_user_id', input.fb_user_id)
+      .maybeSingle();
+
+    if (existing) {
+      return await this.updateAccount(existing.id, {
+        account_name: input.account_name,
+        email: input.email,
+        ...(input.user_access_token ? { user_access_token: input.user_access_token } : {}),
+        ...(input.token_expires_at ? { token_expires_at: input.token_expires_at } : {}),
+        token_status: 'valid',
+        ...(input.notes ? { notes: input.notes } : {}),
+      });
+    }
+
+    return await this.createAccount({
+      account_name: input.account_name,
+      fb_user_id: input.fb_user_id,
+      email: input.email,
+      user_access_token: input.user_access_token,
+      token_expires_at: input.token_expires_at,
+      notes: input.notes,
+    });
+  }
+
+  public async checkAccountTokenHealth(accountId: string): Promise<TokenInspectionResult> {
+    const account = await this.getAccountById(accountId);
+    if (!account || !account.user_access_token) {
+      throw new Error('Account or token not found');
+    }
+    const decryptedToken = decryptPageToken(account.user_access_token);
+    const client = new FacebookGraphClient({
+      appAccessToken:
+        process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET
+          ? `${process.env.FACEBOOK_APP_ID}|${process.env.FACEBOOK_APP_SECRET}`
+          : undefined,
+    });
+    const result = await client.inspectTokenHealth(decryptedToken);
+    const status = result.status === 'valid' ? 'valid' : 'expired';
+    await this.updateAccount(accountId, { token_status: status });
+    return result;
   }
 
   // --- Pages CRUD ---
@@ -528,6 +590,62 @@ export class SystemStore {
       return false;
     }
     return true;
+  }
+
+  public async upsertPageFromFacebook(input: {
+    fb_account_id: string;
+    name: string;
+    fb_page_id: string;
+    fb_page_token: string;
+  }): Promise<StoredPage> {
+    const { data: existing } = await this.getClient()
+      .from('pages')
+      .select('id')
+      .eq('fb_page_id', input.fb_page_id)
+      .maybeSingle();
+
+    if (existing) {
+      return await this.updatePage(existing.id, {
+        name: input.name,
+        fb_account_id: input.fb_account_id,
+        fb_page_token: input.fb_page_token,
+        token_status: 'valid',
+      });
+    }
+
+    return await this.createPage({
+      name: input.name,
+      fb_page_id: input.fb_page_id,
+      fb_page_token: input.fb_page_token,
+      fb_account_id: input.fb_account_id,
+      profile_id: 'default-niche',
+      publishing_mode: 'hybrid',
+      daily_cap: 3,
+    });
+  }
+
+  public async checkPageTokenHealth(pageId: string): Promise<TokenInspectionResult> {
+    const page = await this.getPageById(pageId);
+    if (!page || !page.fb_page_token) {
+      throw new Error('Page or token not found');
+    }
+    const decryptedToken = decryptPageToken(page.fb_page_token);
+    const client = new FacebookGraphClient({
+      appAccessToken:
+        process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET
+          ? `${process.env.FACEBOOK_APP_ID}|${process.env.FACEBOOK_APP_SECRET}`
+          : undefined,
+    });
+    const result = await client.inspectTokenHealth(decryptedToken);
+    const statusMap: Record<string, string> = {
+      valid: 'valid',
+      expired: 'expired',
+      revoked: 'revoked',
+      rate_limited: 'rate_limited',
+    };
+    const newStatus = (statusMap[result.status] || 'revoked') as any;
+    await this.updatePage(pageId, { token_status: newStatus });
+    return result;
   }
 
   // --- Posts CRUD ---
