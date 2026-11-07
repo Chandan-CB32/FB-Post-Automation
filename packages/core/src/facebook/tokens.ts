@@ -1,6 +1,12 @@
 import { encrypt, decrypt, maskSecret } from '../crypto/encryption.js';
-import { FacebookGraphClient } from './client.js';
-import { FacebookAccountsResponse, FacebookPageAccount } from './types.js';
+import { FacebookGraphClient, FacebookGraphError } from './client.js';
+import {
+  FacebookAccountsResponse,
+  FacebookBusinessesResponse,
+  FacebookPageAccount,
+  DiscoveredPage,
+  PageDiscoveryResult,
+} from './types.js';
 
 /**
  * Encrypts a raw Facebook Page or User Access Token using AES-256-GCM.
@@ -63,6 +69,29 @@ export async function exchangeForLongLivedUserToken(
 }
 
 /**
+ * Checks whether the granted tasks on a Page include publishing / content creation rights.
+ * Requirement: Check that CREATE_CONTENT or MANAGE is present.
+ */
+export function canUserPublishToPage(tasks?: string[]): boolean {
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return false;
+  }
+  return tasks.some((task) => {
+    const upper = String(task).toUpperCase();
+    return upper === 'CREATE_CONTENT' || upper === 'MANAGE';
+  });
+}
+
+function extractPictureUrl(picture?: any): string | undefined {
+  if (!picture) return undefined;
+  if (typeof picture === 'string') return picture;
+  if (typeof picture === 'object' && picture.data && typeof picture.data.url === 'string') {
+    return picture.data.url;
+  }
+  return undefined;
+}
+
+/**
  * Retrieves the list of Pages managed by the user using a user access token,
  * including each Page's permanent Page Access Token.
  */
@@ -77,10 +106,177 @@ export async function fetchManagedPages(
   const fbClient = client || new FacebookGraphClient();
 
   const response = await fbClient.get<FacebookAccountsResponse>('me/accounts', userAccessToken, {
-    fields: 'id,name,access_token,category,tasks,perms',
+    fields: 'id,name,access_token,category,tasks,perms,picture,fan_count',
     limit: 100,
   });
 
   return response.data || [];
+}
+
+/**
+ * Comprehensive automatic Page discovery:
+ * 1. Fetches ALL Pages from `me/accounts` with full pagination.
+ * 2. Fetches Pages from Business Portfolios (`me/businesses` -> `owned_pages` and `client_pages`) with pagination.
+ * 3. Merges duplicates by Page ID, preserving active tokens and publishing rights.
+ * 4. Determines publishing rights based on tasks (`CREATE_CONTENT` or `MANAGE`).
+ */
+export async function discoverFacebookPages(
+  userAccessToken: string,
+  client?: FacebookGraphClient,
+  options?: { maxPages?: number }
+): Promise<PageDiscoveryResult> {
+  if (!userAccessToken || !userAccessToken.trim()) {
+    throw new Error('User access token is required to discover Facebook Pages.');
+  }
+
+  const fbClient = client || new FacebookGraphClient();
+  const maxPages = options?.maxPages ?? 1000;
+  const pagesMap = new Map<string, DiscoveredPage>();
+
+  // 1. Fetch from me/accounts with pagination
+  let nextUrl: string | undefined = undefined;
+  let pageCount = 0;
+
+  do {
+    let response: FacebookAccountsResponse;
+    if (nextUrl) {
+      response = await fbClient.get<FacebookAccountsResponse>(nextUrl, userAccessToken);
+    } else {
+      response = await fbClient.get<FacebookAccountsResponse>('me/accounts', userAccessToken, {
+        fields: 'id,name,category,access_token,tasks,perms,picture,fan_count',
+        limit: 100,
+      });
+    }
+
+    if (response && Array.isArray(response.data)) {
+      for (const p of response.data) {
+        if (!p.id) continue;
+        const tasks = Array.isArray(p.tasks) ? p.tasks : [];
+        const canPublish = canUserPublishToPage(tasks);
+        const picUrl = extractPictureUrl(p.picture);
+
+        pagesMap.set(p.id, {
+          id: p.id,
+          name: p.name || `Facebook Page ${p.id}`,
+          access_token: p.access_token,
+          category: p.category,
+          tasks,
+          picture_url: picUrl,
+          fan_count: typeof p.fan_count === 'number' ? p.fan_count : undefined,
+          canPublish,
+          token_status: canPublish ? 'valid' : 'cannot_publish',
+          source: 'me/accounts',
+        });
+        pageCount++;
+        if (pageCount >= maxPages) break;
+      }
+    }
+
+    nextUrl = response?.paging?.next;
+  } while (nextUrl && pageCount < maxPages);
+
+  // 2. Discover through Business Portfolios (me/businesses -> owned_pages & client_pages)
+  let businessesSearched = 0;
+  try {
+    const busResponse = await fbClient.get<FacebookBusinessesResponse>('me/businesses', userAccessToken, {
+      fields: 'id,name',
+      limit: 50,
+    });
+
+    if (busResponse && Array.isArray(busResponse.data)) {
+      for (const bus of busResponse.data) {
+        if (!bus.id) continue;
+        businessesSearched++;
+
+        // Helper to query business sub-endpoints
+        const queryBusinessPages = async (endpoint: string, source: 'business_owned' | 'business_client') => {
+          let bNextUrl: string | undefined = undefined;
+          let bCount = 0;
+          do {
+            try {
+              let resp: FacebookAccountsResponse;
+              if (bNextUrl) {
+                resp = await fbClient.get<FacebookAccountsResponse>(bNextUrl, userAccessToken);
+              } else {
+                resp = await fbClient.get<FacebookAccountsResponse>(
+                  `${bus.id}/${endpoint}`,
+                  userAccessToken,
+                  {
+                    fields: 'id,name,category,access_token,tasks,perms,picture,fan_count',
+                    limit: 100,
+                  }
+                );
+              }
+
+              if (resp && Array.isArray(resp.data)) {
+                for (const p of resp.data) {
+                  if (!p.id) continue;
+                  const tasks = Array.isArray(p.tasks) ? p.tasks : [];
+                  const canPublish = canUserPublishToPage(tasks);
+                  const picUrl = extractPictureUrl(p.picture);
+
+                  const existing = pagesMap.get(p.id);
+                  if (existing) {
+                    // Merge tasks and preserve/upgrade access_token and canPublish
+                    const mergedTasks = Array.from(new Set([...existing.tasks, ...tasks]));
+                    const mergedCanPublish = existing.canPublish || canPublish;
+                    pagesMap.set(p.id, {
+                      ...existing,
+                      tasks: mergedTasks,
+                      canPublish: mergedCanPublish,
+                      token_status: mergedCanPublish ? 'valid' : 'cannot_publish',
+                      access_token: p.access_token || existing.access_token,
+                      picture_url: existing.picture_url || picUrl,
+                      category: existing.category || p.category,
+                      fan_count: existing.fan_count ?? (typeof p.fan_count === 'number' ? p.fan_count : undefined),
+                      business_id: existing.business_id || bus.id,
+                      business_name: existing.business_name || bus.name,
+                    });
+                  } else {
+                    pagesMap.set(p.id, {
+                      id: p.id,
+                      name: p.name || `Facebook Page ${p.id}`,
+                      access_token: p.access_token,
+                      category: p.category,
+                      tasks,
+                      picture_url: picUrl,
+                      fan_count: typeof p.fan_count === 'number' ? p.fan_count : undefined,
+                      canPublish,
+                      token_status: canPublish ? 'valid' : 'cannot_publish',
+                      source,
+                      business_id: bus.id,
+                      business_name: bus.name,
+                    });
+                  }
+                  bCount++;
+                  if (bCount >= 200) break;
+                }
+              }
+              bNextUrl = resp?.paging?.next;
+            } catch (innerErr) {
+              // Ignore sub-endpoint errors (e.g. not authorized for client_pages)
+              bNextUrl = undefined;
+            }
+          } while (bNextUrl && bCount < 200);
+        };
+
+        await queryBusinessPages('owned_pages', 'business_owned');
+        await queryBusinessPages('client_pages', 'business_client');
+      }
+    }
+  } catch (err) {
+    // If user has no business portfolios or lacks business permissions, continue smoothly
+  }
+
+  const pages = Array.from(pagesMap.values());
+  const publishableCount = pages.filter((p) => p.canPublish).length;
+
+  return {
+    pages,
+    totalFound: pages.length,
+    publishableCount,
+    unpublishableCount: pages.length - publishableCount,
+    businessesSearched,
+  };
 }
 

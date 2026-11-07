@@ -1,6 +1,12 @@
-import { getSupabaseClient, CORE_VERSION } from '@fb-auto/core';
+import {
+  getSupabaseClient,
+  CORE_VERSION,
+  decryptPageToken,
+  encryptPageToken,
+  discoverFacebookPages,
+} from '@fb-auto/core';
 import { workerState, startHealthServer, stopHealthServer } from './server.js';
-import { createTimeBudgetTracker } from './time-budget.js';
+import { createTimeBudgetTracker, type TimeBudgetTracker } from './time-budget.js';
 import { acquireWorkerLock, releaseWorkerLock } from './lock.js';
 
 export { workerState, startHealthServer, stopHealthServer } from './server.js';
@@ -119,6 +125,146 @@ export async function recoverStaleInFlightJobs(staleThresholdMinutes = 15): Prom
 }
 
 /**
+ * Automatically checks Facebook token health and synchronizes Pages once daily.
+ * Runs inside the distributed lock and time budget.
+ */
+export async function runDailyFacebookTokenAndPageSync(
+  tracker?: TimeBudgetTracker
+): Promise<{ executed: boolean; message: string }> {
+  const supabase = getSupabaseClient();
+  if (!supabase) {
+    return { executed: false, message: 'Supabase client not available' };
+  }
+
+  try {
+    const { data: setting } = await supabase
+      .from('settings')
+      .select('value')
+      .eq('key', 'worker_last_daily_sync')
+      .maybeSingle();
+
+    const lastSyncTime = setting?.value?.timestamp ? new Date(setting.value.timestamp).getTime() : 0;
+    const now = Date.now();
+    const twentyFourHours = 24 * 60 * 60 * 1000;
+
+    if (now - lastSyncTime < twentyFourHours) {
+      return { executed: false, message: 'Daily Facebook sync already completed within past 24h.' };
+    }
+
+    console.log('[Worker] Running scheduled daily Facebook token verification and page sync...');
+
+    const { data: accounts } = await supabase.from('facebook_accounts').select('*');
+    if (!accounts || accounts.length === 0) {
+      await supabase.from('settings').upsert({
+        key: 'worker_last_daily_sync',
+        value: { timestamp: new Date().toISOString(), syncedAccounts: 0 },
+        updated_at: new Date().toISOString(),
+      });
+      return { executed: true, message: 'No accounts to sync.' };
+    }
+
+    let syncedAccounts = 0;
+    for (const acc of accounts) {
+      if (tracker && !tracker.hasTimeRemaining()) {
+        console.log('[Worker] Time budget reached during daily Facebook sync. Will resume next run.');
+        break;
+      }
+
+      if (!acc.user_access_token) continue;
+
+      try {
+        const decryptedToken = decryptPageToken(acc.user_access_token);
+        const discovery = await discoverFacebookPages(decryptedToken);
+
+        const discoveredPageIds = new Set<string>();
+        for (const dp of discovery.pages) {
+          discoveredPageIds.add(dp.id);
+          const { data: existing } = await supabase
+            .from('pages')
+            .select('id,token_status')
+            .eq('fb_page_id', dp.id)
+            .maybeSingle();
+
+          if (existing) {
+            await supabase
+              .from('pages')
+              .update({
+                name: dp.name,
+                category: dp.category,
+                picture_url: dp.picture_url,
+                tasks: dp.tasks,
+                fan_count: dp.fan_count,
+                token_status: dp.token_status,
+                last_synced_at: new Date().toISOString(),
+              })
+              .eq('id', existing.id);
+          } else {
+            await supabase.from('pages').insert({
+              fb_account_id: acc.id,
+              name: dp.name,
+              fb_page_id: dp.id,
+              fb_page_token: encryptPageToken(dp.access_token),
+              category: dp.category,
+              picture_url: dp.picture_url,
+              tasks: dp.tasks,
+              fan_count: dp.fan_count,
+              token_status: dp.token_status,
+              connected_at: new Date().toISOString(),
+              last_synced_at: new Date().toISOString(),
+            });
+          }
+        }
+
+        // Mark missing pages as inaccessible without deleting history
+        const { data: userPages } = await supabase
+          .from('pages')
+          .select('id,fb_page_id,token_status')
+          .eq('fb_account_id', acc.id);
+
+        if (userPages) {
+          for (const up of userPages) {
+            if (!discoveredPageIds.has(up.fb_page_id) && up.token_status !== 'inaccessible') {
+              await supabase
+                .from('pages')
+                .update({
+                  token_status: 'inaccessible',
+                  last_synced_at: new Date().toISOString(),
+                })
+                .eq('id', up.id);
+            }
+          }
+        }
+
+        await supabase
+          .from('facebook_accounts')
+          .update({
+            pages_count: discovery.pages.length,
+            last_synced_at: new Date().toISOString(),
+            token_status: 'valid',
+          })
+          .eq('id', acc.id);
+
+        syncedAccounts++;
+      } catch (accErr: any) {
+        console.warn(`[Worker] Failed syncing account ${acc.account_name}:`, accErr?.message);
+      }
+    }
+
+    await supabase.from('settings').upsert({
+      key: 'worker_last_daily_sync',
+      value: { timestamp: new Date().toISOString(), syncedAccounts },
+      updated_at: new Date().toISOString(),
+    });
+
+    console.log(`[Worker] Completed daily Facebook sync across ${syncedAccounts} account(s).`);
+    return { executed: true, message: `Synced ${syncedAccounts} accounts.` };
+  } catch (err: any) {
+    console.error('[Worker] Error during daily Facebook sync:', err?.message);
+    return { executed: false, message: err?.message || 'Error' };
+  }
+}
+
+/**
  * Executes a one-shot worker run with a time budget, distributed lock, and resumable state.
  * Safe to run overlapping in GitHub Actions or scheduled cron jobs.
  */
@@ -149,6 +295,9 @@ export async function runOneShotWorker(
 
     // 2. Recover stale in-flight jobs
     await recoverStaleInFlightJobs();
+
+    // 2.5 Run scheduled daily Facebook token verification and page sync if due
+    await runDailyFacebookTokenAndPageSync(tracker);
 
     // 3. Execution loop within time budget
     while (tracker.hasTimeRemaining()) {

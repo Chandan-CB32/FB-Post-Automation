@@ -77,8 +77,10 @@ export class FacebookGraphClient {
     } = {}
   ): Promise<T> {
     const method = options.method || 'GET';
-    const cleanEndpoint = endpoint.replace(/^\/+/, '');
-    const url = new URL(`${this.baseUrl}/${this.apiVersion}/${cleanEndpoint}`);
+    const isAbsolute = endpoint.startsWith('http://') || endpoint.startsWith('https://');
+    const url = isAbsolute
+      ? new URL(endpoint)
+      : new URL(`${this.baseUrl}/${this.apiVersion}/${endpoint.replace(/^\/+/, '')}`);
 
     // Append query parameters
     if (options.params) {

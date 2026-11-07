@@ -1394,6 +1394,202 @@
   window.deleteKeyAction = deleteKeyAction;
   window.checkPageTokenHealth = checkPageTokenHealth;
   window.checkAccountTokenHealth = checkAccountTokenHealth;
+  window.syncAccountAction = syncAccountAction;
+  window.syncAllPagesAction = syncAllPagesAction;
+  window.quickTogglePageActive = quickTogglePageActive;
+  window.quickUpdatePageProfile = quickUpdatePageProfile;
+  window.quickUpdatePageTimezone = quickUpdatePageTimezone;
+  window.copyExpectedRedirectUri = copyExpectedRedirectUri;
+  window.testFacebookConnectionAction = testFacebookConnectionAction;
+
+  async function syncAccountAction(accountId, btn) {
+    if (!accountId) return;
+    const origText = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Syncing...';
+    }
+    try {
+      const res = await fetch('/api/facebook/sync-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('Sync error: ' + (data.error || 'Failed to sync account pages'));
+      } else {
+        alert(
+          '🎉 Synced ' + (data.accountName || 'Account') + ' successfully!\n\n' +
+          'Discovered: ' + data.totalDiscovered + ' Page(s)\n' +
+          'New: ' + data.newCount + ' | Updated: ' + data.updatedCount +
+          (data.inaccessibleCount > 0 ? ' | Inaccessible: ' + data.inaccessibleCount : '') +
+          '\nPublishable: ' + data.publishableCount
+        );
+        window.location.reload();
+      }
+    } catch (e) {
+      alert('Network error while syncing account: ' + (e && e.message ? e.message : String(e)));
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+  }
+
+  async function syncAllPagesAction(btn) {
+    const origText = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Syncing All...';
+    }
+    try {
+      const res = await fetch('/api/facebook/sync-all', {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('Sync all error: ' + (data.error || 'Failed to sync pages across accounts'));
+      } else {
+        alert(
+          '🎉 Full Facebook Sync Completed!\n\n' +
+          'Accounts Synced: ' + data.accountsSynced + '\n' +
+          'Total Discovered Pages: ' + data.totalPages + '\n' +
+          'New Pages: ' + data.newPages + ' | Updated: ' + data.updatedPages +
+          (data.inaccessiblePages > 0 ? ' | Inaccessible: ' + data.inaccessiblePages : '')
+        );
+        window.location.reload();
+      }
+    } catch (e) {
+      alert('Network error while syncing all accounts: ' + (e && e.message ? e.message : String(e)));
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+  }
+
+  async function quickTogglePageActive(pageId, active) {
+    try {
+      const res = await fetch('/api/pages/quick-update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId, active }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('Error updating page status: ' + (data.error || 'Unknown error'));
+      }
+    } catch (e) {
+      console.error('Quick toggle error:', e);
+    }
+  }
+
+  async function quickUpdatePageProfile(pageId, profileId) {
+    try {
+      const res = await fetch('/api/pages/quick-update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId, profile_id: profileId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('Error updating page niche profile: ' + (data.error || 'Unknown error'));
+      }
+    } catch (e) {
+      console.error('Quick update profile error:', e);
+    }
+  }
+
+  async function quickUpdatePageTimezone(pageId, timezone) {
+    try {
+      const res = await fetch('/api/pages/quick-update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId, timezone }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('Error updating page timezone: ' + (data.error || 'Unknown error'));
+      }
+    } catch (e) {
+      console.error('Quick update timezone error:', e);
+    }
+  }
+
+  function copyExpectedRedirectUri() {
+    const el = document.getElementById('expectedRedirectUriText');
+    if (!el) return;
+    const text = el.innerText || el.textContent;
+    navigator.clipboard.writeText(text.trim()).then(function () {
+      alert('Copied OAuth Redirect URI to clipboard:\n' + text.trim());
+    }).catch(function () {
+      prompt('Copy OAuth Redirect URI:', text.trim());
+    });
+  }
+
+  async function testFacebookConnectionAction(btn) {
+    const origText = btn ? btn.innerHTML : '';
+    const statusSpan = document.getElementById('testFbConnStatus');
+    const resultsBox = document.getElementById('testFbConnResults');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Testing with Meta Graph API...';
+    }
+    if (statusSpan) statusSpan.innerText = 'Connecting to Meta...';
+    if (resultsBox) resultsBox.style.display = 'none';
+
+    try {
+      const res = await fetch('/api/facebook/test-connection', { method: 'POST' });
+      const data = await res.json();
+
+      if (resultsBox) {
+        resultsBox.style.display = 'block';
+        if (data.success) {
+          resultsBox.innerHTML =
+            '<div style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); padding: 14px 18px; border-radius: 8px; color: #a7f3d0;">' +
+            '<div style="font-weight: 700; font-size: 14px; margin-bottom: 6px;">✅ Meta Graph API Connection Verified!</div>' +
+            '<div style="font-size: 13px;">Meta App Name: <strong>' + escapeHtml(data.metaAppName || 'N/A') + '</strong> (ID: ' + escapeHtml(data.metaAppId || 'N/A') + ')</div>' +
+            (data.configIdValid ? '<div style="font-size: 13px; margin-top: 4px;">✅ Business Login Configuration ID verified with Meta.</div>' : '') +
+            '</div>';
+        } else {
+          let issuesHtml = '';
+          if (data.issues && data.issues.length > 0) {
+            issuesHtml = '<ul style="margin: 8px 0 8px 20px; font-size: 13px;">' +
+              data.issues.map(function (iss) { return '<li>' + escapeHtml(iss) + '</li>'; }).join('') +
+              '</ul>';
+          }
+          let recsHtml = '';
+          if (data.recommendations && data.recommendations.length > 0) {
+            recsHtml = '<div style="margin-top: 8px; font-size: 12px; color: #fde68a;"><strong>Recommendations:</strong><ul style="margin: 4px 0 0 20px;">' +
+              data.recommendations.map(function (rec) { return '<li>' + escapeHtml(rec) + '</li>'; }).join('') +
+              '</ul></div>';
+          }
+
+          resultsBox.innerHTML =
+            '<div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); padding: 14px 18px; border-radius: 8px; color: #fecaca;">' +
+            '<div style="font-weight: 700; font-size: 14px;">⚠️ Meta Graph API Connection Diagnostic Report</div>' +
+            issuesHtml +
+            recsHtml +
+            '</div>';
+        }
+      }
+      if (statusSpan) statusSpan.innerText = data.success ? 'Verified' : 'Issues detected';
+    } catch (e) {
+      if (resultsBox) {
+        resultsBox.style.display = 'block';
+        resultsBox.innerHTML = '<div style="background: rgba(239,68,68,0.15); border: 1px solid #ef4444; padding: 12px; border-radius: 6px; color: #fecaca;">Network test error: ' + escapeHtml(e.message) + '</div>';
+      }
+      if (statusSpan) statusSpan.innerText = 'Error';
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+  }
 
   // --- Master Initialization Routine ---
   function initDashboard() {
@@ -1418,11 +1614,27 @@
       if (banner) {
         if (params.get('connected') === 'true') {
           const count = params.get('count') || '0';
+          const account = params.get('account') || '';
+          const found = params.get('found') || count;
+          const newCount = params.get('new') || '0';
+          const updatedCount = params.get('updated') || '0';
+          const publishable = params.get('publishable');
+
           banner.style.display = 'block';
           banner.style.background = '#064e3b';
           banner.style.border = '1px solid #059669';
           banner.style.color = '#a7f3d0';
-          banner.innerHTML = '🎉 <strong>Facebook Connected Successfully!</strong> Synced ' + escapeHtml(count) + ' Facebook Page(s) with encrypted tokens stored safely in the Supabase vault.';
+
+          let msg = '🎉 <strong>Facebook Connected Successfully!</strong> ';
+          if (account) {
+            msg += 'Connected account <strong>' + escapeHtml(account) + '</strong>: found ' + escapeHtml(found) + ' Pages (' + escapeHtml(newCount) + ' new, ' + escapeHtml(updatedCount) + ' updated).';
+          } else {
+            msg += 'Synced ' + escapeHtml(found) + ' Facebook Page(s) with encrypted tokens stored safely in the Supabase vault.';
+          }
+          if (publishable !== null && Number(publishable) < Number(found)) {
+            msg += ' <span style="color: #fde68a;">(Notice: ' + (Number(found) - Number(publishable)) + ' page(s) lack content creation tasks and cannot auto-publish).</span>';
+          }
+          banner.innerHTML = msg;
         } else if (params.get('error')) {
           banner.style.display = 'block';
           banner.style.background = '#7f1d1d';

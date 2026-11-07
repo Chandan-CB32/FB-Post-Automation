@@ -36,6 +36,8 @@ import {
   exchangeForLongLivedUserToken,
   fetchFacebookUserProfile,
   fetchManagedPages,
+  discoverFacebookPages,
+  testFacebookCredentials,
   parseFacebookDeletionSignedRequest,
 } from '@fb-auto/core';
 import {
@@ -770,40 +772,64 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           notes: 'Connected via Facebook Login for Business',
         });
 
-        const managedPages = await fetchManagedPages(longLivedToken);
+        // Run automatic comprehensive Page discovery (me/accounts with pagination & business portfolios)
+        const discovery = await discoverFacebookPages(longLivedToken);
 
-        if (!managedPages || managedPages.length === 0) {
+        let newCount = 0;
+        let updatedCount = 0;
+
+        for (const dp of discovery.pages) {
+          const res = await store.upsertPageFromFacebook({
+            fb_account_id: account.id,
+            name: dp.name,
+            fb_page_id: dp.id,
+            fb_page_token: dp.access_token,
+            category: dp.category,
+            picture_url: dp.picture_url,
+            tasks: dp.tasks,
+            fan_count: dp.fan_count,
+            token_status: dp.token_status,
+          });
+          if (res.isNew) newCount++;
+          else updatedCount++;
+        }
+
+        await store.updateAccount(account.id, {
+          pages_count: discovery.pages.length,
+          last_synced_at: new Date().toISOString(),
+          token_status: 'valid',
+        });
+
+        await store.addAuditLog({
+          level: 'success',
+          category: 'token',
+          message: `Connected Facebook account "${userProfile.name}" (${userProfile.id}): found ${discovery.totalFound} Pages (${newCount} new, ${updatedCount} updated, ${discovery.publishableCount} publishable).`,
+          details: {
+            userId: userProfile.id,
+            total: discovery.totalFound,
+            newCount,
+            updatedCount,
+            publishableCount: discovery.publishableCount,
+            businessesSearched: discovery.businessesSearched,
+          },
+        });
+
+        if (discovery.totalFound === 0) {
           res.writeHead(302, {
             'Set-Cookie':
               'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
             Location: `/?tab=pages&warning=${encodeURIComponent(
-              `Connected Facebook Identity "${userProfile.name}" (${userProfile.id}), but no managed Pages were returned. Make sure you are an admin or editor of at least one Facebook Page and granted permissions.`
+              `Connected Facebook identity "${userProfile.name}" (${userProfile.id}), but no Facebook Pages were discovered. Ensure you are an admin or editor of at least one Page and granted permissions in the Business Login dialog.`
             )}`,
           });
           res.end();
           return;
         }
 
-        for (const p of managedPages) {
-          await store.upsertPageFromFacebook({
-            fb_account_id: account.id,
-            name: p.name,
-            fb_page_id: p.id,
-            fb_page_token: p.access_token,
-          });
-        }
-
-        await store.addAuditLog({
-          level: 'success',
-          category: 'token',
-          message: `Connected Facebook account "${userProfile.name}" (${userProfile.id}) and synced ${managedPages.length} Facebook Page(s) into encrypted vault.`,
-          details: { userId: userProfile.id, pagesCount: managedPages.length },
-        });
-
         res.writeHead(302, {
           'Set-Cookie':
             'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&connected=true&count=${managedPages.length}`,
+          Location: `/?tab=pages&connected=true&account=${encodeURIComponent(userProfile.name)}&found=${discovery.totalFound}&new=${newCount}&updated=${updatedCount}&publishable=${discovery.publishableCount}`,
         });
         res.end();
         return;
@@ -990,6 +1016,108 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           if (!accountId) return sendJson({ error: 'accountId is required' }, 400);
           const result = await store.checkAccountTokenHealth(accountId);
           return sendJson({ success: true, result });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 2b-3. API: Sync Facebook Account Pages
+    if (url.pathname === '/api/facebook/sync-account' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          const accountId = data.accountId || data.id;
+          if (!accountId) return sendJson({ error: 'accountId is required' }, 400);
+          const result = await store.syncAccountPages(accountId);
+          return sendJson(result);
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 2b-4. API: Sync All Accounts and Pages
+    if (url.pathname === '/api/facebook/sync-all' && req.method === 'POST') {
+      try {
+        const result = await store.syncAllPages();
+        return sendJson(result);
+      } catch (e: any) {
+        return sendJson({ error: e.message }, 500);
+      }
+    }
+
+    // 2b-5. API: Facebook Setup Status & Credentials Diagnostics
+    if (url.pathname === '/api/facebook/setup-status' && req.method === 'GET') {
+      const appId = process.env.FACEBOOK_APP_ID;
+      const appSecret = process.env.FACEBOOK_APP_SECRET;
+      const configId = process.env.FACEBOOK_LOGIN_CONFIG_ID;
+      const hostUrl = process.env.APP_URL || `http://${req.headers.host || 'localhost'}`;
+      const configuredRedirectUri = process.env.FACEBOOK_REDIRECT_URI;
+      const expectedRedirectUri = `${hostUrl.replace(/\/+$/, '')}/api/auth/facebook/callback`;
+
+      return sendJson({
+        appIdPresent: Boolean(appId),
+        maskedAppId: appId ? maskSecret(appId, 4, 3) : undefined,
+        appSecretPresent: Boolean(appSecret),
+        configIdPresent: Boolean(configId),
+        configId: configId || undefined,
+        redirectUriPresent: Boolean(configuredRedirectUri),
+        configuredRedirectUri: configuredRedirectUri || undefined,
+        appUrlPresent: Boolean(process.env.APP_URL),
+        appUrl: process.env.APP_URL || hostUrl,
+        expectedRedirectUri,
+      });
+    }
+
+    // 2b-6. API: Test Facebook Connection via Meta Graph API
+    if (url.pathname === '/api/facebook/test-connection' && req.method === 'POST') {
+      try {
+        const hostUrl = process.env.APP_URL || `http://${req.headers.host || 'localhost'}`;
+        const diagnostics = await testFacebookCredentials({
+          appId: process.env.FACEBOOK_APP_ID,
+          appSecret: process.env.FACEBOOK_APP_SECRET,
+          configId: process.env.FACEBOOK_LOGIN_CONFIG_ID,
+          configuredRedirectUri: process.env.FACEBOOK_REDIRECT_URI,
+          appUrl: hostUrl,
+        });
+        return sendJson(diagnostics);
+      } catch (e: any) {
+        return sendJson({ error: e.message }, 500);
+      }
+    }
+
+    // 3c. API: Quick Page Update (Toggle active, assign profile, change mode, timezone)
+    if (url.pathname === '/api/pages/quick-update' && (req.method === 'PATCH' || req.method === 'POST')) {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+          const updates: Partial<StoredPage> = {};
+          if (data.active !== undefined) updates.active = Boolean(data.active);
+          if (data.profile_id) updates.profile_id = data.profile_id;
+          if (data.publishing_mode) updates.publishing_mode = data.publishing_mode;
+          if (data.daily_cap !== undefined) updates.daily_cap = Number(data.daily_cap);
+
+          if (data.timezone) {
+            const page = await store.getPageById(data.pageId);
+            if (page) {
+              updates.schedule = {
+                ...page.schedule,
+                timezone: data.timezone,
+              };
+            }
+          }
+
+          const updated = await store.updatePage(data.pageId, updates);
+          return sendJson({ success: true, page: updated });
         } catch (e: any) {
           return sendJson({ error: e.message }, 500);
         }
@@ -1898,6 +2026,9 @@ async function generateDashboardHtml(): Promise<string> {
       ? (publishedPosts.reduce((acc, p) => acc + (p.analytics?.engagement_rate || 0), 0) / publishedPosts.length).toFixed(1)
       : '0.0';
   const reachDisplay = totalReach >= 1000 ? `${(totalReach / 1000).toFixed(1)}K` : `${totalReach}`;
+  const hostUrl = process.env.APP_URL || 'https://fbauto247.vercel.app';
+  const expectedRedirectUri =
+    process.env.FACEBOOK_REDIRECT_URI || `${hostUrl.replace(/\/+$/, '')}/api/auth/facebook/callback`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -2224,14 +2355,14 @@ async function generateDashboardHtml(): Promise<string> {
           <div>
             <h3 style="font-size: 18px; margin-bottom: 4px;">Connected Facebook Accounts (Multiple Facebook IDs)</h3>
             <p style="color: var(--text-muted); font-size: 13px;">
-              Manage 3-5+ distinct Facebook User IDs or Business Manager profiles. Create and run pages from different Facebook accounts with AES-256-GCM encrypted tokens.
+              Manage multiple Facebook User IDs or Business Manager profiles. Automated page discovery runs on connection and daily synchronization.
             </p>
           </div>
           <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <a href="/api/auth/facebook" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
               🚀 Connect via Facebook Login for Business
             </a>
-            <button class="btn btn-secondary" onclick="openAddAccountModal()">➕ Manual Token Entry</button>
+            <button class="btn btn-secondary" onclick="syncAllPagesAction(this)">🔄 Sync All Accounts</button>
           </div>
         </div>
 
@@ -2241,7 +2372,7 @@ async function generateDashboardHtml(): Promise<string> {
               <th>Facebook Account & Owner</th>
               <th>Facebook User ID</th>
               <th>Token Vault Status</th>
-              <th>Token Expiry</th>
+              <th>Last Synced</th>
               <th>Connected Pages</th>
               <th style="text-align: right;">Actions</th>
             </tr>
@@ -2250,7 +2381,7 @@ async function generateDashboardHtml(): Promise<string> {
             ${accounts.length > 0
               ? accounts
                   .map((acc) => {
-                    const ownedPages = pages.filter((p) => p.fb_account_id === acc.id);
+                    const ownedPages = pages.filter((p) => p.fb_account_id === acc.id || (p.secondary_account_ids && p.secondary_account_ids.includes(acc.id)));
                     return `
                   <tr id="account-row-${acc.id}">
                     <td>
@@ -2259,11 +2390,11 @@ async function generateDashboardHtml(): Promise<string> {
                     </td>
                     <td><code style="font-size: 13px;">${acc.fb_user_id}</code></td>
                     <td>
-                      <span style="color: #34d399; font-weight: 600;">● ${acc.token_status.toUpperCase()}</span><br>
+                      <span style="color: ${acc.token_status === 'valid' ? '#34d399' : '#f87171'}; font-weight: 600;">● ${acc.token_status.toUpperCase()}</span><br>
                       <span class="badge" style="background: #1e293b; color: #93c5fd; font-family: monospace; font-size: 11px;">${acc.masked_token || 'EAAB...vault'}</span>
                     </td>
                     <td>
-                      <span style="font-size: 12px; color: #d1d5db;">${acc.token_expires_at ? new Date(acc.token_expires_at).toLocaleDateString() : 'Long-Lived'}</span>
+                      <span style="font-size: 12px; color: #d1d5db;">${acc.last_synced_at ? new Date(acc.last_synced_at).toLocaleDateString() : 'Recently'}</span>
                     </td>
                     <td>
                       <div style="display: flex; flex-wrap: wrap; gap: 4px;">
@@ -2271,7 +2402,7 @@ async function generateDashboardHtml(): Promise<string> {
                           ownedPages.length > 0
                             ? ownedPages
                                 .map(
-                                  (p) => `<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-size: 11px; cursor: pointer;" onclick="openPageDetailsWindow('${p.id}')" title="Click to view all data and live feed for ${p.name}">📄 ${p.name} ↗</span>`
+                                  (p) => `<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-size: 11px; cursor: pointer;" onclick="openPageDetailsWindow('${p.id}')" title="Click to inspect ${p.name}">📄 ${p.name} ↗</span>`
                                 )
                                 .join('')
                             : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No pages linked yet</span>'
@@ -2279,10 +2410,9 @@ async function generateDashboardHtml(): Promise<string> {
                       </div>
                     </td>
                     <td style="text-align: right; white-space: nowrap;">
+                      <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="syncAccountAction('${acc.id}', this)" title="Sync Pages for this account">🔄 Sync Pages</button>
                       <a href="/api/auth/facebook?reconnect=true" class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px; text-decoration: none;" title="Reconnect permissions via Meta Graph API">🔄 Reconnect</a>
                       <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="checkAccountTokenHealth('${acc.id}')" title="Check live token validity">🩺 Check</button>
-                      <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="addPageForAccount('${acc.id}')">➕ Add Page</button>
-                      <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="openEditAccountModal('${acc.id}')">✏️ Edit</button>
                       <button class="btn btn-danger" style="padding: 5px 8px; font-size: 12px;" onclick="deleteAccountAction('${acc.id}')">🗑️</button>
                     </td>
                   </tr>
@@ -2292,7 +2422,7 @@ async function generateDashboardHtml(): Promise<string> {
               : `<tr><td colspan="6" style="text-align: center; padding: 36px; color: var(--text-muted);">
                   <div style="font-size: 28px; margin-bottom: 8px;">👤</div>
                   <div style="font-size: 14px; font-weight: 600; color: #d1d5db; margin-bottom: 4px;">No Facebook Identities Connected</div>
-                  <div style="font-size: 12px;">Click <strong>➕ Connect Facebook Account</strong> above to add your first Facebook User ID or Business Manager.</div>
+                  <div style="font-size: 12px;">Click <strong>🚀 Connect via Facebook Login</strong> above to add your first Facebook User ID or Business Manager.</div>
                 </td></tr>`
             }
           </tbody>
@@ -2300,92 +2430,237 @@ async function generateDashboardHtml(): Promise<string> {
       </div>
     </div>
 
-    <!-- TAB 3: PAGES & ACCOUNTS -->
+    <!-- TAB 3: PAGES & ACCOUNTS TREE -->
     <div id="tab-pages" class="tab-content">
       <div class="card" style="margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
           <div>
-            <h3 style="font-size: 18px;">Connected Facebook Pages</h3>
-            <p style="color: var(--text-muted); font-size: 13px;">Manage pages across all your Facebook IDs. Each page has isolated prompts, voice, and publishing cadence.</p>
+            <h3 style="font-size: 18px; margin-bottom: 4px;">Connected Facebook Pages & Accounts</h3>
+            <p style="color: var(--text-muted); font-size: 13px;">
+              Manage pages across all your Facebook IDs. Automated discovery via Facebook Login for Business with per-page posting cadences and content profiles.
+            </p>
           </div>
           <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <a href="/api/auth/facebook" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
               🚀 Connect Pages via Facebook Login
             </a>
-            <button class="btn btn-secondary" onclick="openAddPageModal()">➕ Manual Page Entry</button>
+            <button class="btn btn-secondary" onclick="syncAllPagesAction(this)" title="Sync and refresh all connected pages and tokens across all accounts">
+              🔄 Sync All Pages
+            </button>
           </div>
         </div>
 
         <!-- Facebook Account Filter Toolbar -->
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; background: #0b0f19; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--card-border);">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; background: #0b0f19; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--card-border);">
           <span style="font-size: 13px; color: var(--text-muted); font-weight: 600;">Filter by Facebook Identity:</span>
           <button class="btn btn-primary page-filter-btn active" style="padding: 4px 10px; font-size: 12px;" onclick="filterPagesByAccount('all', this)">All Facebook IDs (${pages.length})</button>
           ${accounts
             .map((acc) => {
-              const count = pages.filter((p) => p.fb_account_id === acc.id).length;
+              const count = pages.filter((p) => p.fb_account_id === acc.id || (p.secondary_account_ids && p.secondary_account_ids.includes(acc.id))).length;
               return `<button class="btn btn-secondary page-filter-btn" style="padding: 4px 10px; font-size: 12px;" onclick="filterPagesByAccount('${acc.id}', this)">👤 ${acc.account_name} (${count})</button>`;
             })
             .join('')}
         </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th>Page Name & Base Niche</th>
-              <th>Facebook Identity (Owner)</th>
-              <th>Facebook Page ID</th>
-              <th>Publishing Mode</th>
-              <th>Posting Schedule</th>
-              <th style="text-align: right;">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="pagesTableBody">
-            ${pages.length > 0
-              ? pages
-                  .map((p) => {
-                    const ownerAcc = accounts.find((a) => a.id === p.fb_account_id);
-                    return `
-                  <tr id="page-row-${p.id}" class="page-row" data-account="${p.fb_account_id || ''}">
-                    <td>
-                      <a href="javascript:void(0)" onclick="openPageDetailsWindow('${p.id}')" style="color: #60a5fa; text-decoration: none; font-size: 15px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px;" title="View all posts, stats & details for ${p.name}">
-                        📄 ${p.name} <span class="badge" style="background: rgba(96,165,250,0.15); color: #93c5fd; font-size: 10px; padding: 2px 6px;">Inspect ↗</span>
-                      </a><br>
-                      <small style="color: var(--text-muted);">Base Niche: <strong style="color: #cbd5e1;">${p.profile_id}</strong></small>
-                    </td>
-                    <td>
-                      <span class="badge" style="background: #1e293b; color: #93c5fd; font-size: 11px;">
-                        👤 ${ownerAcc ? ownerAcc.account_name : 'Direct Page Token'}
-                      </span><br>
-                      <small style="color: var(--text-muted); font-family: monospace;">ID: ${ownerAcc ? ownerAcc.fb_user_id : p.fb_page_id}</small>
-                    </td>
-                    <td><code>${p.fb_page_id}</code></td>
-                    <td>
-                      <span style="background: #1e3a8a; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; text-transform: uppercase;">
-                        ${p.publishing_mode} (Min ${p.hybrid_min_score})
-                      </span>
-                    </td>
-                    <td>${p.schedule.postsPerDay} posts/day (${p.schedule.postingTimes.join(', ')})</td>
-                    <td style="text-align: right;">
-                      <div style="display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap;">
-                        <a href="/api/auth/facebook?reconnect=true" class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px; text-decoration: none;" title="Reconnect Page token">🔄 Reconnect</a>
-                        <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="checkPageTokenHealth('${p.id}')" title="Check token health">🩺 Check</button>
-                        <button class="btn btn-primary" style="padding: 5px 8px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')">🔍 Data</button>
-                        <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="openPagePromptStudio('${p.id}')">✍️ Prompts</button>
-                        <button class="btn btn-danger" style="padding: 5px 8px; font-size: 12px;" onclick="deletePageAction('${p.id}')">🗑️</button>
+        <!-- Account -> Pages Tree View -->
+        <div id="accountsTreeContainer">
+          ${accounts.length > 0 ? accounts.map((acc) => {
+            const accPages = pages.filter((p) => p.fb_account_id === acc.id || (p.secondary_account_ids && p.secondary_account_ids.includes(acc.id)));
+            const statusColor = acc.token_status === 'valid' ? '#34d399' : (acc.token_status === 'rate_limited' ? '#c084fc' : '#f87171');
+            return `
+              <div class="card account-tree-node" id="account-node-${acc.id}" data-account="${acc.id}" style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); margin-bottom: 18px; padding: 16px;">
+                <!-- Account Header -->
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 12px;">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="width: 38px; height: 38px; border-radius: 50%; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 18px;">
+                      👤
+                    </div>
+                    <div>
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <strong style="font-size: 16px; color: #f9fafb;">${acc.account_name}</strong>
+                        <span class="badge" style="background: ${statusColor}22; color: ${statusColor}; font-weight: 700; font-size: 11px;">
+                          ● ${acc.token_status.toUpperCase()}
+                        </span>
                       </div>
-                    </td>
-                  </tr>
-                `;
-                  })
-                  .join('')
-              : `<tr><td colspan="6" style="text-align: center; padding: 36px; color: var(--text-muted);">
-                  <div style="font-size: 28px; margin-bottom: 8px;">📄</div>
-                  <div style="font-size: 14px; font-weight: 600; color: #d1d5db; margin-bottom: 4px;">No Facebook Pages Added</div>
-                  <div style="font-size: 12px;">Click <strong>➕ Connect / Add New Page</strong> above to add your first Facebook Page.</div>
-                </td></tr>`
-            }
-          </tbody>
-        </table>
+                      <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+                        <code style="color: #93c5fd;">User ID: ${acc.fb_user_id}</code>
+                        ${acc.email ? ` • <span>${acc.email}</span>` : ''}
+                        • <span style="color: #94a3b8;">${accPages.length} Page${accPages.length === 1 ? '' : 's'} linked</span>
+                        • <span>🕒 Synced: ${acc.last_synced_at ? new Date(acc.last_synced_at).toLocaleString() : 'Recently'}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                    <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="syncAccountAction('${acc.id}', this)" title="Discover and sync pages for this account">
+                      🔄 Sync Pages
+                    </button>
+                    <a href="/api/auth/facebook?reconnect=true" class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px; text-decoration: none;" title="Reconnect permissions with Facebook">
+                      🔄 Reconnect
+                    </a>
+                    <button class="btn btn-secondary" style="padding: 5px 8px; font-size: 12px;" onclick="checkAccountTokenHealth('${acc.id}')" title="Check live token validity">
+                      🩺 Check
+                    </button>
+                    <button class="btn btn-danger" style="padding: 5px 8px; font-size: 12px;" onclick="deleteAccountAction('${acc.id}')" title="Disconnect Account">
+                      🗑️
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Pages Nested in Account -->
+                ${accPages.length > 0 ? `
+                  <div class="account-pages-list" style="display: flex; flex-direction: column; gap: 10px;">
+                    ${accPages.map((p) => {
+                      const isShared = p.secondary_account_ids && p.secondary_account_ids.length > 0;
+                      let badgeBg = 'rgba(16, 185, 129, 0.15)';
+                      let badgeColor = '#34d399';
+                      let statusLabel = 'VALID';
+                      if (p.token_status === 'cannot_publish') {
+                        badgeBg = 'rgba(245, 158, 11, 0.15)';
+                        badgeColor = '#fbbf24';
+                        statusLabel = 'CANNOT PUBLISH';
+                      } else if (p.token_status === 'expired') {
+                        badgeBg = 'rgba(234, 88, 12, 0.15)';
+                        badgeColor = '#fb923c';
+                        statusLabel = 'EXPIRED';
+                      } else if (p.token_status === 'revoked') {
+                        badgeBg = 'rgba(239, 68, 68, 0.15)';
+                        badgeColor = '#f87171';
+                        statusLabel = 'REVOKED';
+                      } else if (p.token_status === 'inaccessible') {
+                        badgeBg = 'rgba(100, 116, 139, 0.15)';
+                        badgeColor = '#94a3b8';
+                        statusLabel = 'INACCESSIBLE';
+                      }
+
+                      return `
+                        <div class="page-tree-card" id="page-card-${p.id}" style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                          <!-- Left: Picture & Info -->
+                          <div style="display: flex; align-items: center; gap: 12px; min-width: 240px;">
+                            ${p.picture_url ? `<img src="${p.picture_url}" alt="${p.name}" style="width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 1px solid rgba(255,255,255,0.1);">` : `<div style="width: 38px; height: 38px; border-radius: 50%; background: #1e3a8a; display: flex; align-items: center; justify-content: center; font-size: 18px;">📄</div>`}
+                            <div>
+                              <div style="display: flex; align-items: center; gap: 8px;">
+                                <a href="javascript:void(0)" onclick="openPageDetailsWindow('${p.id}')" style="color: #60a5fa; text-decoration: none; font-size: 15px; font-weight: 700;">
+                                  ${p.name}
+                                </a>
+                                <span class="badge" style="background: ${badgeBg}; color: ${badgeColor}; font-size: 10px; font-weight: 700; padding: 2px 6px;">
+                                  ● ${statusLabel}
+                                </span>
+                                ${isShared ? `<span class="badge" style="background: rgba(59,130,246,0.15); color: #93c5fd; font-size: 10px;" title="Discovered via multiple Facebook accounts">Shared</span>` : ''}
+                              </div>
+                              <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                                <code style="color: #94a3b8;">ID: ${p.fb_page_id}</code>
+                                ${p.category ? ` • <span>${p.category}</span>` : ''}
+                                ${typeof p.fan_count === 'number' && p.fan_count > 0 ? ` • <span>${p.fan_count.toLocaleString()} fans</span>` : ''}
+                              </div>
+                            </div>
+                          </div>
+
+                          <!-- Center: Inline Controls -->
+                          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                            <!-- Active switch -->
+                            <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; user-select: none;">
+                              <input type="checkbox" ${p.active ? 'checked' : ''} onchange="quickTogglePageActive('${p.id}', this.checked)">
+                              <span style="font-weight: 600; color: ${p.active ? '#34d399' : '#9ca3af'};">${p.active ? 'Active' : 'Paused'}</span>
+                            </label>
+
+                            <!-- Profile Select -->
+                            <select class="form-control" style="font-size: 12px; padding: 4px 8px; width: 160px;" onchange="quickUpdatePageProfile('${p.id}', this.value)" title="Assign Content Profile">
+                              ${renderNicheSelectOptions(seedProfiles, p.profile_id)}
+                            </select>
+
+                            <!-- Timezone Select -->
+                            <select class="form-control" style="font-size: 11px; padding: 4px 6px; width: 120px;" onchange="quickUpdatePageTimezone('${p.id}', this.value)" title="Page Posting Timezone">
+                              <option value="UTC" ${p.schedule.timezone === 'UTC' ? 'selected' : ''}>UTC</option>
+                              <option value="America/New_York" ${p.schedule.timezone === 'America/New_York' ? 'selected' : ''}>New York (ET)</option>
+                              <option value="America/Chicago" ${p.schedule.timezone === 'America/Chicago' ? 'selected' : ''}>Chicago (CT)</option>
+                              <option value="America/Los_Angeles" ${p.schedule.timezone === 'America/Los_Angeles' ? 'selected' : ''}>Los Angeles (PT)</option>
+                              <option value="Europe/London" ${p.schedule.timezone === 'Europe/London' ? 'selected' : ''}>London (GMT)</option>
+                              <option value="Asia/Kolkata" ${p.schedule.timezone === 'Asia/Kolkata' ? 'selected' : ''}>Kolkata (IST)</option>
+                              <option value="Asia/Tokyo" ${p.schedule.timezone === 'Asia/Tokyo' ? 'selected' : ''}>Tokyo (JST)</option>
+                            </select>
+
+                            <!-- Schedule Pill -->
+                            <span class="badge" style="background: #1e3a8a; color: #93c5fd; font-size: 11px;" title="Publishing Mode: ${p.publishing_mode.toUpperCase()}">
+                              ${p.schedule.postsPerDay} posts/day
+                            </span>
+                          </div>
+
+                          <!-- Right: Actions -->
+                          <div style="display: flex; gap: 6px; align-items: center;">
+                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="openPagePromptStudio('${p.id}')" title="Customize prompts & voice">✍️ Prompts</button>
+                            <button class="btn btn-primary" style="padding: 4px 8px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')" title="Inspect posts & feed">🔍 Data</button>
+                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="checkPageTokenHealth('${p.id}')" title="Verify token health">🩺 Check</button>
+                            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="deletePageAction('${p.id}')" title="Remove Page">🗑️</button>
+                          </div>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                ` : `
+                  <div style="padding: 16px; background: rgba(0,0,0,0.15); border-radius: 6px; text-align: center; color: var(--text-muted); font-size: 13px;">
+                    No Pages discovered for <strong>${acc.account_name}</strong> yet. Click <strong>🔄 Sync Pages</strong> above to scan Meta Graph API.
+                  </div>
+                `}
+              </div>
+            `;
+          }).join('') : `
+            <div style="text-align: center; padding: 48px 24px; color: var(--text-muted);">
+              <div style="font-size: 36px; margin-bottom: 12px;">🚀</div>
+              <div style="font-size: 16px; font-weight: 700; color: #f3f4f6; margin-bottom: 6px;">No Facebook Accounts or Pages Connected</div>
+              <div style="font-size: 13px; max-width: 480px; margin: 0 auto 18px;">
+                Connect your first Facebook identity using Facebook Login for Business to automatically discover and link all your Pages.
+              </div>
+              <a href="/api/auth/facebook" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; padding: 10px 20px;">
+                🚀 Connect via Facebook Login
+              </a>
+            </div>
+          `}
+        </div>
+
+        <!-- Standalone Pages (if any not mapped to an account) -->
+        ${(() => {
+          const standalonePages = pages.filter((p) => !p.fb_account_id && (!p.secondary_account_ids || p.secondary_account_ids.length === 0));
+          if (standalonePages.length === 0) return '';
+          return `
+            <div class="card" style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); margin-top: 18px; padding: 16px;">
+              <h4 style="font-size: 14px; margin-bottom: 10px; color: var(--text-muted);">📄 Direct Standalone Pages (${standalonePages.length})</h4>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                ${standalonePages.map((p) => `
+                  <div class="page-tree-card" id="page-card-${p.id}" style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                      <div style="width: 38px; height: 38px; border-radius: 50%; background: #1e3a8a; display: flex; align-items: center; justify-content: center; font-size: 18px;">📄</div>
+                      <div>
+                        <strong>${p.name}</strong> <small style="color: var(--text-muted);">(ID: ${p.fb_page_id})</small>
+                      </div>
+                    </div>
+                    <div style="display: flex; gap: 6px; align-items: center;">
+                      <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="openPagePromptStudio('${p.id}')">✍️ Prompts</button>
+                      <button class="btn btn-primary" style="padding: 4px 8px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')">🔍 Data</button>
+                      <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="checkPageTokenHealth('${p.id}')">🩺 Check</button>
+                      <button class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="deletePageAction('${p.id}')">🗑️</button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        })()}
+
+        <!-- Collapsed Manual Fallback Entry Section -->
+        <details class="advanced-fallback" style="margin-top: 24px; background: rgba(255,255,255,0.015); border: 1px dashed var(--card-border); border-radius: 8px; padding: 14px 18px;">
+          <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-muted); user-select: none;">
+            ⚙️ Advanced: Manual Fallback Entry
+          </summary>
+          <div style="margin-top: 12px; font-size: 13px; color: var(--text-muted); line-height: 1.5;">
+            <p style="margin-bottom: 12px;">
+              Facebook Login for Business automatically discovers, encrypts, and maintains all your Facebook Pages without ever exposing secrets. Manual token entry is an administrative fallback intended strictly for offline sandbox testing or manual Graph API Explorer debug tokens.
+            </p>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button class="btn btn-secondary" onclick="openAddAccountModal()">➕ Manual Account / Token Entry</button>
+              <button class="btn btn-secondary" onclick="openAddPageModal()">➕ Manual Page / Token Entry</button>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
 
@@ -2937,6 +3212,68 @@ async function generateDashboardHtml(): Promise<string> {
             <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Zero in-memory/ephemeral JSON files</div>
           </div>
         </div>
+      </div>
+
+      <!-- Facebook Setup & Connection Diagnostics Card -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid var(--card-border);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <h3 style="margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+            <span>🔗</span> Facebook App Setup & Meta Connection Diagnostics
+          </h3>
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; background: ${process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'}; color: ${process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET ? '#34d399' : '#f87171'};">
+            ${process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET ? '● Meta App Configured' : '● Credentials Missing'}
+          </span>
+        </div>
+
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+          Facebook Login for Business requires specific environment variables and matching OAuth redirect URIs in your Meta Developer Console. Secrets are never exposed.
+        </p>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 16px;">
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">FACEBOOK_APP_ID</div>
+            <div style="font-size: 14px; font-weight: 700; color: ${process.env.FACEBOOK_APP_ID ? '#34d399' : '#f87171'};">
+              ${process.env.FACEBOOK_APP_ID ? '✅ Configured (' + maskSecret(process.env.FACEBOOK_APP_ID, 4, 3) + ')' : '❌ Not Set'}
+            </div>
+          </div>
+
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">FACEBOOK_APP_SECRET</div>
+            <div style="font-size: 14px; font-weight: 700; color: ${process.env.FACEBOOK_APP_SECRET ? '#34d399' : '#f87171'};">
+              ${process.env.FACEBOOK_APP_SECRET ? '✅ Configured (Encrypted)' : '❌ Not Set'}
+            </div>
+          </div>
+
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">FACEBOOK_LOGIN_CONFIG_ID</div>
+            <div style="font-size: 14px; font-weight: 700; color: ${process.env.FACEBOOK_LOGIN_CONFIG_ID ? '#34d399' : '#f59e0b'};">
+              ${process.env.FACEBOOK_LOGIN_CONFIG_ID ? '✅ ' + process.env.FACEBOOK_LOGIN_CONFIG_ID : '⚠️ Missing (Scope Fallback)'}
+            </div>
+          </div>
+
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">FACEBOOK_REDIRECT_URI</div>
+            <div style="font-size: 13px; font-weight: 600; color: ${process.env.FACEBOOK_REDIRECT_URI ? '#34d399' : '#93c5fd'}; word-break: break-all;">
+              ${process.env.FACEBOOK_REDIRECT_URI ? '✅ Set Custom' : 'ℹ️ Default (Auto)'}
+            </div>
+          </div>
+        </div>
+
+        <div style="background: #0b0f19; border: 1px solid var(--card-border); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <div>
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 4px;">Expected OAuth Redirect URI (Add to Meta App Settings)</div>
+            <code id="expectedRedirectUriText" style="color: #93c5fd; font-size: 13px; word-break: break-all;">${expectedRedirectUri}</code>
+          </div>
+          <button class="btn btn-secondary" style="padding: 6px 14px; font-size: 12px;" onclick="copyExpectedRedirectUri()">📋 Copy Redirect URI</button>
+        </div>
+
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <button id="testFbConnBtn" class="btn btn-primary" onclick="testFacebookConnectionAction(this)">
+            🩺 Test Facebook Connection with Meta Graph API
+          </button>
+          <span id="testFbConnStatus" style="font-size: 13px; color: var(--text-muted);"></span>
+        </div>
+        <div id="testFbConnResults" style="display: none; margin-top: 14px;"></div>
       </div>
 
       <div class="card" style="margin-bottom: 24px;">

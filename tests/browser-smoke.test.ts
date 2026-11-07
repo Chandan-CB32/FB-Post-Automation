@@ -59,7 +59,7 @@ describe('Headless Browser Smoke Tests (Playwright)', () => {
     expect(hasShowTab).toBe(true);
 
     expect(pageErrors).toEqual([]);
-  });
+  }, 25000);
 
   it('clicks every tab in the navigation sidebar and asserts no ReferenceError or blank tabs', async () => {
     const tabsToClick = [

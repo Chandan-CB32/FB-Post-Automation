@@ -40,6 +40,54 @@ export interface FacebookPageAccount {
   category?: string;
   tasks?: string[];
   perms?: string[];
+  fan_count?: number;
+  picture?: {
+    data?: {
+      url?: string;
+      height?: number;
+      width?: number;
+      is_silhouette?: boolean;
+    };
+  } | string;
+}
+
+export interface FacebookBusiness {
+  id: string;
+  name: string;
+}
+
+export interface FacebookBusinessesResponse {
+  data: FacebookBusiness[];
+  paging?: {
+    cursors?: {
+      before: string;
+      after: string;
+    };
+    next?: string;
+  };
+}
+
+export interface DiscoveredPage {
+  id: string;
+  name: string;
+  access_token: string;
+  category?: string;
+  tasks: string[];
+  picture_url?: string;
+  fan_count?: number;
+  canPublish: boolean;
+  token_status: 'valid' | 'cannot_publish';
+  source: 'me/accounts' | 'business_owned' | 'business_client';
+  business_id?: string;
+  business_name?: string;
+}
+
+export interface PageDiscoveryResult {
+  pages: DiscoveredPage[];
+  totalFound: number;
+  publishableCount: number;
+  unpublishableCount: number;
+  businessesSearched: number;
 }
 
 export interface FacebookAccountsResponse {

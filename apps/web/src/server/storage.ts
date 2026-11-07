@@ -16,7 +16,10 @@ import {
   encrypt,
   maskSecret,
   FacebookGraphClient,
+  discoverFacebookPages,
   type TokenInspectionResult,
+  type PageDiscoveryResult,
+  type DiscoveredPage,
 } from '@fb-auto/core';
 
 export interface StoredProvider {
@@ -50,9 +53,11 @@ export interface StoredFacebookAccount {
   email?: string;
   user_access_token?: string; // AES-256-GCM encrypted
   masked_token?: string;
-  token_status: 'valid' | 'expired' | 'rate_limited';
+  token_status: 'valid' | 'expired' | 'revoked' | 'rate_limited';
   token_expires_at?: string;
   notes?: string;
+  pages_count?: number;
+  last_synced_at?: string;
   created_at: string;
   updated_at?: string;
 }
@@ -73,7 +78,12 @@ export interface StoredPage {
   name: string;
   fb_page_id: string;
   fb_page_token: string; // AES-256-GCM encrypted
-  token_status: 'valid' | 'expired' | 'revoked' | 'rate_limited';
+  token_status: 'valid' | 'expired' | 'revoked' | 'rate_limited' | 'cannot_publish' | 'inaccessible';
+  category?: string;
+  picture_url?: string;
+  tasks?: string[];
+  fan_count?: number;
+  secondary_account_ids?: string[];
   profile_id: string;
   publishing_mode: 'auto' | 'review' | 'hybrid';
   hybrid_min_score: number;
@@ -91,6 +101,8 @@ export interface StoredPage {
   first_comment_enabled?: boolean;
   first_comment_prompt?: string;
   overrides?: Record<string, any>;
+  connected_at?: string;
+  last_synced_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -263,6 +275,8 @@ export class SystemStore {
       token_status: row.token_status || 'valid',
       token_expires_at: row.token_expires_at,
       notes: row.notes,
+      pages_count: typeof row.pages_count === 'number' ? row.pages_count : 0,
+      last_synced_at: row.last_synced_at || row.updated_at,
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));
@@ -286,6 +300,8 @@ export class SystemStore {
       token_status: data.token_status || 'valid',
       token_expires_at: data.token_expires_at,
       notes: data.notes,
+      pages_count: typeof data.pages_count === 'number' ? data.pages_count : 0,
+      last_synced_at: data.last_synced_at || data.updated_at,
       created_at: data.created_at,
       updated_at: data.updated_at,
     };
@@ -296,14 +312,15 @@ export class SystemStore {
     fb_user_id: string;
     email?: string;
     user_access_token?: string;
-    token_status?: 'valid' | 'expired' | 'rate_limited';
+    token_status?: 'valid' | 'expired' | 'revoked' | 'rate_limited';
     token_expires_at?: string;
     notes?: string;
+    pages_count?: number;
   }): Promise<StoredFacebookAccount> {
     const encToken = input.user_access_token ? encryptPageToken(input.user_access_token) : null;
     const masked = input.user_access_token ? maskSecret(input.user_access_token) : 'No User Token';
 
-    const insertPayload = {
+    let insertPayload: Record<string, any> = {
       account_name: input.account_name,
       fb_user_id: input.fb_user_id,
       email: input.email || null,
@@ -312,15 +329,29 @@ export class SystemStore {
       token_status: input.token_status || 'valid',
       token_expires_at: input.token_expires_at || new Date(Date.now() + 86400 * 1000 * 60).toISOString(),
       notes: input.notes || null,
+      pages_count: input.pages_count ?? 0,
+      last_synced_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await this.getClient()
+    let { data, error } = await this.getClient()
       .from('facebook_accounts')
       .insert(insertPayload)
       .select()
       .single();
+
+    if (error && (error.message?.includes('schema cache') || error.message?.includes('column'))) {
+      delete insertPayload.pages_count;
+      delete insertPayload.last_synced_at;
+      const retry = await this.getClient()
+        .from('facebook_accounts')
+        .insert(insertPayload)
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       throw new Error(`Failed to create Facebook Account in Supabase: ${error.message}`);
@@ -336,6 +367,8 @@ export class SystemStore {
       token_status: data.token_status,
       token_expires_at: data.token_expires_at,
       notes: data.notes,
+      pages_count: data.pages_count ?? 0,
+      last_synced_at: data.last_synced_at,
       created_at: data.created_at,
       updated_at: data.updated_at,
     };
@@ -350,18 +383,33 @@ export class SystemStore {
     if (updates.email !== undefined) updatePayload.email = updates.email;
     if (updates.notes !== undefined) updatePayload.notes = updates.notes;
     if (updates.token_status) updatePayload.token_status = updates.token_status;
+    if (updates.pages_count !== undefined) updatePayload.pages_count = updates.pages_count;
+    if (updates.last_synced_at !== undefined) updatePayload.last_synced_at = updates.last_synced_at;
 
     if (updates.user_access_token) {
       updatePayload.user_access_token = encryptPageToken(updates.user_access_token);
       updatePayload.masked_token = maskSecret(updates.user_access_token);
     }
 
-    const { data, error } = await this.getClient()
+    let { data, error } = await this.getClient()
       .from('facebook_accounts')
       .update(updatePayload)
       .eq('id', id)
       .select()
       .single();
+
+    if (error && (error.message?.includes('schema cache') || error.message?.includes('column'))) {
+      delete updatePayload.pages_count;
+      delete updatePayload.last_synced_at;
+      const retry = await this.getClient()
+        .from('facebook_accounts')
+        .update(updatePayload)
+        .eq('id', id)
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       throw new Error(`Failed to update Facebook Account ${id}: ${error.message}`);
@@ -451,6 +499,11 @@ export class SystemStore {
       fb_page_id: row.fb_page_id,
       fb_page_token: row.fb_page_token,
       token_status: row.token_status || 'valid',
+      category: row.category || undefined,
+      picture_url: row.picture_url || undefined,
+      tasks: Array.isArray(row.tasks) ? row.tasks : [],
+      fan_count: typeof row.fan_count === 'number' ? row.fan_count : (row.fan_count ? Number(row.fan_count) : 0),
+      secondary_account_ids: Array.isArray(row.secondary_account_ids) ? row.secondary_account_ids : [],
       profile_id: row.profile_id || 'default-niche',
       publishing_mode: row.publishing_mode || 'hybrid',
       hybrid_min_score: Number(row.hybrid_min_score) || 80,
@@ -468,6 +521,8 @@ export class SystemStore {
       first_comment_enabled: row.first_comment_enabled !== false,
       first_comment_prompt: row.first_comment_prompt || '',
       overrides: row.overrides || {},
+      connected_at: row.connected_at || row.created_at,
+      last_synced_at: row.last_synced_at || row.updated_at,
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));
@@ -488,6 +543,11 @@ export class SystemStore {
       fb_page_id: data.fb_page_id,
       fb_page_token: data.fb_page_token,
       token_status: data.token_status || 'valid',
+      category: data.category || undefined,
+      picture_url: data.picture_url || undefined,
+      tasks: Array.isArray(data.tasks) ? data.tasks : [],
+      fan_count: typeof data.fan_count === 'number' ? data.fan_count : (data.fan_count ? Number(data.fan_count) : 0),
+      secondary_account_ids: Array.isArray(data.secondary_account_ids) ? data.secondary_account_ids : [],
       profile_id: data.profile_id || 'default-niche',
       publishing_mode: data.publishing_mode || 'hybrid',
       hybrid_min_score: Number(data.hybrid_min_score) || 80,
@@ -505,6 +565,8 @@ export class SystemStore {
       first_comment_enabled: data.first_comment_enabled !== false,
       first_comment_prompt: data.first_comment_prompt || '',
       overrides: data.overrides || {},
+      connected_at: data.connected_at || data.created_at,
+      last_synced_at: data.last_synced_at || data.updated_at,
       created_at: data.created_at,
       updated_at: data.updated_at,
     };
@@ -514,8 +576,14 @@ export class SystemStore {
     name: string;
     fb_page_id: string;
     fb_page_token: string;
-    profile_id: string;
+    profile_id?: string;
     fb_account_id?: string;
+    category?: string;
+    picture_url?: string;
+    tasks?: string[];
+    fan_count?: number;
+    token_status?: 'valid' | 'expired' | 'revoked' | 'rate_limited' | 'cannot_publish' | 'inaccessible';
+    secondary_account_ids?: string[];
     publishing_mode?: 'auto' | 'review' | 'hybrid';
     hybrid_min_score?: number;
     daily_cap?: number;
@@ -527,15 +595,22 @@ export class SystemStore {
     first_comment_enabled?: boolean;
     first_comment_prompt?: string;
     overrides?: Record<string, any>;
+    connected_at?: string;
+    last_synced_at?: string;
   }): Promise<StoredPage> {
     const encryptedToken = encryptPageToken(input.fb_page_token);
 
-    const payload = {
+    let payload: Record<string, any> = {
       fb_account_id: input.fb_account_id || null,
       name: input.name,
       fb_page_id: input.fb_page_id,
       fb_page_token: encryptedToken,
-      token_status: 'valid',
+      token_status: input.token_status || 'valid',
+      category: input.category || null,
+      picture_url: input.picture_url || null,
+      tasks: input.tasks || [],
+      fan_count: typeof input.fan_count === 'number' ? input.fan_count : 0,
+      secondary_account_ids: input.secondary_account_ids || [],
       profile_id: input.profile_id && input.profile_id.length > 20 ? input.profile_id : null,
       publishing_mode: input.publishing_mode || 'hybrid',
       hybrid_min_score: input.hybrid_min_score ?? 80,
@@ -553,11 +628,29 @@ export class SystemStore {
       first_comment_enabled: input.first_comment_enabled !== false,
       first_comment_prompt: input.first_comment_prompt || '',
       overrides: input.overrides || {},
+      connected_at: input.connected_at || new Date().toISOString(),
+      last_synced_at: input.last_synced_at || new Date().toISOString(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await this.getClient().from('pages').insert(payload).select().single();
+    let { data, error } = await this.getClient().from('pages').insert(payload).select().single();
+    if (error && (error.message?.includes('schema cache') || error.message?.includes('column') || error.message?.includes('check constraint'))) {
+      delete payload.category;
+      delete payload.picture_url;
+      delete payload.tasks;
+      delete payload.fan_count;
+      delete payload.secondary_account_ids;
+      delete payload.connected_at;
+      delete payload.last_synced_at;
+      if (payload.token_status === 'cannot_publish' || payload.token_status === 'inaccessible') {
+        payload.token_status = 'revoked';
+      }
+      const retry = await this.getClient().from('pages').insert(payload).select().single();
+      data = retry.data;
+      error = retry.error;
+    }
+
     if (error) {
       throw new Error(`Failed to create Facebook Page in Supabase: ${error.message}`);
     }
@@ -565,7 +658,7 @@ export class SystemStore {
     return {
       ...payload,
       id: data.id,
-      profile_id: input.profile_id,
+      profile_id: input.profile_id || 'default-niche',
     } as StoredPage;
   }
 
@@ -577,6 +670,13 @@ export class SystemStore {
     if (updates.name) updatePayload.name = updates.name;
     if (updates.fb_page_id) updatePayload.fb_page_id = updates.fb_page_id;
     if (updates.fb_account_id !== undefined) updatePayload.fb_account_id = updates.fb_account_id || null;
+    if (updates.category !== undefined) updatePayload.category = updates.category;
+    if (updates.picture_url !== undefined) updatePayload.picture_url = updates.picture_url;
+    if (updates.tasks !== undefined) updatePayload.tasks = updates.tasks;
+    if (updates.fan_count !== undefined) updatePayload.fan_count = updates.fan_count;
+    if (updates.token_status !== undefined) updatePayload.token_status = updates.token_status;
+    if (updates.secondary_account_ids !== undefined) updatePayload.secondary_account_ids = updates.secondary_account_ids;
+    if (updates.profile_id !== undefined) updatePayload.profile_id = updates.profile_id;
     if (updates.publishing_mode) updatePayload.publishing_mode = updates.publishing_mode;
     if (updates.hybrid_min_score !== undefined) updatePayload.hybrid_min_score = updates.hybrid_min_score;
     if (updates.daily_cap !== undefined) updatePayload.daily_cap = updates.daily_cap;
@@ -589,17 +689,40 @@ export class SystemStore {
     if (updates.first_comment_enabled !== undefined) updatePayload.first_comment_enabled = updates.first_comment_enabled;
     if (updates.first_comment_prompt !== undefined) updatePayload.first_comment_prompt = updates.first_comment_prompt;
     if (updates.overrides) updatePayload.overrides = updates.overrides;
+    if (updates.connected_at !== undefined) updatePayload.connected_at = updates.connected_at;
+    if (updates.last_synced_at !== undefined) updatePayload.last_synced_at = updates.last_synced_at;
 
     if (updates.fb_page_token) {
       updatePayload.fb_page_token = encryptPageToken(updates.fb_page_token);
     }
 
-    const { data, error } = await this.getClient()
+    let { data, error } = await this.getClient()
       .from('pages')
       .update(updatePayload)
       .eq('id', id)
       .select()
       .single();
+
+    if (error && (error.message?.includes('schema cache') || error.message?.includes('column') || error.message?.includes('check constraint'))) {
+      delete updatePayload.category;
+      delete updatePayload.picture_url;
+      delete updatePayload.tasks;
+      delete updatePayload.fan_count;
+      delete updatePayload.secondary_account_ids;
+      delete updatePayload.connected_at;
+      delete updatePayload.last_synced_at;
+      if (updatePayload.token_status === 'cannot_publish' || updatePayload.token_status === 'inaccessible') {
+        updatePayload.token_status = 'revoked';
+      }
+      const retry = await this.getClient()
+        .from('pages')
+        .update(updatePayload)
+        .eq('id', id)
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       throw new Error(`Failed to update page ${id}: ${error.message}`);
@@ -622,23 +745,52 @@ export class SystemStore {
     name: string;
     fb_page_id: string;
     fb_page_token: string;
-  }): Promise<StoredPage> {
+    category?: string;
+    picture_url?: string;
+    tasks?: string[];
+    fan_count?: number;
+    token_status?: 'valid' | 'expired' | 'revoked' | 'rate_limited' | 'cannot_publish' | 'inaccessible';
+  }): Promise<StoredPage & { isNew: boolean }> {
     const { data: existing } = await this.getClient()
       .from('pages')
-      .select('id')
+      .select('*')
       .eq('fb_page_id', input.fb_page_id)
       .maybeSingle();
 
+    const tasks = Array.isArray(input.tasks) ? input.tasks : [];
+    const status = input.token_status || 'valid';
+
     if (existing) {
-      return await this.updatePage(existing.id, {
+      let secondary: string[] = Array.isArray(existing.secondary_account_ids)
+        ? existing.secondary_account_ids
+        : [];
+      let primaryAccountId = existing.fb_account_id;
+
+      if (!primaryAccountId) {
+        primaryAccountId = input.fb_account_id;
+      } else if (primaryAccountId !== input.fb_account_id) {
+        if (!secondary.includes(input.fb_account_id)) {
+          secondary = [...secondary, input.fb_account_id];
+        }
+      }
+
+      const shouldUpdateToken = status === 'valid' || existing.token_status !== 'valid';
+
+      const updated = await this.updatePage(existing.id, {
         name: input.name,
-        fb_account_id: input.fb_account_id,
-        fb_page_token: input.fb_page_token,
-        token_status: 'valid',
+        fb_account_id: primaryAccountId,
+        secondary_account_ids: secondary,
+        ...(shouldUpdateToken ? { fb_page_token: input.fb_page_token, token_status: status } : {}),
+        category: input.category || existing.category,
+        picture_url: input.picture_url || existing.picture_url,
+        tasks: tasks.length > 0 ? tasks : existing.tasks,
+        fan_count: typeof input.fan_count === 'number' ? input.fan_count : existing.fan_count,
+        last_synced_at: new Date().toISOString(),
       });
+      return Object.assign(updated, { isNew: false });
     }
 
-    return await this.createPage({
+    const created = await this.createPage({
       name: input.name,
       fb_page_id: input.fb_page_id,
       fb_page_token: input.fb_page_token,
@@ -646,7 +798,142 @@ export class SystemStore {
       profile_id: 'default-niche',
       publishing_mode: 'hybrid',
       daily_cap: 3,
+      category: input.category,
+      picture_url: input.picture_url,
+      tasks,
+      fan_count: input.fan_count,
+      token_status: status,
+      connected_at: new Date().toISOString(),
+      last_synced_at: new Date().toISOString(),
     });
+    return Object.assign(created, { isNew: true });
+  }
+
+  public async syncAccountPages(accountId: string): Promise<{
+    success: boolean;
+    accountName: string;
+    totalDiscovered: number;
+    newCount: number;
+    updatedCount: number;
+    inaccessibleCount: number;
+    publishableCount: number;
+    error?: string;
+  }> {
+    const account = await this.getAccountById(accountId);
+    if (!account) {
+      throw new Error(`Account ${accountId} not found.`);
+    }
+    if (!account.user_access_token) {
+      throw new Error(`Account "${account.account_name}" has no stored user access token.`);
+    }
+
+    let userToken: string;
+    try {
+      userToken = decryptPageToken(account.user_access_token);
+    } catch (err: any) {
+      await this.updateAccount(accountId, { token_status: 'revoked' });
+      throw new Error(`Failed to decrypt user token for account "${account.account_name}": ${err.message}`);
+    }
+
+    const discovery = await discoverFacebookPages(userToken);
+    let newCount = 0;
+    let updatedCount = 0;
+    const discoveredPageIds = new Set<string>();
+
+    for (const dp of discovery.pages) {
+      discoveredPageIds.add(dp.id);
+      const res = await this.upsertPageFromFacebook({
+        fb_account_id: accountId,
+        name: dp.name,
+        fb_page_id: dp.id,
+        fb_page_token: dp.access_token,
+        category: dp.category,
+        picture_url: dp.picture_url,
+        tasks: dp.tasks,
+        fan_count: dp.fan_count,
+        token_status: dp.token_status,
+      });
+      if (res.isNew) newCount++;
+      else updatedCount++;
+    }
+
+    // Mark missing pages as inaccessible without deleting post history
+    const allPages = await this.getPages();
+    let inaccessibleCount = 0;
+    for (const p of allPages) {
+      const isBelonging = p.fb_account_id === accountId || (p.secondary_account_ids && p.secondary_account_ids.includes(accountId));
+      if (isBelonging && !discoveredPageIds.has(p.fb_page_id)) {
+        if (p.token_status !== 'inaccessible') {
+          await this.updatePage(p.id, { token_status: 'inaccessible', last_synced_at: new Date().toISOString() });
+          inaccessibleCount++;
+        }
+      }
+    }
+
+    await this.updateAccount(accountId, {
+      pages_count: discovery.pages.length,
+      last_synced_at: new Date().toISOString(),
+      token_status: 'valid',
+    });
+
+    await this.addAuditLog({
+      level: 'info',
+      category: 'token',
+      message: `Synced account "${account.account_name}": found ${discovery.pages.length} Pages (${newCount} new, ${updatedCount} updated, ${inaccessibleCount} inaccessible).`,
+      details: { accountId, totalDiscovered: discovery.pages.length, newCount, updatedCount, inaccessibleCount },
+    });
+
+    return {
+      success: true,
+      accountName: account.account_name,
+      totalDiscovered: discovery.pages.length,
+      newCount,
+      updatedCount,
+      inaccessibleCount,
+      publishableCount: discovery.publishableCount,
+    };
+  }
+
+  public async syncAllPages(): Promise<{
+    success: boolean;
+    accountsSynced: number;
+    totalPages: number;
+    newPages: number;
+    updatedPages: number;
+    inaccessiblePages: number;
+    errors: string[];
+  }> {
+    const accounts = await this.getAccounts();
+    let totalPages = 0;
+    let newPages = 0;
+    let updatedPages = 0;
+    let inaccessiblePages = 0;
+    let accountsSynced = 0;
+    const errors: string[] = [];
+
+    for (const acc of accounts) {
+      if (!acc.user_access_token) continue;
+      try {
+        const res = await this.syncAccountPages(acc.id);
+        accountsSynced++;
+        totalPages += res.totalDiscovered;
+        newPages += res.newCount;
+        updatedPages += res.updatedCount;
+        inaccessiblePages += res.inaccessibleCount;
+      } catch (err: any) {
+        errors.push(`Account ${acc.account_name}: ${err.message}`);
+      }
+    }
+
+    return {
+      success: errors.length === 0,
+      accountsSynced,
+      totalPages,
+      newPages,
+      updatedPages,
+      inaccessiblePages,
+      errors,
+    };
   }
 
   public async checkPageTokenHealth(pageId: string): Promise<TokenInspectionResult> {

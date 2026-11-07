@@ -154,3 +154,142 @@ export function parseFacebookDeletionSignedRequest(
   }
 }
 
+export interface FacebookConnectionDiagnostics {
+  success: boolean;
+  appIdPresent: boolean;
+  appSecretPresent: boolean;
+  configIdPresent: boolean;
+  redirectUriPresent: boolean;
+  appUrlPresent: boolean;
+  expectedRedirectUri: string;
+  configuredRedirectUri?: string;
+  appTokenValid?: boolean;
+  metaAppName?: string;
+  metaAppId?: string;
+  configIdValid?: boolean;
+  issues: string[];
+  recommendations: string[];
+}
+
+/**
+ * Validates Facebook credentials and configuration against the Meta Graph API.
+ * Never leaks raw secrets.
+ */
+export async function testFacebookCredentials(
+  options: {
+    appId?: string;
+    appSecret?: string;
+    configId?: string;
+    configuredRedirectUri?: string;
+    appUrl?: string;
+  },
+  client?: FacebookGraphClient
+): Promise<FacebookConnectionDiagnostics> {
+  const appId = options.appId?.trim() || '';
+  const appSecret = options.appSecret?.trim() || '';
+  const configId = options.configId?.trim() || '';
+  const appUrl = options.appUrl?.trim() || '';
+  const configuredRedirectUri = options.configuredRedirectUri?.trim() || '';
+
+  const expectedRedirectUri = `${(appUrl || 'https://fbauto247.vercel.app').replace(/\/+$/, '')}/api/auth/facebook/callback`;
+
+  const issues: string[] = [];
+  const recommendations: string[] = [];
+
+  const appIdPresent = Boolean(appId);
+  const appSecretPresent = Boolean(appSecret);
+  const configIdPresent = Boolean(configId);
+  const redirectUriPresent = Boolean(configuredRedirectUri);
+  const appUrlPresent = Boolean(appUrl);
+
+  if (!appIdPresent) {
+    issues.push('FACEBOOK_APP_ID is missing.');
+    recommendations.push('Set FACEBOOK_APP_ID in your environment variables / Vercel secrets.');
+  }
+
+  if (!appSecretPresent) {
+    issues.push('FACEBOOK_APP_SECRET is missing.');
+    recommendations.push('Set FACEBOOK_APP_SECRET in your environment variables / Vercel secrets.');
+  }
+
+  if (!configIdPresent) {
+    issues.push('FACEBOOK_LOGIN_CONFIG_ID is not configured.');
+    recommendations.push('Create a Facebook Login for Business configuration in Meta Developer Portal and set FACEBOOK_LOGIN_CONFIG_ID.');
+  }
+
+  if (redirectUriPresent && configuredRedirectUri !== expectedRedirectUri) {
+    issues.push(`FACEBOOK_REDIRECT_URI (${configuredRedirectUri}) does not match expected URL (${expectedRedirectUri}).`);
+    recommendations.push(`Update FACEBOOK_REDIRECT_URI to: ${expectedRedirectUri}`);
+  }
+
+  recommendations.push(`Ensure "${expectedRedirectUri}" is listed under Meta App -> Facebook Login -> Settings -> Valid OAuth Redirect URIs.`);
+
+  let appTokenValid = false;
+  let metaAppName: string | undefined = undefined;
+  let metaAppId: string | undefined = undefined;
+  let configIdValid: boolean | undefined = undefined;
+
+  if (appIdPresent && appSecretPresent) {
+    const fbClient = client || new FacebookGraphClient();
+    try {
+      const tokenResp = await fbClient.get<{ access_token: string }>('oauth/access_token', undefined, {
+        grant_type: 'client_credentials',
+        client_id: appId,
+        client_secret: appSecret,
+      });
+
+      if (tokenResp && tokenResp.access_token) {
+        appTokenValid = true;
+        const appAccessToken = tokenResp.access_token;
+
+        // Fetch App details
+        try {
+          const appDetails = await fbClient.get<{ id: string; name: string }>('app', appAccessToken);
+          if (appDetails) {
+            metaAppName = appDetails.name;
+            metaAppId = appDetails.id;
+          }
+        } catch {
+          // Non-fatal if app node query fails
+        }
+
+        // Test config ID if present
+        if (configIdPresent) {
+          try {
+            await fbClient.get(configId, appAccessToken);
+            configIdValid = true;
+          } catch (cfgErr: any) {
+            configIdValid = false;
+            issues.push(`Facebook Login Configuration ID "${configId}" could not be verified by Meta Graph API: ${cfgErr?.message || 'Invalid config ID'}`);
+            recommendations.push('Verify the Configuration ID in Meta Developer Portal -> Facebook Login for Business -> Configurations.');
+          }
+        }
+      }
+    } catch (err: any) {
+      appTokenValid = false;
+      issues.push(`Meta Graph API rejected App credentials: ${err?.message || 'Invalid App ID or App Secret'}`);
+      recommendations.push('Double check that FACEBOOK_APP_ID and FACEBOOK_APP_SECRET match your Meta App Dashboard precisely.');
+    }
+  }
+
+  const success = appIdPresent && appSecretPresent && appTokenValid && (configIdPresent ? configIdValid !== false : true);
+
+  return {
+    success,
+    appIdPresent,
+    appSecretPresent,
+    configIdPresent,
+    redirectUriPresent,
+    appUrlPresent,
+    expectedRedirectUri,
+    configuredRedirectUri: configuredRedirectUri || undefined,
+    appTokenValid,
+    metaAppName,
+    metaAppId,
+    configIdValid,
+    issues,
+    recommendations,
+  };
+}
+
+

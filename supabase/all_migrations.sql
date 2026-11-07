@@ -104,9 +104,11 @@ CREATE TABLE IF NOT EXISTS public.facebook_accounts (
     email TEXT,
     user_access_token TEXT, -- AES-256-GCM encrypted
     masked_token TEXT,
-    token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'rate_limited')),
+    token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited')),
     token_expires_at TIMESTAMPTZ,
     notes TEXT,
+    pages_count INTEGER DEFAULT 0,
+    last_synced_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
@@ -121,7 +123,12 @@ CREATE TABLE IF NOT EXISTS public.pages (
     name TEXT NOT NULL,
     fb_page_id TEXT NOT NULL UNIQUE,
     fb_page_token TEXT NOT NULL, -- AES-256-GCM encrypted
-    token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited')),
+    token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited', 'cannot_publish', 'inaccessible')),
+    category TEXT,
+    picture_url TEXT,
+    tasks JSONB NOT NULL DEFAULT '[]'::jsonb,
+    fan_count INTEGER DEFAULT 0,
+    secondary_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     profile_id UUID REFERENCES public.content_profiles(id) ON DELETE SET NULL,
     overrides JSONB NOT NULL DEFAULT '{}'::jsonb,
     custom_caption_prompt TEXT,
@@ -138,11 +145,14 @@ CREATE TABLE IF NOT EXISTS public.pages (
     provider_chain_overrides JSONB NOT NULL DEFAULT '{}'::jsonb,
     daily_cap INTEGER NOT NULL DEFAULT 5,
     active BOOLEAN NOT NULL DEFAULT true,
+    connected_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+    last_synced_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 CREATE INDEX IF NOT EXISTS idx_pages_active ON public.pages(active);
 CREATE INDEX IF NOT EXISTS idx_pages_account ON public.pages(fb_account_id);
+CREATE INDEX IF NOT EXISTS idx_pages_token_status ON public.pages(token_status);
 
 -- ----------------------------------------------------------------------------
 -- 5. AI Providers
@@ -635,3 +645,84 @@ VALUES
         false
     )
 ON CONFLICT (name) DO NOTHING;
+
+-- ----------------------------------------------------------------------------
+-- Backward-compatible column and constraint upgrades for existing instances
+-- ----------------------------------------------------------------------------
+DO $$
+BEGIN
+    -- facebook_accounts upgrades
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'facebook_accounts' AND column_name = 'last_synced_at'
+    ) THEN
+        ALTER TABLE public.facebook_accounts ADD COLUMN last_synced_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'facebook_accounts' AND column_name = 'pages_count'
+    ) THEN
+        ALTER TABLE public.facebook_accounts ADD COLUMN pages_count INTEGER DEFAULT 0;
+    END IF;
+
+    ALTER TABLE public.facebook_accounts DROP CONSTRAINT IF EXISTS facebook_accounts_token_status_check;
+    ALTER TABLE public.facebook_accounts ADD CONSTRAINT facebook_accounts_token_status_check
+        CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited'));
+
+    -- pages upgrades
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'category'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN category TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'picture_url'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN picture_url TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'tasks'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN tasks JSONB NOT NULL DEFAULT '[]'::jsonb;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'fan_count'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN fan_count INTEGER DEFAULT 0;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'connected_at'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN connected_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'last_synced_at'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN last_synced_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'secondary_account_ids'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN secondary_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+    END IF;
+
+    ALTER TABLE public.pages DROP CONSTRAINT IF EXISTS pages_token_status_check;
+    ALTER TABLE public.pages ADD CONSTRAINT pages_token_status_check
+        CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited', 'cannot_publish', 'inaccessible'));
+END
+$$;
+
