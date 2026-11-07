@@ -132,10 +132,35 @@ export interface StorageHealthResult {
   supabaseConnected: boolean;
   tablesOk: boolean;
   tablesCount: number;
+  expectedCount?: number;
+  missingTables?: string[];
   bucketOk: boolean;
   singleSourceOfTruth: boolean;
+  instructions?: string;
   error?: string;
 }
+
+export const CORE_SYSTEM_TABLES: string[] = [
+  'facebook_accounts',
+  'pages',
+  'posts',
+  'providers',
+  'provider_keys',
+  'provider_chains',
+  'provider_usage_daily',
+  'audit_log',
+  'settings',
+  'content_profiles',
+  'profile_versions',
+  'research_sources',
+  'research_items',
+  'topic_queue_items',
+  'series',
+  'series_episodes',
+  'topic_history',
+  'job_logs',
+  'alerts',
+];
 
 export function parseRawKeysInput(input: string): string[] {
   if (!input || typeof input !== 'string') return [];
@@ -1202,46 +1227,89 @@ export class SystemStore {
     return now;
   }
 
+  private cachedStorageHealth: { result: StorageHealthResult; timestamp: number } | null = null;
+
+  public async getMissingTables(): Promise<string[]> {
+    const client = this.getClient();
+    const missing: string[] = [];
+
+    await Promise.all(
+      CORE_SYSTEM_TABLES.map(async (table) => {
+        try {
+          const { error } = await client.from(table).select('id', { count: 'exact', head: true }).limit(0);
+          if (error) {
+            const msg = (error.message || '').toLowerCase();
+            const code = (error as any).code;
+            if (
+              code === '42P01' ||
+              msg.includes('does not exist') ||
+              msg.includes('relation') ||
+              msg.includes('not found') ||
+              (error as any).status === 404
+            ) {
+              missing.push(table);
+            }
+          }
+        } catch {
+          missing.push(table);
+        }
+      })
+    );
+
+    return missing;
+  }
+
   // --- Storage Health Check (PRD & Requirements) ---
-  public async getStorageHealth(): Promise<StorageHealthResult> {
+  public async getStorageHealth(forceRefresh = false): Promise<StorageHealthResult> {
+    const now = Date.now();
+    if (!forceRefresh && this.cachedStorageHealth && now - this.cachedStorageHealth.timestamp < 30000) {
+      return this.cachedStorageHealth.result;
+    }
+
     try {
       const client = this.getClient();
 
       // 1. Connection probe
-      const { data: probe, error: probeErr } = await client.from('settings').select('key').limit(1);
+      const { error: probeErr } = await client.from('settings').select('key').limit(1);
       const supabaseConnected = !probeErr;
 
-      // 2. Tables count
-      const EXPECTED_COUNT = 19;
-      let tablesCount = 0;
-      const { data: rlsData, error: rlsErr } = await client.rpc('check_table_rls_status');
-      if (!rlsErr && Array.isArray(rlsData)) {
-        tablesCount = rlsData.length;
-      } else {
-        // Fallback probe
-        tablesCount = EXPECTED_COUNT;
-      }
+      // 2. Missing tables check
+      const missingTables = await this.getMissingTables();
+      const tablesCount = CORE_SYSTEM_TABLES.length - missingTables.length;
+      const tablesOk = missingTables.length === 0;
 
       // 3. Bucket check
       const { data: buckets, error: bucketErr } = await client.storage.listBuckets();
       const bucketOk = !bucketErr && Array.isArray(buckets) && buckets.some((b) => b.id === 'post-images' || b.name === 'post-images');
 
-      return {
+      const result: StorageHealthResult = {
         supabaseConnected,
-        tablesOk: tablesCount >= EXPECTED_COUNT,
+        tablesOk,
         tablesCount,
+        expectedCount: CORE_SYSTEM_TABLES.length,
+        missingTables,
         bucketOk,
-        singleSourceOfTruth: true, // Database is the only store
+        singleSourceOfTruth: true,
+        instructions: tablesOk
+          ? undefined
+          : 'Execute supabase/all_migrations.sql in your Supabase SQL Editor to initialize the missing tables.',
       };
+
+      this.cachedStorageHealth = { result, timestamp: now };
+      return result;
     } catch (err: any) {
-      return {
+      const fallbackResult: StorageHealthResult = {
         supabaseConnected: false,
         tablesOk: false,
         tablesCount: 0,
+        expectedCount: CORE_SYSTEM_TABLES.length,
+        missingTables: CORE_SYSTEM_TABLES,
         bucketOk: false,
         singleSourceOfTruth: true,
         error: err?.message || String(err),
+        instructions: 'Execute supabase/all_migrations.sql in your Supabase SQL Editor to initialize all tables.',
       };
+      return fallbackResult;
     }
   }
 }
