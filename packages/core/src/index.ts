@@ -11,6 +11,8 @@ export * from './db/client.js';
 
 // Security
 export * from './security/ssrf.js';
+export * from './security/env-guard.js';
+
 
 // Prompt Engine
 export * from './prompt-engine/safety-baseline.js';

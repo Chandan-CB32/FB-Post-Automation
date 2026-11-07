@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { assertSafeDatabaseUrl } from '../security/env-guard.js';
 
 export interface DatabaseConfig {
   supabaseUrl?: string;
@@ -15,7 +16,10 @@ export function getSupabaseClient(config?: DatabaseConfig): SupabaseClient | nul
     return null;
   }
 
+  assertSafeDatabaseUrl(url);
+
   if (!cachedClient) {
+
     cachedClient = createClient(url, key, {
       auth: {
         persistSession: false,

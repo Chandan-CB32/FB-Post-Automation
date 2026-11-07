@@ -1,15 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import crypto from 'node:crypto';
 
-// Auto-load .env file if available
-try {
-  if (typeof (process as any).loadEnvFile === 'function') {
-    (process as any).loadEnvFile();
-  }
-} catch {
-  // Ignore
-}
-
 import {
   encryptPageToken,
   decryptPageToken,
@@ -17,10 +8,26 @@ import {
   maskSecret,
   FacebookGraphClient,
   discoverFacebookPages,
+  assertSafeDatabaseUrl,
+  assertSafeProductionToken,
+  isTestEnv,
+  isProductionEnv,
   type TokenInspectionResult,
   type PageDiscoveryResult,
   type DiscoveredPage,
 } from '@fb-auto/core';
+
+// In test environment, NEVER auto-load production .env
+if (!isTestEnv()) {
+  try {
+    if (typeof (process as any).loadEnvFile === 'function') {
+      (process as any).loadEnvFile();
+    }
+  } catch {
+    // Ignore
+  }
+}
+
 
 export interface StoredProvider {
   id: string;
@@ -217,6 +224,15 @@ export class SystemStore {
   private static instance: SystemStore;
   private client: SupabaseClient | null = null;
 
+  // In-memory isolated storage for tests (APP_ENV === 'test')
+  private memoryAccounts: Map<string, StoredFacebookAccount> = new Map();
+  private memoryPages: Map<string, StoredPage> = new Map();
+  private memoryProviders: Map<string, StoredProvider> = new Map();
+  private memoryProviderKeys: Map<string, StoredProviderKey> = new Map();
+  private memoryPosts: Map<string, StoredPost> = new Map();
+  private memoryAuditLogs: StoredAuditLog[] = [];
+  private memorySettings: Map<string, any> = new Map();
+
   private constructor() {
     this.initClient();
   }
@@ -228,11 +244,22 @@ export class SystemStore {
     return SystemStore.instance;
   }
 
+  public static resetInstance(): void {
+    SystemStore.instance = new SystemStore();
+  }
+
   private initClient(): SupabaseClient | null {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (url) {
+      assertSafeDatabaseUrl(url);
+    }
+
     if (!url || !key) {
-      console.warn('[SystemStore] Missing Supabase URL or SERVICE_ROLE_KEY');
+      if (!isTestEnv()) {
+        console.warn('[SystemStore] Missing Supabase URL or SERVICE_ROLE_KEY');
+      }
       return null;
     }
     if (!this.client) {
@@ -256,6 +283,11 @@ export class SystemStore {
 
   // --- Facebook Accounts / Identities CRUD ---
   public async getAccounts(): Promise<StoredFacebookAccount[]> {
+    if (isTestEnv() && !this.client) {
+      return Array.from(this.memoryAccounts.values()).sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+    }
     const { data, error } = await this.getClient()
       .from('facebook_accounts')
       .select('*')
@@ -283,6 +315,9 @@ export class SystemStore {
   }
 
   public async getAccountById(id: string): Promise<StoredFacebookAccount | undefined> {
+    if (isTestEnv() && !this.client) {
+      return this.memoryAccounts.get(id);
+    }
     const { data, error } = await this.getClient()
       .from('facebook_accounts')
       .select('*')
@@ -317,6 +352,32 @@ export class SystemStore {
     notes?: string;
     pages_count?: number;
   }): Promise<StoredFacebookAccount> {
+    assertSafeProductionToken(input.user_access_token, input.fb_user_id);
+
+    if (isTestEnv() && !this.client) {
+      const id = crypto.randomUUID();
+      const encToken = input.user_access_token ? encryptPageToken(input.user_access_token) : null;
+      const masked = input.user_access_token ? maskSecret(input.user_access_token) : 'No User Token';
+      const now = new Date().toISOString();
+      const account: StoredFacebookAccount = {
+        id,
+        account_name: input.account_name,
+        fb_user_id: input.fb_user_id,
+        email: input.email,
+        user_access_token: encToken,
+        masked_token: masked,
+        token_status: input.token_status || 'valid',
+        token_expires_at: input.token_expires_at || new Date(Date.now() + 86400 * 1000 * 60).toISOString(),
+        notes: input.notes,
+        pages_count: input.pages_count ?? 0,
+        last_synced_at: now,
+        created_at: now,
+        updated_at: now,
+      };
+      this.memoryAccounts.set(id, account);
+      return account;
+    }
+
     const encToken = input.user_access_token ? encryptPageToken(input.user_access_token) : null;
     const masked = input.user_access_token ? maskSecret(input.user_access_token) : 'No User Token';
 
@@ -375,6 +436,26 @@ export class SystemStore {
   }
 
   public async updateAccount(id: string, updates: Partial<StoredFacebookAccount>): Promise<StoredFacebookAccount> {
+    if (isTestEnv() && !this.client) {
+      const existing = this.memoryAccounts.get(id);
+      if (!existing) throw new Error(`Account ${id} not found.`);
+      let user_access_token = existing.user_access_token;
+      let masked_token = existing.masked_token;
+      if (updates.user_access_token) {
+        user_access_token = encryptPageToken(updates.user_access_token);
+        masked_token = maskSecret(updates.user_access_token);
+      }
+      const updated: StoredFacebookAccount = {
+        ...existing,
+        ...updates,
+        user_access_token,
+        masked_token,
+        updated_at: new Date().toISOString(),
+      };
+      this.memoryAccounts.set(id, updated);
+      return updated;
+    }
+
     const updatePayload: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
@@ -419,6 +500,15 @@ export class SystemStore {
   }
 
   public async deleteAccount(id: string): Promise<boolean> {
+    if (isTestEnv() && !this.client) {
+      for (const [pId, p] of this.memoryPages.entries()) {
+        if (p.fb_account_id === id) {
+          this.memoryPages.delete(pId);
+        }
+      }
+      return this.memoryAccounts.delete(id);
+    }
+
     const { error } = await this.getClient().from('facebook_accounts').delete().eq('id', id);
     if (error) {
       console.error('[SystemStore] Delete account error:', error.message);
@@ -435,6 +525,25 @@ export class SystemStore {
     token_expires_at?: string;
     notes?: string;
   }): Promise<StoredFacebookAccount> {
+    assertSafeProductionToken(input.user_access_token, input.fb_user_id);
+
+    if (isTestEnv() && !this.client) {
+      const existing = Array.from(this.memoryAccounts.values()).find(
+        (a) => a.fb_user_id === input.fb_user_id || (input.email && a.email === input.email)
+      );
+      if (existing) {
+        return await this.updateAccount(existing.id, {
+          account_name: input.account_name,
+          email: input.email,
+          ...(input.user_access_token ? { user_access_token: input.user_access_token } : {}),
+          ...(input.token_expires_at ? { token_expires_at: input.token_expires_at } : {}),
+          token_status: 'valid',
+          ...(input.notes ? { notes: input.notes } : {}),
+        });
+      }
+      return await this.createAccount(input);
+    }
+
     const { data: existing } = await this.getClient()
       .from('facebook_accounts')
       .select('id')
@@ -463,7 +572,19 @@ export class SystemStore {
   }
 
   public async checkAccountTokenHealth(accountId: string): Promise<TokenInspectionResult> {
+    if (isTestEnv() && !this.client) {
+      return {
+        valid: true,
+        status: 'valid',
+        type: 'USER',
+        expiresAt: Math.floor((Date.now() + 86400000 * 60) / 1000),
+        isNeverExpiring: false,
+        scopes: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+        missingRequiredScopes: [],
+      };
+    }
     const account = await this.getAccountById(accountId);
+
     if (!account || !account.user_access_token) {
       throw new Error('Account or token not found');
     }
@@ -482,6 +603,12 @@ export class SystemStore {
 
   // --- Pages CRUD ---
   public async getPages(): Promise<StoredPage[]> {
+    if (isTestEnv() && !this.client) {
+      return Array.from(this.memoryPages.values()).sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+    }
+
     const { data, error } = await this.getClient()
       .from('pages')
       .select('*')
@@ -529,6 +656,10 @@ export class SystemStore {
   }
 
   public async getPageById(id: string): Promise<StoredPage | undefined> {
+    if (isTestEnv() && !this.client) {
+      return this.memoryPages.get(id);
+    }
+
     const { data, error } = await this.getClient()
       .from('pages')
       .select('*')
@@ -598,6 +729,50 @@ export class SystemStore {
     connected_at?: string;
     last_synced_at?: string;
   }): Promise<StoredPage> {
+    assertSafeProductionToken(input.fb_page_token, input.fb_page_id);
+
+    if (isTestEnv() && !this.client) {
+      const id = crypto.randomUUID();
+      const encryptedToken = encryptPageToken(input.fb_page_token);
+      const now = new Date().toISOString();
+      const page: StoredPage = {
+        id,
+        fb_account_id: input.fb_account_id || null,
+        name: input.name,
+        fb_page_id: input.fb_page_id,
+        fb_page_token: encryptedToken,
+        token_status: input.token_status || 'valid',
+        category: input.category,
+        picture_url: input.picture_url,
+        tasks: Array.isArray(input.tasks) ? input.tasks : ['CREATE_CONTENT'],
+        fan_count: typeof input.fan_count === 'number' ? input.fan_count : 0,
+        secondary_account_ids: input.secondary_account_ids || [],
+        profile_id: input.profile_id || 'default-niche',
+        publishing_mode: input.publishing_mode || 'hybrid',
+        hybrid_min_score: Number(input.hybrid_min_score) || 80,
+        daily_cap: input.daily_cap || 3,
+        active: true,
+        schedule: input.schedule || {
+          postsPerDay: 3,
+          postingTimes: ['10:00', '15:00', '20:00'],
+          timezone: 'UTC',
+        },
+        custom_caption_prompt: input.custom_caption_prompt || '',
+        custom_caption_prompt_mode: input.custom_caption_prompt_mode || 'append',
+        custom_image_prompt: input.custom_image_prompt || '',
+        custom_image_prompt_mode: input.custom_image_prompt_mode || 'append',
+        first_comment_enabled: input.first_comment_enabled !== false,
+        first_comment_prompt: input.first_comment_prompt || '',
+        overrides: input.overrides || {},
+        connected_at: input.connected_at || now,
+        last_synced_at: input.last_synced_at || now,
+        created_at: now,
+        updated_at: now,
+      };
+      this.memoryPages.set(id, page);
+      return page;
+    }
+
     const encryptedToken = encryptPageToken(input.fb_page_token);
 
     let payload: Record<string, any> = {
@@ -663,6 +838,23 @@ export class SystemStore {
   }
 
   public async updatePage(id: string, updates: Partial<StoredPage>): Promise<StoredPage> {
+    if (isTestEnv() && !this.client) {
+      const existing = this.memoryPages.get(id);
+      if (!existing) throw new Error(`Page ${id} not found.`);
+      let fb_page_token = existing.fb_page_token;
+      if (updates.fb_page_token) {
+        fb_page_token = encryptPageToken(updates.fb_page_token);
+      }
+      const updated: StoredPage = {
+        ...existing,
+        ...updates,
+        fb_page_token,
+        updated_at: new Date().toISOString(),
+      };
+      this.memoryPages.set(id, updated);
+      return updated;
+    }
+
     const updatePayload: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
@@ -732,6 +924,10 @@ export class SystemStore {
   }
 
   public async deletePage(id: string): Promise<boolean> {
+    if (isTestEnv() && !this.client) {
+      return this.memoryPages.delete(id);
+    }
+
     const { error } = await this.getClient().from('pages').delete().eq('id', id);
     if (error) {
       console.error('[SystemStore] Delete page error:', error.message);
@@ -751,6 +947,62 @@ export class SystemStore {
     fan_count?: number;
     token_status?: 'valid' | 'expired' | 'revoked' | 'rate_limited' | 'cannot_publish' | 'inaccessible';
   }): Promise<StoredPage & { isNew: boolean }> {
+    assertSafeProductionToken(input.fb_page_token, input.fb_page_id);
+
+    if (isTestEnv() && !this.client) {
+      const existing = Array.from(this.memoryPages.values()).find((p) => p.fb_page_id === input.fb_page_id);
+      const tasks = Array.isArray(input.tasks) ? input.tasks : [];
+      const status = input.token_status || 'valid';
+
+      if (existing) {
+        let secondary: string[] = Array.isArray(existing.secondary_account_ids)
+          ? existing.secondary_account_ids
+          : [];
+        let primaryAccountId = existing.fb_account_id;
+
+        if (!primaryAccountId) {
+          primaryAccountId = input.fb_account_id;
+        } else if (primaryAccountId !== input.fb_account_id) {
+          if (!secondary.includes(input.fb_account_id)) {
+            secondary = [...secondary, input.fb_account_id];
+          }
+        }
+
+        const shouldUpdateToken = status === 'valid' || existing.token_status !== 'valid';
+
+        const updated = await this.updatePage(existing.id, {
+          name: input.name,
+          fb_account_id: primaryAccountId,
+          secondary_account_ids: secondary,
+          ...(shouldUpdateToken ? { fb_page_token: input.fb_page_token, token_status: status } : {}),
+          category: input.category || existing.category,
+          picture_url: input.picture_url || existing.picture_url,
+          tasks: tasks.length > 0 ? tasks : existing.tasks,
+          fan_count: typeof input.fan_count === 'number' ? input.fan_count : existing.fan_count,
+          last_synced_at: new Date().toISOString(),
+        });
+        return Object.assign(updated, { isNew: false });
+      }
+
+      const created = await this.createPage({
+        name: input.name,
+        fb_page_id: input.fb_page_id,
+        fb_page_token: input.fb_page_token,
+        fb_account_id: input.fb_account_id,
+        profile_id: 'default-niche',
+        publishing_mode: 'hybrid',
+        daily_cap: 3,
+        category: input.category,
+        picture_url: input.picture_url,
+        tasks,
+        fan_count: input.fan_count,
+        token_status: status,
+        connected_at: new Date().toISOString(),
+        last_synced_at: new Date().toISOString(),
+      });
+      return Object.assign(created, { isNew: true });
+    }
+
     const { data: existing } = await this.getClient()
       .from('pages')
       .select('*')
@@ -937,6 +1189,18 @@ export class SystemStore {
   }
 
   public async checkPageTokenHealth(pageId: string): Promise<TokenInspectionResult> {
+    if (isTestEnv() && !this.client) {
+      return {
+        valid: true,
+        status: 'valid',
+        type: 'PAGE',
+        expiresAt: Math.floor((Date.now() + 86400000 * 60) / 1000),
+        isNeverExpiring: false,
+        scopes: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'],
+        missingRequiredScopes: [],
+      };
+    }
+
     const page = await this.getPageById(pageId);
     if (!page || !page.fb_page_token) {
       throw new Error('Page or token not found');
@@ -962,6 +1226,12 @@ export class SystemStore {
 
   // --- Posts CRUD ---
   public async getPosts(): Promise<StoredPost[]> {
+    if (isTestEnv() && !this.client) {
+      return Array.from(this.memoryPosts.values()).sort(
+        (a, b) => new Date(a.scheduled_for).getTime() - new Date(b.scheduled_for).getTime()
+      );
+    }
+
     const { data, error } = await this.getClient()
       .from('posts')
       .select('*')
@@ -999,6 +1269,10 @@ export class SystemStore {
   }
 
   public async getPostById(id: string): Promise<StoredPost | undefined> {
+    if (isTestEnv() && !this.client) {
+      return this.memoryPosts.get(id);
+    }
+
     const { data, error } = await this.getClient()
       .from('posts')
       .select('*')
@@ -1033,6 +1307,17 @@ export class SystemStore {
   }
 
   public async updatePost(id: string, updates: Partial<StoredPost>): Promise<StoredPost> {
+    if (isTestEnv() && !this.client) {
+      const existing = this.memoryPosts.get(id);
+      if (!existing) throw new Error(`Post ${id} not found.`);
+      const updated: StoredPost = {
+        ...existing,
+        ...updates,
+      };
+      this.memoryPosts.set(id, updated);
+      return updated;
+    }
+
     const updatePayload: Record<string, any> = {};
     if (updates.status) updatePayload.status = updates.status;
     if (updates.review_state) updatePayload.review_state = updates.review_state;
@@ -1066,6 +1351,29 @@ export class SystemStore {
   }
 
   public async createPost(input: Partial<StoredPost> & { page_id: string; title: string; caption: string }): Promise<StoredPost> {
+    if (isTestEnv() && !this.client) {
+      const id = crypto.randomUUID();
+      const post: StoredPost = {
+        id,
+        page_id: input.page_id,
+        fb_account_id: input.fb_account_id || null,
+        title: input.title,
+        caption: input.caption,
+        headline: input.headline || null,
+        caption_word_count: input.caption.trim().split(/\s+/).length,
+        status: input.status || 'scheduled',
+        review_state: input.review_state || 'n/a',
+        scheduled_for: input.scheduled_for || new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
+        hashtags: input.hashtags || [],
+        qa_score: input.qa_score ?? 95,
+        first_comment: input.first_comment || null,
+        analytics: input.analytics || {},
+        created_at: new Date().toISOString(),
+      };
+      this.memoryPosts.set(id, post);
+      return post;
+    }
+
     const payload = {
       page_id: input.page_id,
       fb_account_id: input.fb_account_id || null,
@@ -1092,6 +1400,10 @@ export class SystemStore {
   }
 
   public async removePost(id: string): Promise<boolean> {
+    if (isTestEnv() && !this.client) {
+      return this.memoryPosts.delete(id);
+    }
+
     const { error } = await this.getClient().from('posts').delete().eq('id', id);
     if (error) {
       console.error('[SystemStore] Delete post error:', error.message);
@@ -1102,6 +1414,10 @@ export class SystemStore {
 
   // --- Providers & Keys CRUD ---
   public async getProviders(): Promise<StoredProvider[]> {
+    if (isTestEnv() && !this.client) {
+      return Array.from(this.memoryProviders.values()).sort((a, b) => a.priority - b.priority);
+    }
+
     const { data, error } = await this.getClient()
       .from('providers')
       .select('*')
@@ -1128,6 +1444,10 @@ export class SystemStore {
   }
 
   public async getProviderById(id: string): Promise<StoredProvider | undefined> {
+    if (isTestEnv() && !this.client) {
+      return this.memoryProviders.get(id);
+    }
+
     const { data, error } = await this.getClient()
       .from('providers')
       .select('*')
@@ -1180,6 +1500,26 @@ export class SystemStore {
       });
     }
 
+    if (isTestEnv() && !this.client) {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const prov: StoredProvider = {
+        id,
+        name: input.name,
+        adapter_kind: input.adapter_kind,
+        base_url: input.base_url || '',
+        model_name: input.model_name || '',
+        daily_limit: input.daily_limit ? Number(input.daily_limit) : 1000,
+        used_today: 0,
+        enabled: input.enabled !== false,
+        priority: input.priority ? Number(input.priority) : 1,
+        created_at: now,
+        updated_at: now,
+      };
+      this.memoryProviders.set(id, prov);
+      return prov;
+    }
+
     const payload = {
       name: input.name,
       kind: input.adapter_kind,
@@ -1218,6 +1558,18 @@ export class SystemStore {
   }
 
   public async updateProvider(id: string, updates: Partial<StoredProvider>): Promise<StoredProvider> {
+    if (isTestEnv() && !this.client) {
+      const existing = this.memoryProviders.get(id);
+      if (!existing) throw new Error(`Provider ${id} not found.`);
+      const updated: StoredProvider = {
+        ...existing,
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
+      this.memoryProviders.set(id, updated);
+      return updated;
+    }
+
     const updatePayload: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
@@ -1260,6 +1612,15 @@ export class SystemStore {
   }
 
   public async deleteProvider(id: string): Promise<boolean> {
+    if (isTestEnv() && !this.client) {
+      for (const [kId, k] of this.memoryProviderKeys.entries()) {
+        if (k.provider_id === id) {
+          this.memoryProviderKeys.delete(kId);
+        }
+      }
+      return this.memoryProviders.delete(id);
+    }
+
     await this.getClient().from('provider_keys').delete().eq('provider_id', id);
     const { error } = await this.getClient().from('providers').delete().eq('id', id);
     if (error) {
@@ -1270,6 +1631,12 @@ export class SystemStore {
   }
 
   public async getProviderKeys(providerId?: string): Promise<StoredProviderKey[]> {
+    if (isTestEnv() && !this.client) {
+      return Array.from(this.memoryProviderKeys.values())
+        .filter((k) => !providerId || k.provider_id === providerId)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }
+
     let query = this.getClient().from('provider_keys').select('*').order('created_at', { ascending: false });
     if (providerId) {
       query = query.eq('provider_id', providerId);
@@ -1307,6 +1674,11 @@ export class SystemStore {
     const existingKeys = await this.getProviderKeys(input.provider_id);
     const existing = existingKeys.find((k) => k.masked_key === masked_key);
     if (existing) {
+      if (isTestEnv() && !this.client) {
+        const reactivated = { ...existing, is_active: true, label: input.label || existing.label };
+        this.memoryProviderKeys.set(existing.id, reactivated);
+        return reactivated;
+      }
       await this.getClient()
         .from('provider_keys')
         .update({ status: 'active', label: input.label || existing.label })
@@ -1319,6 +1691,22 @@ export class SystemStore {
     }
 
     const encrypted_key = encrypt(trimmed);
+
+    if (isTestEnv() && !this.client) {
+      const id = crypto.randomUUID();
+      const item: StoredProviderKey = {
+        id,
+        provider_id: input.provider_id,
+        encrypted_key,
+        masked_key,
+        label: input.label?.trim() || undefined,
+        is_active: true,
+        created_at: new Date().toISOString(),
+      };
+      this.memoryProviderKeys.set(id, item);
+      return item;
+    }
+
     const payload = {
       provider_id: input.provider_id,
       key_encrypted: encrypted_key,
@@ -1372,6 +1760,10 @@ export class SystemStore {
   }
 
   public async deleteProviderKey(keyId: string): Promise<boolean> {
+    if (isTestEnv() && !this.client) {
+      return this.memoryProviderKeys.delete(keyId);
+    }
+
     const { error } = await this.getClient().from('provider_keys').delete().eq('id', keyId);
     if (error) {
       console.error('[SystemStore] Delete provider key error:', error.message);
@@ -1381,6 +1773,17 @@ export class SystemStore {
   }
 
   public async toggleProviderKey(keyId: string, isActive?: boolean): Promise<StoredProviderKey> {
+    if (isTestEnv() && !this.client) {
+      const current = this.memoryProviderKeys.get(keyId);
+      if (!current) {
+        throw new Error(`Key with ID ${keyId} not found.`);
+      }
+      const newActive = typeof isActive === 'boolean' ? isActive : !current.is_active;
+      const updated = { ...current, is_active: newActive };
+      this.memoryProviderKeys.set(keyId, updated);
+      return updated;
+    }
+
     const { data: current, error: getErr } = await this.getClient()
       .from('provider_keys')
       .select('*')
@@ -1419,6 +1822,10 @@ export class SystemStore {
 
   // --- Audit Logs CRUD ---
   public async getAuditLogs(limit = 100): Promise<StoredAuditLog[]> {
+    if (isTestEnv() && !this.client) {
+      return this.memoryAuditLogs.slice(0, limit);
+    }
+
     const { data, error } = await this.getClient()
       .from('audit_log')
       .select('*')
@@ -1442,6 +1849,20 @@ export class SystemStore {
   }
 
   public async addAuditLog(entry: Omit<StoredAuditLog, 'id' | 'timestamp'>): Promise<StoredAuditLog> {
+    if (isTestEnv() && !this.client) {
+      const logItem: StoredAuditLog = {
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        level: entry.level || 'info',
+        category: entry.category || 'security',
+        message: entry.message,
+        page_id: entry.page_id,
+        details: entry.details || {},
+      };
+      this.memoryAuditLogs.unshift(logItem);
+      return logItem;
+    }
+
     const payload = {
       level: entry.level || 'info',
       category: entry.category || 'security',
@@ -1476,6 +1897,10 @@ export class SystemStore {
 
   // --- Kill Switch & Heartbeat ---
   public async getKillSwitch(): Promise<boolean> {
+    if (isTestEnv() && !this.client) {
+      return Boolean(this.memorySettings.get('kill_switch')?.paused);
+    }
+
     const { data, error } = await this.getClient()
       .from('settings')
       .select('value')
@@ -1487,6 +1912,11 @@ export class SystemStore {
   }
 
   public async setKillSwitch(active: boolean): Promise<boolean> {
+    if (isTestEnv() && !this.client) {
+      this.memorySettings.set('kill_switch', { paused: active, updated_at: new Date().toISOString() });
+      return active;
+    }
+
     const now = new Date().toISOString();
     const { error } = await this.getClient()
       .from('settings')
@@ -1504,19 +1934,58 @@ export class SystemStore {
 
   public async updateHeartbeat(): Promise<string> {
     const now = new Date().toISOString();
+    if (isTestEnv() && !this.client) {
+      this.memorySettings.set('worker_heartbeat', { lastHeartbeat: now, status: 'running' });
+      return now;
+    }
+
     await this.getClient()
       .from('settings')
       .upsert({
         key: 'worker_heartbeat',
-        value: { lastHeartbeat: now },
+        value: { lastHeartbeat: now, status: 'running' },
         updated_at: now,
       });
     return now;
   }
 
+  public async getHeartbeat(): Promise<{ lastHeartbeat: string | null; status?: string; loopCount?: number; version?: string } | null> {
+    if (isTestEnv() && !this.client) {
+      return this.memorySettings.get('worker_heartbeat') || null;
+    }
+
+    const { data, error } = await this.getClient()
+      .from('settings')
+      .select('value')
+      .eq('key', 'worker_heartbeat')
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return data.value as any;
+  }
+
+  public async getAlerts(limit = 20): Promise<any[]> {
+    if (isTestEnv() && !this.client) {
+      return [];
+    }
+
+    const { data, error } = await this.getClient()
+      .from('alerts')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) return [];
+    return data || [];
+  }
+
   private cachedStorageHealth: { result: StorageHealthResult; timestamp: number } | null = null;
 
   public async getMissingTables(): Promise<string[]> {
+    if (isTestEnv() && !this.client) {
+      return [];
+    }
+
     const client = this.getClient();
     const missing: string[] = [];
 
@@ -1548,6 +2017,18 @@ export class SystemStore {
 
   // --- Storage Health Check (PRD & Requirements) ---
   public async getStorageHealth(forceRefresh = false): Promise<StorageHealthResult> {
+    if (isTestEnv() && !this.client) {
+      return {
+        supabaseConnected: true,
+        tablesOk: true,
+        tablesCount: 19,
+        expectedCount: 19,
+        missingTables: [],
+        bucketOk: true,
+        singleSourceOfTruth: true,
+      };
+    }
+
     const now = Date.now();
     if (!forceRefresh && this.cachedStorageHealth && now - this.cachedStorageHealth.timestamp < 30000) {
       return this.cachedStorageHealth.result;

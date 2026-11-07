@@ -88,3 +88,4 @@ $$;
 
 CREATE INDEX IF NOT EXISTS idx_pages_fb_account_id ON public.pages(fb_account_id);
 CREATE INDEX IF NOT EXISTS idx_pages_token_status ON public.pages(token_status);
+

@@ -35,6 +35,11 @@ coverage
 Thumbs.db
 desktop.ini
 
+# Backups
+.backup/
+.backup
+
+
 # IDE files
 .vscode/*
 !.vscode/extensions.json

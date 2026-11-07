@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
 
 // Auto-load .env file if available
@@ -863,31 +864,26 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // 1. API: Overview Metrics
     if (url.pathname === '/api/overview') {
-      await store.updateHeartbeat();
-      const pages = await store.getPages();
-      const posts = await store.getPosts();
-      const killSwitch = await store.getKillSwitch();
-      const providers = await store.getProviders();
+      const [pages, posts, killSwitch, providers, heartbeat, alerts] = await Promise.all([
+        store.getPages().catch(() => []),
+        store.getPosts().catch(() => []),
+        store.getKillSwitch().catch(() => false),
+        store.getProviders().catch(() => []),
+        store.getHeartbeat().catch(() => null),
+        store.getAlerts(10).catch(() => []),
+      ]);
 
       const metrics = getDashboardOverviewMetrics({
-        lastHeartbeat: new Date().toISOString(),
+        lastHeartbeat: heartbeat?.lastHeartbeat || null,
         killSwitchActive: killSwitch,
         pages,
         posts,
-        alerts: [
-          {
-            id: 'alt_1',
-            level: 'info',
-            message: `Worker loop active across ${pages.length} configured Facebook Pages.`,
-            timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-          },
-          {
-            id: 'alt_2',
-            level: 'warning',
-            message: 'Provider router daily demand within safe quota limits.',
-            timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-          },
-        ],
+        alerts: alerts.map((a: any) => ({
+          id: a.id,
+          level: a.level || 'info',
+          message: a.message || 'System event',
+          timestamp: a.created_at,
+        })),
         providerDailyUsage: providers.map((p) => ({
           provider_id: p.id,
           requests_count: p.used_today || 0,
@@ -1499,32 +1495,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             estimatedCost: '$0.0016',
           };
 
-          // Save created post into the page production pipeline
-          const postStatus = page.publishing_mode === 'review' ? 'pending_review' : 'scheduled';
-          const reviewState = page.publishing_mode === 'review' ? 'pending' : 'approved';
-          const savedPost = await store.createPost({
-            page_id: page.id,
-            fb_account_id: page.fb_account_id,
-            title: topicTitle,
-            headline: headline,
-            caption: generatedCaption,
-            caption_word_count: generatedCaption.trim().split(/\s+/).length,
-            first_comment: page.first_comment_enabled ? `Join our community discussion on ${profile.name}! What are your thoughts?` : undefined,
-            status: postStatus,
-            review_state: reviewState as any,
-            qa_score: 95,
-            scheduled_for: new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
-          });
-
-          await store.addAuditLog({
-            level: 'success',
-            category: 'publish',
-            message: `Automated post generated for "${page.name}": "${topicTitle}" (QA: 95/100)`,
-            page_id: page.id,
-            details: { postId: savedPost.id, topic: topicTitle, qaScore: 95, mode: page.publishing_mode },
-          });
-
-          return sendJson({ ...simOutput, createdPostId: savedPost.id });
+          // Test Run Simulator: Pure sandbox preview - NEVER write to production tables (posts, audit_log)
+          return sendJson(simOutput);
         } catch (e: any) {
           return sendJson({ error: e.message }, 500);
         }
@@ -1996,6 +1968,7 @@ async function generateDashboardHtml(): Promise<string> {
     auditLogs,
     killSwitch,
     storageHealth,
+    heartbeat,
   ] = await Promise.all([
     store.getAccounts().catch(() => []),
     store.getPages().catch(() => []),
@@ -2013,7 +1986,45 @@ async function generateDashboardHtml(): Promise<string> {
       bucketOk: true,
       singleSourceOfTruth: true,
     })),
+    store.getHeartbeat().catch(() => null),
   ]);
+
+  let appVersion = CORE_VERSION;
+  try {
+    const pkgPath = path.resolve('package.json');
+    if (fs.existsSync(pkgPath)) {
+      const parsed = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      if (parsed.version) appVersion = parsed.version;
+    }
+  } catch {}
+
+  let workerStatusText = 'Worker Inactive (No Heartbeat)';
+  let workerDotColor = '#ef4444';
+  let workerPillBg = 'rgba(239, 68, 68, 0.15)';
+  let workerPillColor = '#fecaca';
+
+  if (killSwitch) {
+    workerStatusText = 'Worker Paused (Kill-Switch Active)';
+    workerDotColor = '#f59e0b';
+    workerPillBg = 'rgba(245, 158, 11, 0.15)';
+    workerPillColor = '#fde68a';
+  } else if (heartbeat?.lastHeartbeat) {
+    const diffMs = Date.now() - new Date(heartbeat.lastHeartbeat).getTime();
+    const diffMinutes = Math.floor(diffMs / (60 * 1000));
+    if (diffMinutes <= 30 && diffMinutes >= 0) {
+      workerStatusText = `Worker Active (${diffMinutes === 0 ? 'just now' : diffMinutes + 'm ago'})`;
+      workerDotColor = '#34d399';
+      workerPillBg = '#064e3b';
+      workerPillColor = '#34d399';
+    } else {
+      const timeAgo = diffMinutes >= 60 ? `${Math.floor(diffMinutes / 60)}h ago` : `${diffMinutes}m ago`;
+      workerStatusText = `Worker Inactive (Stale: ${timeAgo})`;
+      workerDotColor = '#ef4444';
+      workerPillBg = 'rgba(239, 68, 68, 0.15)';
+      workerPillColor = '#fecaca';
+    }
+  }
+
   const reviewPosts = posts.filter((p) => p.status === 'pending_review' || p.review_state === 'pending');
   const publishedPosts = posts.filter((p) => p.status === 'published' && p.analytics);
   const totalImpressions = publishedPosts.reduce((acc, p) => acc + (p.analytics?.impressions || 0), 0);
@@ -2228,7 +2239,7 @@ async function generateDashboardHtml(): Promise<string> {
       <div class="brand-icon">247</div>
       <div>
         <div class="brand-title">FB Auto 247</div>
-        <div class="brand-badge">Engine v${CORE_VERSION}</div>
+        <div class="brand-badge">Engine v${appVersion}</div>
       </div>
     </div>
     <ul class="nav-list">
@@ -2270,9 +2281,9 @@ async function generateDashboardHtml(): Promise<string> {
         <h1 id="tabHeading">FB Auto 247 Dashboard</h1>
         <p id="tabDesc">Autonomous 24/7 multi-page content machine • Made by Chandan Biswas</p>
       </div>
-      <div class="status-pill" id="workerPill">
-        <div class="status-dot"></div>
-        <span>Worker Active & Heartbeat Healthy</span>
+      <div class="status-pill" id="workerPill" style="background: ${workerPillBg}; color: ${workerPillColor};">
+        <div class="status-dot" style="background: ${workerDotColor};"></div>
+        <span id="workerStatusSpan">${workerStatusText}</span>
       </div>
     </header>
 
@@ -2997,9 +3008,9 @@ async function generateDashboardHtml(): Promise<string> {
     <!-- TAB 8: PIPELINE SIMULATOR -->
     <div id="tab-simulator" class="tab-content">
       <div class="card" style="margin-bottom: 24px;">
-        <h3 style="margin-bottom: 10px; font-size: 16px;">End-to-End Pipeline Simulator (Test Run)</h3>
+        <h3 style="margin-bottom: 10px; font-size: 16px;">⚡ End-to-End Pipeline Simulator (Sandbox Preview - No Posts Created or Sent to Facebook)</h3>
         <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 18px;">
-          Runs research collector, topic scoring, chunked narrative writing, caption validation, image prompt composition, and QA audit for any selected page.
+          Runs research collector, topic scoring, chunked narrative writing, caption validation, image prompt composition, and QA audit in a dry-run sandbox. Does not write to production database or call Facebook API.
         </p>
 
         <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 20px;">
