@@ -55,6 +55,11 @@ export * from './facebook/client.js';
 export * from './facebook/tokens.js';
 export * from './facebook/oauth.js';
 export * from './facebook/publisher.js';
+export * from './facebook/niche-detector.js';
+
+// Scheduler & Checklist Engine
+export * from './scheduler/slot-planner.js';
+export * from './scheduler/page-checklist.js';
 
 // Review Inbox State Machine
 export * from './review/inbox-manager.js';

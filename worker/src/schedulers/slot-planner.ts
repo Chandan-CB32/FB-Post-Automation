@@ -1,62 +1,131 @@
-export interface PageScheduleConfig {
-  postsPerDay?: number;
-  postingTimes?: string[]; // e.g. ["09:00", "14:00", "20:00"]
-  timezone?: string; // default 'UTC'
-  minGapMinutes?: number; // default 180 (3 hours)
-  leadTimeHours?: number; // default 48 hours
-  activeDays?: number[]; // [0,1,2,3,4,5,6] (0 = Sunday)
-  dailyCap?: number; // default 5
-}
+import {
+  createDateInTimezone,
+  resolveSchedulePostingTimes,
+  parseTimeString,
+} from '@fb-auto/core';
 
-/**
- * Parses "HH:mm" time string into hours and minutes
- */
-function parseTimeString(timeStr: string): { hours: number; minutes: number } {
-  const [h, m] = timeStr.split(':').map((s) => parseInt(s, 10));
-  return {
-    hours: isNaN(h) ? 12 : Math.min(Math.max(h, 0), 23),
-    minutes: isNaN(m) ? 0 : Math.min(Math.max(m, 0), 59),
+export interface PageScheduleConfig {
+  active?: boolean;
+  postsPerDay?: number;
+  mode?: 'fixed' | 'interval' | 'auto_spread';
+  postingTimes?: string[]; // e.g. ["09:00", "14:00", "20:00"]
+  intervalHours?: number;
+  intervalStart?: string;
+  intervalEnd?: string;
+  spreadStart?: string;
+  spreadEnd?: string;
+  timezone?: string; // e.g. 'UTC', 'America/New_York', 'Asia/Kolkata'
+  minGapMinutes?: number; // default 60
+  leadTimeHours?: number; // default 24 hours
+  activeDays?: number[]; // [0,1,2,3,4,5,6] (0 = Sunday) or [1..7]
+  dailyCap?: number;
+  startDate?: string;
+  endDate?: string;
+  pauseStart?: string;
+  pauseEnd?: string;
+  vacationPause?: {
+    startDate: string;
+    endDate: string;
   };
 }
 
+export { parseTimeString };
+
 /**
  * Calculates upcoming post slots based on schedule configuration.
+ * Gating: If active === false or postsPerDay === 0, returns [] immediately.
+ * No hardcoded times: Returns [] if posting times are not configured.
+ * Respects timezone, DST, days of week, min gap, and vacation pause.
  */
 export function calculateNextSlots(
   config: PageScheduleConfig,
   fromDate = new Date(),
   slotCount = 10
 ): Date[] {
-  const times = config.postingTimes && config.postingTimes.length > 0
-    ? [...config.postingTimes].sort()
-    : ['10:00', '15:00', '20:00'];
+  // Safe default & live gating: Inactive or unconfigured pages generate 0 slots
+  if (config.active === false || config.postsPerDay === 0) {
+    return [];
+  }
 
-  const activeDays = new Set(config.activeDays && config.activeDays.length > 0
-    ? config.activeDays
-    : [0, 1, 2, 3, 4, 5, 6]);
+  // Resolve posting times (strictly based on settings, NO hardcoded default)
+  let times: string[] = [];
+  if (config.postingTimes && config.postingTimes.length > 0) {
+    times = [...config.postingTimes].sort();
+  } else if (config.mode === 'interval' || config.mode === 'auto_spread') {
+    times = resolveSchedulePostingTimes({
+      postsPerDay: config.postsPerDay,
+      mode: config.mode,
+      intervalHours: config.intervalHours,
+      intervalStart: config.intervalStart,
+      intervalEnd: config.intervalEnd,
+      spreadStart: config.spreadStart,
+      spreadEnd: config.spreadEnd,
+    });
+  }
 
-  const minGapMs = (config.minGapMinutes ?? 180) * 60 * 1000;
+  if (times.length === 0) {
+    return [];
+  }
+
+  // Map active days (support both 0-6 Sun-Sat and 1-7 Mon-Sun)
+  let activeDays = new Set<number>([0, 1, 2, 3, 4, 5, 6]);
+  if (config.activeDays && config.activeDays.length > 0) {
+    activeDays = new Set(config.activeDays.map((d) => (d === 7 ? 0 : d)));
+  }
+
+  const targetTimezone = config.timezone || 'UTC';
+  const minGapMs = (config.minGapMinutes ?? 60) * 60 * 1000;
   const slots: Date[] = [];
 
-  let currentDate = new Date(fromDate);
-  // Start from beginning of the day in UTC
-  currentDate.setUTCHours(0, 0, 0, 0);
+  const pauseStart = config.pauseStart || config.vacationPause?.startDate;
+  const pauseEnd = config.pauseEnd || config.vacationPause?.endDate;
 
-  let attempts = 0;
-  const maxAttempts = 60; // Max 60 days ahead
+  const tzFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: targetTimezone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  });
 
-  while (slots.length < slotCount && attempts < maxAttempts) {
-    const dayOfWeek = currentDate.getUTCDay();
+  let daysAhead = 0;
+  const maxDays = 60;
+
+  while (slots.length < slotCount && daysAhead < maxDays) {
+    const curRefDate = new Date(fromDate.getTime() + daysAhead * 86400000);
+    const dateParts = tzFormatter.formatToParts(curRefDate);
+    const y = parseInt(dateParts.find((p) => p.type === 'year')!.value, 10);
+    const m = parseInt(dateParts.find((p) => p.type === 'month')!.value, 10);
+    const d = parseInt(dateParts.find((p) => p.type === 'day')!.value, 10);
+    const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+    if (config.startDate && dateStr < config.startDate) {
+      daysAhead++;
+      continue;
+    }
+    if (config.endDate && dateStr > config.endDate) {
+      break;
+    }
+    if (pauseStart && pauseEnd && dateStr >= pauseStart && dateStr <= pauseEnd) {
+      daysAhead++;
+      continue;
+    }
+
+    // Midday date in timezone
+    const midday = createDateInTimezone(y, m, d, 12, 0, targetTimezone);
+    const dayOfWeek = midday.getDay(); // 0 = Sunday
 
     if (activeDays.has(dayOfWeek)) {
       for (const timeStr of times) {
         const { hours, minutes } = parseTimeString(timeStr);
-        const slotDate = new Date(currentDate);
-        slotDate.setUTCHours(hours, minutes, 0, 0);
+        const slotDate = targetTimezone === 'UTC'
+          ? (() => {
+              const dt = new Date(curRefDate);
+              dt.setUTCHours(hours, minutes, 0, 0);
+              return dt;
+            })()
+          : createDateInTimezone(y, m, d, hours, minutes, targetTimezone);
 
-        // Slot must be strictly in the future relative to fromDate
         if (slotDate.getTime() > fromDate.getTime()) {
-          // Check minGap with the last slot
           const lastSlot = slots[slots.length - 1];
           if (!lastSlot || slotDate.getTime() - lastSlot.getTime() >= minGapMs) {
             slots.push(slotDate);
@@ -66,9 +135,7 @@ export function calculateNextSlots(
       }
     }
 
-    // Advance to next day
-    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
-    attempts++;
+    daysAhead++;
   }
 
   return enforceDailyCap(slots, config.dailyCap ?? 5);

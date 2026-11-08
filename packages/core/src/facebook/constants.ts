@@ -43,3 +43,4 @@ export function sanitizeFacebookErrorMessage(message?: string): string {
     // Mask generic access_token query param
     .replace(/(access_token)=([a-zA-Z0-9_%-]+)/gi, '$1=[REDACTED_TOKEN]');
 }
+

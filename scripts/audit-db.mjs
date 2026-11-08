@@ -23,7 +23,7 @@ async function run() {
   console.log('=== FACEBOOK ACCOUNTS (' + (accounts?.length || 0) + ') ===');
   console.log(JSON.stringify(accounts, null, 2));
 
-  const { data: pages } = await client.from('pages').select('id, fb_account_id, name, fb_page_id, token_status, created_at');
+  const { data: pages } = await client.from('pages').select('id, fb_account_id, name, fb_page_id, active, publishing_mode, schedule, token_status, created_at');
   console.log('\n=== PAGES (' + (pages?.length || 0) + ') ===');
   console.log(JSON.stringify(pages, null, 2));
 

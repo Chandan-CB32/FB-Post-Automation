@@ -1401,6 +1401,26 @@
   window.quickUpdatePageTimezone = quickUpdatePageTimezone;
   window.copyExpectedRedirectUri = copyExpectedRedirectUri;
   window.testFacebookConnectionAction = testFacebookConnectionAction;
+  window.openPageSettingsModal = openPageSettingsModal;
+  window.closePageSettingsModal = closePageSettingsModal;
+  window.setScheduleTimingMode = setScheduleTimingMode;
+  window.addFixedTimePicker = addFixedTimePicker;
+  window.removeFixedTimePicker = removeFixedTimePicker;
+  window.handleScheduleInputChange = handleScheduleInputChange;
+  window.updateLiveSchedulePreview = updateLiveSchedulePreview;
+  window.handlePublishingModeChange = handlePublishingModeChange;
+  window.handleModalProfileChange = handleModalProfileChange;
+  window.handleSavePageSettings = handleSavePageSettings;
+  window.toggleLiveFromModal = toggleLiveFromModal;
+  window.runTestRunFromModal = runTestRunFromModal;
+  window.triggerPageTestRun = triggerPageTestRun;
+  window.analyzePageNicheAction = analyzePageNicheAction;
+  window.analyzePageNicheActionFromModal = analyzePageNicheActionFromModal;
+  window.dismissModalNicheSuggestion = dismissModalNicheSuggestion;
+  window.acceptModalNicheSuggestion = acceptModalNicheSuggestion;
+  window.applyNicheProfile = applyNicheProfile;
+  window.createProfileFromModalNiche = createProfileFromModalNiche;
+  window.openPagePromptStudioFromModal = openPagePromptStudioFromModal;
 
   async function syncAccountAction(accountId, btn) {
     if (!accountId) return;
@@ -1518,6 +1538,574 @@
       }
     } catch (e) {
       console.error('Quick update timezone error:', e);
+    }
+  }
+
+  // --- Page Settings & Scheduling Controls Modal ---
+  let currentSettingsPageId = null;
+  let currentScheduleTimingMode = 'fixed';
+  let previewDebounceTimer = null;
+
+  function openPageSettingsModal(pageId) {
+    currentSettingsPageId = pageId;
+    const page = pagesData.find(function (p) { return p.id === pageId; });
+    if (!page) {
+      alert('Page not found.');
+      return;
+    }
+
+    document.getElementById('psmPageId').value = page.id;
+    document.getElementById('psmTitle').innerText = '⚙️ Page Settings: ' + page.name;
+    document.getElementById('psmPageName').innerText = page.name;
+    document.getElementById('psmPageFbId').innerText = page.fb_page_id;
+    document.getElementById('psmTokenStatus').innerText = (page.token_status || 'valid').toUpperCase();
+
+    // Live status badge & toggle button
+    const liveBadge = document.getElementById('psmLiveBadge');
+    const toggleBtn = document.getElementById('psmToggleLiveBtn');
+    if (page.active) {
+      liveBadge.innerText = '● LIVE (AUTONOMOUS)';
+      liveBadge.style.background = 'rgba(16,185,129,0.2)';
+      liveBadge.style.color = '#34d399';
+      toggleBtn.innerText = '⏸️ Pause Autonomous Posting';
+      toggleBtn.className = 'btn btn-secondary';
+    } else {
+      liveBadge.innerText = '● POSTING DISABLED';
+      liveBadge.style.background = 'rgba(239,68,68,0.2)';
+      liveBadge.style.color = '#f87171';
+      toggleBtn.innerText = '🚀 Take Page Live';
+      toggleBtn.className = 'btn btn-primary';
+    }
+
+    // Profile select
+    const profSelect = document.getElementById('psmProfileSelect');
+    if (profSelect) {
+      profSelect.value = page.profile_id || '__custom__';
+    }
+
+    // Niche suggestion box
+    const suggestionBox = document.getElementById('psmNicheSuggestionBox');
+    if (page.niche_analysis && page.niche_analysis.suggested_profile_name) {
+      document.getElementById('psmNicheSuggestedName').innerText = page.niche_analysis.suggested_profile_name;
+      document.getElementById('psmNicheConfidenceBadge').innerText = Math.round((page.niche_analysis.confidence || 0) * 100) + '% Match';
+      document.getElementById('psmNicheReasoning').innerText = page.niche_analysis.reasoning || '';
+      
+      const meta = document.getElementById('psmNicheMeta');
+      meta.innerHTML = '';
+      if (page.niche_analysis.detected_tone) {
+        meta.innerHTML += '<span>Tone: <strong style="color: #cbd5e1;">' + escapeHtml(page.niche_analysis.detected_tone) + '</strong></span>';
+      }
+      if (page.niche_analysis.suggested_posts_per_day) {
+        meta.innerHTML += '<span>Suggested: <strong style="color: #cbd5e1;">' + page.niche_analysis.suggested_posts_per_day + ' posts/day</strong></span>';
+      }
+      if (page.niche_analysis.caption_length_preference) {
+        meta.innerHTML += '<span>Caption: <strong style="color: #cbd5e1;">' + escapeHtml(page.niche_analysis.caption_length_preference) + '</strong></span>';
+      }
+      suggestionBox.style.display = 'block';
+    } else {
+      suggestionBox.style.display = 'none';
+    }
+
+    // Schedule config
+    const sched = page.schedule || { postsPerDay: 0, postingTimes: [], timezone: 'Asia/Kolkata', mode: 'fixed' };
+    document.getElementById('psmPostsPerDay').value = sched.postsPerDay !== undefined ? sched.postsPerDay : 0;
+    document.getElementById('psmTimezone').value = sched.timezone || 'Asia/Kolkata';
+
+    currentScheduleTimingMode = sched.mode || 'fixed';
+    setScheduleTimingMode(currentScheduleTimingMode);
+
+    // Fixed times
+    const fixedList = document.getElementById('psmFixedTimesList');
+    fixedList.innerHTML = '';
+    const times = sched.postingTimes && sched.postingTimes.length > 0 ? sched.postingTimes : ['10:00', '15:00', '20:00'];
+    times.forEach(function (t) {
+      addFixedTimePicker(t);
+    });
+
+    // Window & interval
+    document.getElementById('psmWindowStart').value = sched.windowStart || '09:00';
+    document.getElementById('psmWindowEnd').value = sched.windowEnd || '21:00';
+    document.getElementById('psmIntervalHours').value = sched.intervalHours || 3;
+
+    // Days of week
+    const activeDays = Array.isArray(sched.daysOfWeek) && sched.daysOfWeek.length > 0 ? sched.daysOfWeek : [1, 2, 3, 4, 5, 6, 7];
+    document.querySelectorAll('.psm-dow-checkbox').forEach(function (cb) {
+      cb.checked = activeDays.includes(Number(cb.value));
+    });
+
+    // Jitter & gap
+    document.getElementById('psmJitter').value = sched.jitterMinutes !== undefined ? sched.jitterMinutes : 10;
+    document.getElementById('psmMinGap').value = sched.minGapMinutes !== undefined ? sched.minGapMinutes : 60;
+    document.getElementById('psmLeadTime').value = sched.leadTimeHours !== undefined ? sched.leadTimeHours : 48;
+    document.getElementById('psmVacationStart').value = sched.vacationStart || '';
+    document.getElementById('psmVacationEnd').value = sched.vacationEnd || '';
+
+    // Publishing controls
+    document.getElementById('psmPublishingMode').value = page.publishing_mode || 'review';
+    handlePublishingModeChange(page.publishing_mode || 'review');
+    document.getElementById('psmHybridScore').value = page.hybrid_min_score || 80;
+    document.getElementById('psmHybridScoreVal').innerText = page.hybrid_min_score || 80;
+    document.getElementById('psmDailyCap').value = page.daily_cap || 3;
+
+    // Disclosures
+    const aiToggle = document.getElementById('psmAiDisclosureToggle');
+    aiToggle.checked = Boolean(page.ai_disclosure_enabled);
+    document.getElementById('psmAiDisclosureBox').style.display = aiToggle.checked ? 'block' : 'none';
+    document.getElementById('psmAiDisclosureText').value = page.ai_disclosure_text || 'AI-assisted content created for Beyond the Known.';
+    document.getElementById('psmSourceLineToggle').checked = page.source_attribution_enabled !== false;
+
+    // Update Checklist UI
+    updateModalChecklistDisplay(page);
+
+    // Live preview
+    updateLiveSchedulePreview();
+
+    document.getElementById('pageSettingsModal').classList.add('active');
+  }
+
+  function closePageSettingsModal() {
+    const modal = document.getElementById('pageSettingsModal');
+    if (modal) modal.classList.remove('active');
+    currentSettingsPageId = null;
+  }
+
+  function updateModalChecklistDisplay(page) {
+    const sched = page.schedule || {};
+    const profileChosen = Boolean(page.profile_id && page.profile_id !== 'default-niche' && page.profile_id !== '__custom__');
+    const scheduleSet = Boolean(sched.postsPerDay && sched.postsPerDay > 0);
+    const modeChosen = Boolean(page.publishing_mode);
+    const testDone = Boolean(page.last_test_run_at);
+    const isLive = Boolean(page.active);
+
+    function setStep(id, done, label) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.querySelector('.psm-step-icon').innerText = done ? '✅' : '⭕';
+      const st = el.querySelector('.psm-step-status');
+      st.innerText = label;
+      st.style.color = done ? '#34d399' : '#f87171';
+    }
+
+    setStep('psmStepProfile', profileChosen, profileChosen ? 'Chosen' : 'Not Chosen');
+    setStep('psmStepSchedule', scheduleSet, scheduleSet ? (sched.postsPerDay + ' posts/day') : '0 posts/day');
+    setStep('psmStepMode', modeChosen, (page.publishing_mode || 'review').toUpperCase());
+    setStep('psmStepTest', testDone, testDone ? 'Verified' : 'Needed');
+    setStep('psmStepLive', isLive, isLive ? 'Live' : 'Paused');
+
+    const totalDone = (profileChosen ? 1 : 0) + (scheduleSet ? 1 : 0) + (modeChosen ? 1 : 0) + (testDone ? 1 : 0);
+    const progressElem = document.getElementById('psmChecklistProgress');
+    if (progressElem) {
+      if (isLive) {
+        progressElem.innerText = 'All Steps Complete • Page Active';
+        progressElem.style.color = '#34d399';
+      } else if (totalDone === 4) {
+        progressElem.innerText = 'Ready to Go Live! Click "Take Page Live"';
+        progressElem.style.color = '#34d399';
+      } else {
+        progressElem.innerText = (4 - totalDone) + ' Step(s) Incomplete before Live';
+        progressElem.style.color = '#f59e0b';
+      }
+    }
+  }
+
+  function setScheduleTimingMode(mode, btn) {
+    currentScheduleTimingMode = mode || 'fixed';
+    document.querySelectorAll('.psm-mode-btn').forEach(function (b) {
+      if (b.getAttribute('data-mode') === currentScheduleTimingMode) {
+        b.className = 'btn btn-primary psm-mode-btn';
+      } else {
+        b.className = 'btn btn-secondary psm-mode-btn';
+      }
+    });
+
+    const fixedSec = document.getElementById('psmTimingSectionFixed');
+    const intervalSec = document.getElementById('psmTimingSectionInterval');
+    const intervalHoursGrp = document.getElementById('psmIntervalHoursGroup');
+
+    if (currentScheduleTimingMode === 'fixed') {
+      if (fixedSec) fixedSec.style.display = 'block';
+      if (intervalSec) intervalSec.style.display = 'none';
+    } else if (currentScheduleTimingMode === 'interval') {
+      if (fixedSec) fixedSec.style.display = 'none';
+      if (intervalSec) intervalSec.style.display = 'block';
+      if (intervalHoursGrp) intervalHoursGrp.style.display = 'block';
+    } else { // auto_spread
+      if (fixedSec) fixedSec.style.display = 'none';
+      if (intervalSec) intervalSec.style.display = 'block';
+      if (intervalHoursGrp) intervalHoursGrp.style.display = 'none';
+    }
+
+    handleScheduleInputChange();
+  }
+
+  function addFixedTimePicker(timeVal) {
+    const list = document.getElementById('psmFixedTimesList');
+    if (!list) return;
+    const val = timeVal || '12:00';
+    const tag = document.createElement('div');
+    tag.style = 'display: inline-flex; align-items: center; gap: 4px; background: #1e293b; padding: 4px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);';
+    tag.innerHTML = '<input type="time" class="psm-fixed-time-input" value="' + val + '" style="background: none; border: none; color: #f3f4f6; font-size: 13px; font-weight: 600;" onchange="handleScheduleInputChange()">' +
+      '<button type="button" onclick="removeFixedTimePicker(this)" style="background: none; border: none; color: #ef4444; font-size: 14px; cursor: pointer; padding: 0 4px;" title="Remove time">✕</button>';
+    list.appendChild(tag);
+    handleScheduleInputChange();
+  }
+
+  function removeFixedTimePicker(btn) {
+    const parent = btn.parentElement;
+    if (parent && parent.parentElement) {
+      parent.parentElement.removeChild(parent);
+      handleScheduleInputChange();
+    }
+  }
+
+  function handleScheduleInputChange() {
+    const postsPerDay = Number(document.getElementById('psmPostsPerDay').value) || 0;
+    const warning = document.getElementById('psmHighCadenceWarning');
+    if (warning) {
+      warning.style.display = postsPerDay > 5 ? 'block' : 'none';
+    }
+
+    if (previewDebounceTimer) clearTimeout(previewDebounceTimer);
+    previewDebounceTimer = setTimeout(updateLiveSchedulePreview, 250);
+  }
+
+  function handlePublishingModeChange(mode) {
+    const group = document.getElementById('psmHybridScoreGroup');
+    if (group) {
+      group.style.display = mode === 'hybrid' ? 'block' : 'none';
+    }
+  }
+
+  function handleModalProfileChange(val) {
+    if (val === '__custom__') {
+      openPagePromptStudioFromModal();
+    }
+  }
+
+  function getSchedulePayloadFromModal() {
+    const postsPerDay = Number(document.getElementById('psmPostsPerDay').value) || 0;
+    const timezone = document.getElementById('psmTimezone').value || 'Asia/Kolkata';
+
+    const fixedTimes = [];
+    document.querySelectorAll('.psm-fixed-time-input').forEach(function (inp) {
+      if (inp.value) fixedTimes.push(inp.value);
+    });
+
+    const daysOfWeek = [];
+    document.querySelectorAll('.psm-dow-checkbox:checked').forEach(function (cb) {
+      daysOfWeek.push(Number(cb.value));
+    });
+
+    return {
+      postsPerDay: postsPerDay,
+      mode: currentScheduleTimingMode,
+      postingTimes: fixedTimes,
+      daysOfWeek: daysOfWeek.length > 0 ? daysOfWeek : [1, 2, 3, 4, 5, 6, 7],
+      timezone: timezone,
+      windowStart: document.getElementById('psmWindowStart').value || '09:00',
+      windowEnd: document.getElementById('psmWindowEnd').value || '21:00',
+      intervalHours: Number(document.getElementById('psmIntervalHours').value) || 3,
+      jitterMinutes: Number(document.getElementById('psmJitter').value) || 10,
+      minGapMinutes: Number(document.getElementById('psmMinGap').value) || 60,
+      leadTimeHours: Number(document.getElementById('psmLeadTime').value) || 48,
+      vacationStart: document.getElementById('psmVacationStart').value || null,
+      vacationEnd: document.getElementById('psmVacationEnd').value || null,
+    };
+  }
+
+  async function updateLiveSchedulePreview() {
+    const tableBody = document.getElementById('psmSchedulePreviewTableBody');
+    const badge = document.getElementById('psmSlotSummaryBadge');
+    if (!tableBody) return;
+
+    const sched = getSchedulePayloadFromModal();
+    if (!sched.postsPerDay || sched.postsPerDay === 0) {
+      tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 12px; color: var(--text-muted); font-style: italic;">Posting is disabled (0 posts/day). Set posts per day to generate preview.</td></tr>';
+      if (badge) badge.innerText = 'Posting Disabled';
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/pages/preview-schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule: sched, countDays: 7, userTimezone: 'Asia/Kolkata' }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        tableBody.innerHTML = '<tr><td colspan="5" style="color: #f87171; padding: 8px;">' + escapeHtml(data.error || (data.errors ? data.errors.join('; ') : 'Validation error')) + '</td></tr>';
+        if (badge) badge.innerText = 'Validation Error';
+        return;
+      }
+
+      if (!data.preview || data.preview.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 12px; color: var(--text-muted);">No slots scheduled in the next 7 days for current settings.</td></tr>';
+        if (badge) badge.innerText = '0 slots';
+        return;
+      }
+
+      if (badge) badge.innerText = data.preview.length + ' slots planned over next 7 days';
+
+      let html = '';
+      data.preview.forEach(function (slot) {
+        html += '<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">' +
+          '<td style="padding: 6px 8px; font-weight: 600; color: #f3f4f6;">' + escapeHtml(slot.dayOfWeek) + ' (' + escapeHtml(slot.audienceDate) + ')</td>' +
+          '<td style="padding: 6px 8px; color: var(--text-muted);">' + slot.slotIndex + '</td>' +
+          '<td style="padding: 6px 8px; color: #34d399; font-weight: 700;">' + escapeHtml(slot.audienceTime) + ' <small style="color: var(--text-muted); font-weight: normal;">' + escapeHtml(slot.timezone) + '</small></td>' +
+          '<td style="padding: 6px 8px; color: #93c5fd; font-weight: 700;">' + escapeHtml(slot.localTime) + ' <small style="color: var(--text-muted); font-weight: normal;">IST</small></td>' +
+          '<td style="padding: 6px 8px; text-transform: uppercase; font-size: 10px; color: #a78bfa;">' + escapeHtml(slot.mode) + '</td>' +
+        '</tr>';
+      });
+      tableBody.innerHTML = html;
+    } catch (err) {
+      tableBody.innerHTML = '<tr><td colspan="5" style="color: #f87171; padding: 8px;">Error generating preview: ' + escapeHtml(err.message) + '</td></tr>';
+    }
+  }
+
+  async function handleSavePageSettings(e) {
+    if (e) e.preventDefault();
+    if (!currentSettingsPageId) return;
+
+    const saveBtn = document.getElementById('psmSaveBtn');
+    const origText = saveBtn ? saveBtn.innerText : '';
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.innerText = '💾 Saving to Supabase...';
+    }
+
+    const payload = {
+      pageId: currentSettingsPageId,
+      profile_id: document.getElementById('psmProfileSelect').value,
+      publishing_mode: document.getElementById('psmPublishingMode').value,
+      hybrid_min_score: Number(document.getElementById('psmHybridScore').value) || 80,
+      daily_cap: Number(document.getElementById('psmDailyCap').value) || 3,
+      schedule: getSchedulePayloadFromModal(),
+      ai_disclosure_enabled: document.getElementById('psmAiDisclosureToggle').checked,
+      ai_disclosure_text: document.getElementById('psmAiDisclosureText').value,
+      source_attribution_enabled: document.getElementById('psmSourceLineToggle').checked,
+    };
+
+    try {
+      const res = await fetch('/api/pages/update-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert('Failed to save settings: ' + (data.error || 'Unknown error'));
+        return;
+      }
+
+      // Update in local pagesData
+      const idx = pagesData.findIndex(function (p) { return p.id === currentSettingsPageId; });
+      if (idx !== -1 && data.page) {
+        pagesData[idx] = data.page;
+      }
+
+      alert('✅ Page settings & schedule saved successfully to Supabase!');
+      closePageSettingsModal();
+      window.location.reload();
+    } catch (err) {
+      alert('Network error while saving settings: ' + err.message);
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.innerText = origText;
+      }
+    }
+  }
+
+  async function toggleLiveFromModal() {
+    if (!currentSettingsPageId) return;
+    const page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
+    if (!page) return;
+
+    const targetActive = !page.active;
+
+    try {
+      const res = await fetch('/api/pages/toggle-live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: currentSettingsPageId, active: targetActive }),
+      });
+      const data = await res.json();
+
+      if (!res.ok && data.blocked) {
+        const proceed = confirm('⚠️ Setup Checklist Incomplete:\n\n' + data.missingSteps.map(function(s, i) { return (i + 1) + '. ' + s; }).join('\n') + '\n\nDo you want to FORCE taking this page live anyway?');
+        if (proceed) {
+          const forceRes = await fetch('/api/pages/toggle-live', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pageId: currentSettingsPageId, active: true, force: true }),
+          });
+          const forceData = await forceRes.json();
+          if (forceRes.ok && forceData.success) {
+            alert('🚀 Page is now LIVE with autonomous posting!');
+            window.location.reload();
+            return;
+          } else {
+            alert('Error: ' + (forceData.error || 'Failed to activate'));
+            return;
+          }
+        }
+        return;
+      }
+
+      if (!res.ok || data.error) {
+        alert('Notice: ' + (data.error || 'Failed to update live status'));
+        return;
+      }
+
+      alert(targetActive ? '🚀 Page is now LIVE!' : '⏸️ Autonomous posting paused for this page.');
+      window.location.reload();
+    } catch (err) {
+      alert('Error updating live status: ' + err.message);
+    }
+  }
+
+  async function runTestRunFromModal() {
+    if (!currentSettingsPageId) return;
+    triggerPageTestRun(currentSettingsPageId);
+  }
+
+  async function triggerPageTestRun(pageId) {
+    if (!pageId) return;
+    try {
+      const res = await fetch('/api/test-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: pageId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert('⚡ Simulation Succeeded!\n\nTopic: ' + (data.topic ? data.topic.title : 'Generated') + '\nQA Score: ' + (data.qaScore || 95) + '/100\n\nWord Count: ' + (data.wordCount || 0) + ' words\nStep 4 (Test Run) marked verified on the Page checklist!');
+        window.location.reload();
+      } else {
+        alert('Simulation notice: ' + (data.error || 'Failed to run test'));
+      }
+    } catch (err) {
+      alert('Error executing test run: ' + err.message);
+    }
+  }
+
+  async function analyzePageNicheAction(pageId) {
+    if (!pageId) return;
+    const page = pagesData.find(function (p) { return p.id === pageId; });
+    const pageName = page ? page.name : 'this Page';
+
+    const ok = confirm('✨ Run Automatic Niche Detection for "' + pageName + '"?\n\nThis will scan public Page metadata and the last 25 posts via Meta Graph API, and evaluate the ideal content profile with strict privacy (zero tokens transmitted).');
+    if (!ok) return;
+
+    try {
+      const res = await fetch('/api/pages/analyze-niche', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: pageId }),
+      });
+      const data = await res.json();
+
+      if (!res.ok && data.noProviders) {
+        alert('⚠️ No active AI providers configured.\n\nPlease add an API key under the "Providers & Quotas" tab first to enable AI Niche Detection.');
+        showTab('providers');
+        return;
+      }
+
+      if (!res.ok || data.error) {
+        alert('Niche Detection Notice: ' + (data.error || 'Failed'));
+        return;
+      }
+
+      if (data.analysis) {
+        const ana = data.analysis;
+        const msg = '✨ Niche Evaluation Complete for "' + pageName + '":\n\n' +
+          '• Suggested Profile: ' + (ana.suggested_profile_name || 'N/A') + '\n' +
+          '• Match Confidence: ' + Math.round((ana.confidence || 0) * 100) + '%\n' +
+          '• Reasoning: ' + (ana.reasoning || '') + '\n' +
+          '• Tone: ' + (ana.detected_tone || 'Standard') + '\n' +
+          '• Suggested Cadence: ' + (ana.suggested_posts_per_day || 2) + ' posts/day\n\n' +
+          'Click OK to open Page Settings and review or apply this recommendation.';
+        alert(msg);
+        openPageSettingsModal(pageId);
+      }
+    } catch (err) {
+      alert('Network error while analyzing niche: ' + err.message);
+    }
+  }
+
+  function analyzePageNicheActionFromModal() {
+    if (currentSettingsPageId) {
+      analyzePageNicheAction(currentSettingsPageId);
+    }
+  }
+
+  function dismissModalNicheSuggestion() {
+    const box = document.getElementById('psmNicheSuggestionBox');
+    if (box) box.style.display = 'none';
+  }
+
+  async function acceptModalNicheSuggestion() {
+    if (!currentSettingsPageId) return;
+    const page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
+    if (!page || !page.niche_analysis || !page.niche_analysis.suggested_profile_id) return;
+
+    const profSelect = document.getElementById('psmProfileSelect');
+    if (profSelect) {
+      profSelect.value = page.niche_analysis.suggested_profile_id;
+    }
+    if (page.niche_analysis.suggested_posts_per_day) {
+      document.getElementById('psmPostsPerDay').value = page.niche_analysis.suggested_posts_per_day;
+      handleScheduleInputChange();
+    }
+    dismissModalNicheSuggestion();
+    alert('✅ Suggested profile "' + page.niche_analysis.suggested_profile_name + '" selected! Click "Save Settings" below to apply.');
+  }
+
+  async function applyNicheProfile(pageId, profileId) {
+    if (!pageId || !profileId) return;
+    try {
+      const res = await fetch('/api/pages/update-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: pageId, profile_id: profileId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert('✅ Niche profile applied!');
+        window.location.reload();
+      } else {
+        alert('Notice: ' + (data.error || 'Failed to apply niche profile'));
+      }
+    } catch (err) {
+      alert('Error applying niche: ' + err.message);
+    }
+  }
+
+  async function createProfileFromModalNiche() {
+    if (!currentSettingsPageId) return;
+    try {
+      const res = await fetch('/api/pages/create-profile-from-niche', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: currentSettingsPageId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert('🎉 New Content Profile "' + data.profile.name + '" generated and assigned to this Page!\n\nYou can refine its prompts, visual bible, and topics in Page Prompt Studio.');
+        window.location.reload();
+      } else {
+        alert('Failed: ' + (data.error || 'Could not generate profile'));
+      }
+    } catch (err) {
+      alert('Error creating profile: ' + err.message);
+    }
+  }
+
+  function openPagePromptStudioFromModal() {
+    const pageId = currentSettingsPageId;
+    closePageSettingsModal();
+    if (pageId) {
+      openPagePromptStudio(pageId);
     }
   }
 

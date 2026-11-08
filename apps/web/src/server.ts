@@ -42,6 +42,17 @@ import {
   parseFacebookDeletionSignedRequest,
   FacebookGraphError,
   sanitizeFacebookErrorMessage,
+  SAFE_DEFAULT_SCHEDULE,
+  type PageSchedule,
+  validatePageSchedule,
+  generateLiveSchedulePreview,
+  evaluatePageChecklist,
+  fetchPageProfileData,
+  analyzePageNiche,
+  generateDraftProfileFromPage,
+  decrypt,
+  GeminiNativeAdapter,
+  OpenAIChatAdapter,
 } from '@fb-auto/core';
 import {
   renderPrivacyPolicyHtml,
@@ -1379,6 +1390,286 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       return;
     }
 
+    // 3d. API: Update Page Scheduling & Settings
+    if (url.pathname === '/api/pages/update-settings' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+          const page = await store.getPageById(data.pageId);
+          if (!page) return sendJson({ error: 'Page not found' }, 404);
+
+          const updates: Partial<StoredPage> = {};
+
+          if (data.profile_id !== undefined) {
+            updates.profile_id = data.profile_id && data.profile_id !== '__custom__' ? data.profile_id : null;
+          }
+
+          if (data.publishing_mode) {
+            if (!['auto', 'review', 'hybrid'].includes(data.publishing_mode)) {
+              return sendJson({ error: 'Invalid publishing_mode. Must be auto, review, or hybrid.' }, 400);
+            }
+            updates.publishing_mode = data.publishing_mode;
+          }
+
+          if (data.hybrid_min_score !== undefined) {
+            updates.hybrid_min_score = Math.max(50, Math.min(99, Number(data.hybrid_min_score) || 80));
+          }
+
+          if (data.daily_cap !== undefined) {
+            updates.daily_cap = Math.max(1, Math.min(20, Number(data.daily_cap) || 3));
+          }
+
+          if (data.ai_disclosure_enabled !== undefined) {
+            updates.ai_disclosure_enabled = Boolean(data.ai_disclosure_enabled);
+          }
+          if (data.ai_disclosure_text !== undefined) {
+            updates.ai_disclosure_text = String(data.ai_disclosure_text);
+          }
+          if (data.source_attribution_enabled !== undefined) {
+            updates.source_attribution_enabled = Boolean(data.source_attribution_enabled);
+          }
+
+          if (data.overrides) {
+            updates.overrides = { ...page.overrides, ...data.overrides };
+          }
+
+          if (data.schedule) {
+            const scheduleVal = validatePageSchedule(data.schedule);
+            if (!scheduleVal.valid) {
+              return sendJson({ error: `Schedule validation failed: ${scheduleVal.errors.join('; ')}` }, 400);
+            }
+            updates.schedule = {
+              ...page.schedule,
+              ...data.schedule,
+              postsPerDay: data.schedule.postsPerDay !== undefined ? Number(data.schedule.postsPerDay) : page.schedule.postsPerDay,
+              postingTimes: scheduleVal.resolvedPostingTimes,
+            };
+          }
+
+          // Evaluate checklist with pending updates
+          const mergedPage = { ...page, ...updates };
+          const checklist = evaluatePageChecklist(mergedPage);
+          updates.checklist_status = checklist;
+
+          const updated = await store.updatePage(data.pageId, updates);
+          return sendJson({ success: true, page: updated, checklist });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3e. API: Toggle Page Live Status (Safe Onboarding Gated)
+    if (url.pathname === '/api/pages/toggle-live' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+          const page = await store.getPageById(data.pageId);
+          if (!page) return sendJson({ error: 'Page not found' }, 404);
+
+          const targetActive = Boolean(data.active);
+          const checklist = evaluatePageChecklist({ ...page, active: targetActive });
+
+          if (targetActive && !checklist.isReadyToGoLive && !data.force) {
+            return sendJson(
+              {
+                success: false,
+                blocked: true,
+                error: 'Setup checklist incomplete. Please finish all required setup steps before taking the page live.',
+                missingSteps: checklist.missingSteps,
+                checklist,
+              },
+              400
+            );
+          }
+
+          const updated = await store.updatePage(data.pageId, {
+            active: targetActive,
+            checklist_status: checklist,
+          });
+
+          await store.addAuditLog({
+            level: targetActive ? 'info' : 'warning',
+            category: 'publish',
+            message: targetActive
+              ? `Page "${page.name}" went LIVE with autonomous posting schedule (${updated.schedule.postsPerDay} posts/day).`
+              : `Page "${page.name}" posting PAUSED by user.`,
+            page_id: page.id,
+          });
+
+          return sendJson({ success: true, page: updated, checklist });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3f. API: Real-Time 7-Day Live Schedule Preview
+    if (url.pathname === '/api/pages/preview-schedule' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.schedule) return sendJson({ error: 'Schedule configuration is required.' }, 400);
+
+          const validation = validatePageSchedule(data.schedule);
+          if (!validation.valid) {
+            return sendJson({ success: false, errors: validation.errors, warnings: validation.warnings }, 400);
+          }
+
+          const preview = generateLiveSchedulePreview(
+            data.schedule,
+            new Date(),
+            data.countDays || 7,
+            data.userTimezone || 'Asia/Kolkata'
+          );
+
+          return sendJson({
+            success: true,
+            preview,
+            warnings: validation.warnings,
+            resolvedPostingTimes: validation.resolvedPostingTimes,
+          });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3g. API: Automatic Page Niche Detection
+    if (url.pathname === '/api/pages/analyze-niche' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+          const page = await store.getPageById(data.pageId);
+          if (!page) return sendJson({ error: 'Page not found' }, 404);
+
+          let decryptedToken = '';
+          try {
+            decryptedToken = decryptPageToken(page.fb_page_token);
+          } catch (err: any) {
+            return sendJson({ error: 'Failed to decrypt Facebook Page token: ' + err.message }, 500);
+          }
+
+          // Check for active AI providers & keys
+          const providers = await store.getProviders();
+          const allKeys = await store.getProviderKeys();
+          const activeProvidersWithKeys = providers.filter(
+            (p) => p.enabled && allKeys.some((k) => k.provider_id === p.id && k.is_active)
+          );
+
+          let callLlm: ((prompt: string, systemPrompt?: string) => Promise<string>) | undefined = undefined;
+
+          if (activeProvidersWithKeys.length > 0) {
+            const prov = activeProvidersWithKeys[0];
+            const keyItem = allKeys.find((k) => k.provider_id === prov.id && k.is_active)!;
+            const decryptedApiKey = decrypt(keyItem.encrypted_key);
+
+            callLlm = async (prompt: string, systemPrompt?: string): Promise<string> => {
+              if (prov.adapter_kind === 'gemini_native' || prov.adapter_kind === 'gemini') {
+                const adapter = new GeminiNativeAdapter();
+                const res = await adapter.generateText({
+                  apiKey: decryptedApiKey,
+                  model: prov.model_name || 'gemini-1.5-flash',
+                  baseUrl: prov.base_url,
+                  prompt,
+                  systemPrompt,
+                  temperature: 0.2,
+                });
+                return res.text;
+              } else {
+                const adapter = new OpenAIChatAdapter();
+                const res = await adapter.generateText({
+                  apiKey: decryptedApiKey,
+                  model: prov.model_name || 'gpt-4o-mini',
+                  baseUrl: prov.base_url,
+                  prompt,
+                  systemPrompt,
+                  temperature: 0.2,
+                });
+                return res.text;
+              }
+            };
+          }
+
+          // Fetch public page metadata & posts via Graph API
+          const pageData = await fetchPageProfileData(page.fb_page_id, decryptedToken);
+
+          // Get system profiles
+          const dbProfiles = await store.getContentProfiles();
+          const allProfiles = dbProfiles.length > 0 ? dbProfiles : seedProfiles;
+
+          const analysis = await analyzePageNiche(pageData, allProfiles, callLlm);
+
+          // Persist to Supabase
+          await store.updatePage(page.id, { niche_analysis: analysis });
+
+          return sendJson({
+            success: analysis.success,
+            analysis,
+            pageName: page.name,
+          });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3h. API: Create Draft Content Profile from Niche Detection
+    if (url.pathname === '/api/pages/create-profile-from-niche' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+          const page = await store.getPageById(data.pageId);
+          if (!page) return sendJson({ error: 'Page not found' }, 404);
+
+          const analysis = data.analysis || page.niche_analysis;
+          if (!analysis) {
+            return sendJson({ error: 'No niche analysis found. Please run Niche Detection first.' }, 400);
+          }
+
+          const draft = await generateDraftProfileFromPage({
+            id: page.fb_page_id,
+            name: page.name,
+            category: page.category,
+            posts: [],
+            totalPostsFound: 0,
+          });
+          const createdProfile = await store.createContentProfile(draft);
+          seedProfiles.unshift(createdProfile);
+
+          // Auto-assign new profile to this page
+          const updated = await store.updatePage(page.id, { profile_id: createdProfile.id });
+
+          return sendJson({ success: true, profile: createdProfile, page: updated });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
     // 4. API: Page-Specific Effective Settings & Prompts Resolution
     if (url.pathname === '/api/page-effective-settings') {
       const pageId = url.searchParams.get('pageId');
@@ -1555,6 +1846,16 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             tokensUsed: 1380,
             estimatedCost: '$0.0016',
           };
+
+          if (page) {
+            const nowIso = new Date().toISOString();
+            const updatedPage = await store.updatePage(page.id, {
+              last_test_run_at: nowIso,
+            });
+            const checklist = evaluatePageChecklist(updatedPage);
+            await store.updatePage(page.id, { checklist_status: checklist });
+            (simOutput as any).checklist = checklist;
+          }
 
           // Test Run Simulator: Pure sandbox preview - NEVER write to production tables (posts, audit_log)
           return sendJson(simOutput);
@@ -2634,66 +2935,103 @@ async function generateDashboardHtml(): Promise<string> {
                         statusLabel = 'INACCESSIBLE';
                       }
 
+                      const checklist = evaluatePageChecklist(p);
+                      const assignedProf = seedProfiles.find((sp) => sp.id === p.profile_id || sp.name === p.profile_id);
+                      const profileLabel = assignedProf ? assignedProf.name : (p.profile_id && p.profile_id !== 'default-niche' ? p.profile_id : '⚠️ No Profile Chosen');
+
                       return `
-                        <div class="page-tree-card" id="page-card-${p.id}" style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-                          <!-- Left: Picture & Info -->
-                          <div style="display: flex; align-items: center; gap: 12px; min-width: 240px;">
-                            ${p.picture_url ? `<img src="${p.picture_url}" alt="${p.name}" style="width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 1px solid rgba(255,255,255,0.1);">` : `<div style="width: 38px; height: 38px; border-radius: 50%; background: #1e3a8a; display: flex; align-items: center; justify-content: center; font-size: 18px;">📄</div>`}
-                            <div>
-                              <div style="display: flex; align-items: center; gap: 8px;">
-                                <a href="javascript:void(0)" onclick="openPageDetailsWindow('${p.id}')" style="color: #60a5fa; text-decoration: none; font-size: 15px; font-weight: 700;">
-                                  ${p.name}
-                                </a>
-                                <span class="badge" style="background: ${badgeBg}; color: ${badgeColor}; font-size: 10px; font-weight: 700; padding: 2px 6px;">
-                                  ● ${statusLabel}
-                                </span>
-                                ${isShared ? `<span class="badge" style="background: rgba(59,130,246,0.15); color: #93c5fd; font-size: 10px;" title="Discovered via multiple Facebook accounts">Shared</span>` : ''}
+                        <div class="page-tree-card" id="page-card-${p.id}" style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px 16px; margin-bottom: 10px;">
+                          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                            <!-- Left: Picture & Info -->
+                            <div style="display: flex; align-items: center; gap: 12px; min-width: 240px;">
+                              ${p.picture_url ? `<img src="${p.picture_url}" alt="${p.name}" style="width: 42px; height: 42px; border-radius: 50%; object-fit: cover; border: 1px solid rgba(255,255,255,0.1);">` : `<div style="width: 42px; height: 42px; border-radius: 50%; background: #1e3a8a; display: flex; align-items: center; justify-content: center; font-size: 20px;">📄</div>`}
+                              <div>
+                                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                  <a href="javascript:void(0)" onclick="openPageSettingsModal('${p.id}')" style="color: #60a5fa; text-decoration: none; font-size: 16px; font-weight: 700;">
+                                    ${p.name}
+                                  </a>
+                                  <span class="badge" style="background: ${badgeBg}; color: ${badgeColor}; font-size: 10px; font-weight: 700; padding: 2px 6px;">
+                                    ● ${statusLabel}
+                                  </span>
+                                  ${isShared ? `<span class="badge" style="background: rgba(59,130,246,0.15); color: #93c5fd; font-size: 10px;" title="Discovered via multiple Facebook accounts">Shared</span>` : ''}
+                                  ${p.active
+                                    ? `<span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399; font-size: 11px; font-weight: 700;">🟢 LIVE (${p.schedule.postsPerDay} posts/day)</span>`
+                                    : `<span class="badge" style="background: rgba(239,68,68,0.15); color: #f87171; font-size: 11px; font-weight: 700;">🔴 POSTING DISABLED</span>`}
+                                </div>
+                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">
+                                  <code style="color: #94a3b8;">ID: ${p.fb_page_id}</code>
+                                  ${p.category ? ` • <span>${p.category}</span>` : ''}
+                                  ${typeof p.fan_count === 'number' && p.fan_count > 0 ? ` • <span>${p.fan_count.toLocaleString()} fans</span>` : ''}
+                                  • <span style="color: #cbd5e1;">🎭 Profile: <strong>${profileLabel}</strong></span>
+                                  • <span style="color: #93c5fd;">Mode: ${p.publishing_mode.toUpperCase()}</span>
+                                  • <span>🕒 ${p.schedule.postsPerDay > 0 ? `${p.schedule.postsPerDay} posts/day (${p.schedule.timezone || 'Asia/Kolkata'})` : 'No Schedule'}</span>
+                                </div>
                               </div>
-                              <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
-                                <code style="color: #94a3b8;">ID: ${p.fb_page_id}</code>
-                                ${p.category ? ` • <span>${p.category}</span>` : ''}
-                                ${typeof p.fan_count === 'number' && p.fan_count > 0 ? ` • <span>${p.fan_count.toLocaleString()} fans</span>` : ''}
-                              </div>
+                            </div>
+
+                            <!-- Right: Actions -->
+                            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                              <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; font-weight: 600;" onclick="openPageSettingsModal('${p.id}')" title="Configure posting cadence, schedule builder, and publishing modes">
+                                ⚙️ Settings & Schedule
+                              </button>
+                              <button class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="analyzePageNicheAction('${p.id}')" title="Automatically evaluate Page niche using AI">
+                                ✨ Detect Niche
+                              </button>
+                              <button class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="triggerPageTestRun('${p.id}')" title="Run simulated test post cycle">
+                                ⚡ Test Run
+                              </button>
+                              <button class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="openPagePromptStudio('${p.id}')" title="Customize prompts & voice">
+                                ✍️ Prompts
+                              </button>
+                              <button class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')" title="Inspect posts & feed">
+                                🔍 Data
+                              </button>
+                              <button class="btn btn-secondary" style="padding: 6px 8px; font-size: 12px;" onclick="checkPageTokenHealth('${p.id}')" title="Verify token health">
+                                🩺 Check
+                              </button>
+                              <button class="btn btn-danger" style="padding: 6px 8px; font-size: 12px;" onclick="deletePageAction('${p.id}')" title="Remove Page">
+                                🗑️
+                              </button>
                             </div>
                           </div>
 
-                          <!-- Center: Inline Controls -->
-                          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                            <!-- Active switch -->
-                            <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; user-select: none;">
-                              <input type="checkbox" ${p.active ? 'checked' : ''} onchange="quickTogglePageActive('${p.id}', this.checked)">
-                              <span style="font-weight: 600; color: ${p.active ? '#34d399' : '#9ca3af'};">${p.active ? 'Active' : 'Paused'}</span>
-                            </label>
+                          <!-- Checklist Indicator for Inactive Pages -->
+                          ${!p.active ? `
+                            <div style="margin-top: 12px; padding: 8px 12px; background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 11px;">
+                              <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                                <strong style="color: #f59e0b;">📋 Setup Checklist:</strong>
+                                <span>${checklist.profileChosen ? '✅' : '⭕'} 1. Profile: ${checklist.profileChosen ? 'Chosen' : '<span style="color: #f87171;">Select</span>'}</span>
+                                <span>${checklist.scheduleSet ? '✅' : '⭕'} 2. Schedule: ${checklist.scheduleSet ? `${p.schedule.postsPerDay} posts/day` : '<span style="color: #f87171;">Set Cadence</span>'}</span>
+                                <span>${checklist.modeChosen ? '✅' : '⭕'} 3. Mode: ${p.publishing_mode.toUpperCase()}</span>
+                                <span>${checklist.testRunDone ? '✅' : '⭕'} 4. Test Run: ${checklist.testRunDone ? 'Verified' : '<span style="color: #f87171;">Run Test</span>'}</span>
+                              </div>
+                              <div>
+                                <button class="btn ${checklist.isReadyToGoLive ? 'btn-primary' : 'btn-secondary'}" style="padding: 3px 10px; font-size: 11px; font-weight: 600;" onclick="openPageSettingsModal('${p.id}')">
+                                  ${checklist.isReadyToGoLive ? '🚀 Ready: Go Live' : '⚙️ Complete Setup'}
+                                </button>
+                              </div>
+                            </div>
+                          ` : ''}
 
-                            <!-- Profile Select -->
-                            <select class="form-control" style="font-size: 12px; padding: 4px 8px; width: 160px;" onchange="quickUpdatePageProfile('${p.id}', this.value)" title="Assign Content Profile">
-                              ${renderNicheSelectOptions(seedProfiles, p.profile_id)}
-                            </select>
-
-                            <!-- Timezone Select -->
-                            <select class="form-control" style="font-size: 11px; padding: 4px 6px; width: 120px;" onchange="quickUpdatePageTimezone('${p.id}', this.value)" title="Page Posting Timezone">
-                              <option value="UTC" ${p.schedule.timezone === 'UTC' ? 'selected' : ''}>UTC</option>
-                              <option value="America/New_York" ${p.schedule.timezone === 'America/New_York' ? 'selected' : ''}>New York (ET)</option>
-                              <option value="America/Chicago" ${p.schedule.timezone === 'America/Chicago' ? 'selected' : ''}>Chicago (CT)</option>
-                              <option value="America/Los_Angeles" ${p.schedule.timezone === 'America/Los_Angeles' ? 'selected' : ''}>Los Angeles (PT)</option>
-                              <option value="Europe/London" ${p.schedule.timezone === 'Europe/London' ? 'selected' : ''}>London (GMT)</option>
-                              <option value="Asia/Kolkata" ${p.schedule.timezone === 'Asia/Kolkata' ? 'selected' : ''}>Kolkata (IST)</option>
-                              <option value="Asia/Tokyo" ${p.schedule.timezone === 'Asia/Tokyo' ? 'selected' : ''}>Tokyo (JST)</option>
-                            </select>
-
-                            <!-- Schedule Pill -->
-                            <span class="badge" style="background: #1e3a8a; color: #93c5fd; font-size: 11px;" title="Publishing Mode: ${p.publishing_mode.toUpperCase()}">
-                              ${p.schedule.postsPerDay} posts/day
-                            </span>
-                          </div>
-
-                          <!-- Right: Actions -->
-                          <div style="display: flex; gap: 6px; align-items: center;">
-                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="openPagePromptStudio('${p.id}')" title="Customize prompts & voice">✍️ Prompts</button>
-                            <button class="btn btn-primary" style="padding: 4px 8px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')" title="Inspect posts & feed">🔍 Data</button>
-                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="checkPageTokenHealth('${p.id}')" title="Verify token health">🩺 Check</button>
-                            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="deletePageAction('${p.id}')" title="Remove Page">🗑️</button>
-                          </div>
+                          <!-- Niche Detection Suggestion Banner if previously analyzed -->
+                          ${p.niche_analysis && p.niche_analysis.suggested_profile_name ? `
+                            <div style="margin-top: 10px; padding: 10px 14px; background: rgba(30,58,138,0.2); border: 1px solid rgba(59,130,246,0.3); border-radius: 6px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                              <div>
+                                <span style="color: #60a5fa; font-weight: 700;">✨ Detected Niche:</span>
+                                <strong style="color: #f3f4f6; margin-left: 4px;">${p.niche_analysis.suggested_profile_name}</strong>
+                                <span class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; font-size: 10px; margin-left: 6px;">${Math.round((p.niche_analysis.confidence || 0) * 100)}% Match</span>
+                                <span style="color: var(--text-muted); margin-left: 8px;">${p.niche_analysis.reasoning || ''}</span>
+                              </div>
+                              <div style="display: flex; gap: 6px;">
+                                <button class="btn btn-primary" style="padding: 3px 10px; font-size: 11px;" onclick="applyNicheProfile('${p.id}', '${p.niche_analysis.suggested_profile_id}')">
+                                  Accept & Apply
+                                </button>
+                                <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="openPageSettingsModal('${p.id}')">
+                                  Review in Settings
+                                </button>
+                              </div>
+                            </div>
+                          ` : ''}
                         </div>
                       `;
                     }).join('')}
@@ -2735,9 +3073,12 @@ async function generateDashboardHtml(): Promise<string> {
                         <strong>${p.name}</strong> <small style="color: var(--text-muted);">(ID: ${p.fb_page_id})</small>
                       </div>
                     </div>
-                    <div style="display: flex; gap: 6px; align-items: center;">
+                    <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                      <button class="btn btn-primary" style="padding: 4px 10px; font-size: 12px;" onclick="openPageSettingsModal('${p.id}')">⚙️ Settings</button>
+                      <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="analyzePageNicheAction('${p.id}')">✨ Niche</button>
+                      <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="triggerPageTestRun('${p.id}')">⚡ Test</button>
                       <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="openPagePromptStudio('${p.id}')">✍️ Prompts</button>
-                      <button class="btn btn-primary" style="padding: 4px 8px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')">🔍 Data</button>
+                      <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="openPageDetailsWindow('${p.id}')">🔍 Data</button>
                       <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="checkPageTokenHealth('${p.id}')">🩺 Check</button>
                       <button class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="deletePageAction('${p.id}')">🗑️</button>
                     </div>
@@ -3658,6 +3999,332 @@ async function generateDashboardHtml(): Promise<string> {
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
           <button type="button" class="btn btn-secondary" onclick="closeAddProviderModal()">Cancel</button>
           <button type="submit" class="btn btn-primary" style="padding: 10px 20px; font-weight: 600;">➕ Connect & Save Provider</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: PAGE SETTINGS & SCHEDULING CONTROLS -->
+  <div class="modal" id="pageSettingsModal">
+    <div class="modal-content" style="max-width: 960px; width: 95%; max-height: 92vh; overflow-y: auto; padding: 26px;">
+      <!-- Modal Top Header -->
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid var(--card-border); padding-bottom: 14px;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
+            <h3 id="psmTitle" style="font-size: 20px; margin: 0; color: #f9fafb;">⚙️ Page Settings & Scheduling Controls</h3>
+            <span id="psmLiveBadge" class="badge" style="background: rgba(239,68,68,0.2); color: #f87171; font-size: 11px;">● POSTING DISABLED</span>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); display: flex; gap: 14px; flex-wrap: wrap;">
+            <span>Page: <strong id="psmPageName" style="color: #cbd5e1;">-</strong></span>
+            <span>Facebook Page ID: <code id="psmPageFbId" style="color: #93c5fd;">-</code></span>
+            <span>Token: <span id="psmTokenStatus" class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; font-size: 10px;">VALID</span></span>
+          </div>
+        </div>
+        <button type="button" onclick="closePageSettingsModal()" style="background: none; border: none; color: var(--text-muted); font-size: 22px; cursor: pointer; padding: 0 4px;" aria-label="Close modal">✕</button>
+      </div>
+
+      <!-- Setup Checklist Banner -->
+      <div id="psmChecklistBanner" style="background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 14px 18px; margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+          <strong style="font-size: 13px; color: #f3f4f6;">📋 Page Setup Checklist</strong>
+          <span id="psmChecklistProgress" style="font-size: 12px; font-weight: 600; color: #f59e0b;">Step 1 of 5 Incomplete</span>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; font-size: 12px;">
+          <div id="psmStepProfile" style="background: rgba(255,255,255,0.03); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+            <span class="psm-step-icon">⭕</span> <strong>1. Profile:</strong> <span class="psm-step-status" style="color: #9ca3af;">Not Chosen</span>
+          </div>
+          <div id="psmStepSchedule" style="background: rgba(255,255,255,0.03); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+            <span class="psm-step-icon">⭕</span> <strong>2. Schedule:</strong> <span class="psm-step-status" style="color: #9ca3af;">0 posts/day</span>
+          </div>
+          <div id="psmStepMode" style="background: rgba(255,255,255,0.03); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+            <span class="psm-step-icon">⭕</span> <strong>3. Mode:</strong> <span class="psm-step-status" style="color: #9ca3af;">Review</span>
+          </div>
+          <div id="psmStepTest" style="background: rgba(255,255,255,0.03); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+            <span class="psm-step-icon">⭕</span> <strong>4. Test Run:</strong> <span class="psm-step-status" style="color: #9ca3af;">Needed</span>
+          </div>
+          <div id="psmStepLive" style="background: rgba(255,255,255,0.03); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+            <span class="psm-step-icon">⭕</span> <strong>5. Status:</strong> <span class="psm-step-status" style="color: #9ca3af;">Paused</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Sections Container -->
+      <form id="pageSettingsForm" onsubmit="handleSavePageSettings(event)">
+        <input type="hidden" id="psmPageId" name="psmPageId">
+
+        <!-- SECTION 1: CONTENT PROFILE -->
+        <div class="card" style="background: #0b0f19; border: 1px solid var(--card-border); padding: 18px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+            <h4 style="font-size: 15px; margin: 0; color: #93c5fd; display: flex; align-items: center; gap: 8px;">
+              <span>🎭</span> 1. Content Profile & Niche Selection
+            </h4>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 4px 10px;" onclick="analyzePageNicheActionFromModal()">
+                ✨ Detect Niche via AI
+              </button>
+              <a href="javascript:void(0)" onclick="openPagePromptStudioFromModal()" style="font-size: 11px; color: #60a5fa; text-decoration: none; display: flex; align-items: center;">
+                ✍️ Prompt Studio & Custom Voice →
+              </a>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label for="psmProfileSelect" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Assigned Content Profile</label>
+            <select id="psmProfileSelect" class="form-control" style="font-size: 13px; padding: 8px 12px; width: 100%;" onchange="handleModalProfileChange(this.value)">
+              ${renderNicheSelectOptions(seedProfiles)}
+            </select>
+            <small style="color: var(--text-muted); font-size: 11px; margin-top: 4px; display: block;">
+              Select a specialized niche profile. System generates topics, headlines, captions, and visual styling tuned specifically to this profile.
+            </small>
+          </div>
+
+          <!-- Niche Detection Suggestion Card (if analyzed) -->
+          <div id="psmNicheSuggestionBox" style="display: none; background: #0f172a; border: 1px solid #3b82f6; border-radius: 8px; padding: 14px; margin-top: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+              <div>
+                <strong style="color: #60a5fa; font-size: 13px;">✨ AI Niche Recommendation:</strong>
+                <span id="psmNicheSuggestedName" style="color: #f3f4f6; font-weight: 700; margin-left: 6px;">Science & Space</span>
+                <span id="psmNicheConfidenceBadge" class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; font-size: 11px; margin-left: 6px;">95% Match</span>
+              </div>
+              <button type="button" onclick="dismissModalNicheSuggestion()" style="background: none; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer;">✕</button>
+            </div>
+            <p id="psmNicheReasoning" style="font-size: 12px; color: #cbd5e1; margin-bottom: 10px; line-height: 1.4;"></p>
+            <div id="psmNicheMeta" style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px; display: flex; gap: 14px; flex-wrap: wrap;"></div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button type="button" class="btn btn-primary" style="font-size: 12px; padding: 6px 14px;" onclick="acceptModalNicheSuggestion()">
+                ✅ Accept & Apply Niche
+              </button>
+              <button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;" onclick="createProfileFromModalNiche()">
+                ➕ Create New Profile from this Page
+              </button>
+              <button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 6px 10px;" onclick="analyzePageNicheActionFromModal()">
+                🔄 Re-analyze
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION 2: POSTING SCHEDULE & TIMING -->
+        <div class="card" style="background: #0b0f19; border: 1px solid var(--card-border); padding: 18px; margin-bottom: 20px;">
+          <h4 style="font-size: 15px; margin: 0 0 14px 0; color: #93c5fd; display: flex; align-items: center; gap: 8px;">
+            <span>⏰</span> 2. Posting Cadence, Timing & Timezone
+          </h4>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px;">
+            <!-- Posts Per Day -->
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="psmPostsPerDay" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Posts per Day (0 = Disabled, 1 - 10)</label>
+              <input type="number" id="psmPostsPerDay" name="psmPostsPerDay" class="form-control" min="0" max="10" value="0" style="font-size: 14px; font-weight: 700;" oninput="handleScheduleInputChange()">
+              <div id="psmHighCadenceWarning" style="display: none; color: #fbbf24; font-size: 11px; margin-top: 4px;">
+                ⚠️ Warning: Facebook algorithm may penalize reach for pages posting over 5 times per day.
+              </div>
+            </div>
+
+            <!-- Posting Mode Selector -->
+            <div class="form-group" style="margin-bottom: 0;">
+              <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Timing Generation Mode</label>
+              <div style="display: flex; gap: 4px; margin-top: 4px;">
+                <button type="button" class="btn btn-primary psm-mode-btn" data-mode="fixed" onclick="setScheduleTimingMode('fixed', this)" style="flex: 1; font-size: 11px; padding: 6px 4px;">Fixed Times</button>
+                <button type="button" class="btn btn-secondary psm-mode-btn" data-mode="interval" onclick="setScheduleTimingMode('interval', this)" style="flex: 1; font-size: 11px; padding: 6px 4px;">Interval</button>
+                <button type="button" class="btn btn-secondary psm-mode-btn" data-mode="auto_spread" onclick="setScheduleTimingMode('auto_spread', this)" style="flex: 1; font-size: 11px; padding: 6px 4px;">Auto-Spread</button>
+              </div>
+            </div>
+
+            <!-- Audience Timezone -->
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="psmTimezone" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Audience Timezone</label>
+              <select id="psmTimezone" name="psmTimezone" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
+                <option value="Asia/Kolkata">Asia/Kolkata (IST +5:30)</option>
+                <option value="America/New_York">America/New_York (ET)</option>
+                <option value="America/Chicago">America/Chicago (CT)</option>
+                <option value="America/Denver">America/Denver (MT)</option>
+                <option value="America/Los_Angeles">America/Los_Angeles (PT)</option>
+                <option value="Europe/London">Europe/London (GMT/BST)</option>
+                <option value="Europe/Paris">Europe/Paris (CET)</option>
+                <option value="Europe/Berlin">Europe/Berlin (CET)</option>
+                <option value="Asia/Dubai">Asia/Dubai (GST +4:00)</option>
+                <option value="Asia/Singapore">Asia/Singapore (SGT +8:00)</option>
+                <option value="Asia/Tokyo">Asia/Tokyo (JST +9:00)</option>
+                <option value="Australia/Sydney">Australia/Sydney (AEST)</option>
+                <option value="UTC">UTC (Universal Time)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Mode-Specific Input: Fixed Times -->
+          <div id="psmTimingSectionFixed" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span style="font-size: 12px; color: #e2e8f0; font-weight: 600;">Posting Times (Audience Timezone):</span>
+              <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 2px 8px;" onclick="addFixedTimePicker()">+ Add Time</button>
+            </div>
+            <div id="psmFixedTimesList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+          </div>
+
+          <!-- Mode-Specific Input: Interval & Auto-Spread -->
+          <div id="psmTimingSectionInterval" style="display: none; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;">
+              <div class="form-group" style="margin-bottom: 0;">
+                <label for="psmWindowStart" style="font-size: 11px; color: var(--text-muted);">Window Start</label>
+                <input type="time" id="psmWindowStart" value="09:00" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label for="psmWindowEnd" style="font-size: 11px; color: var(--text-muted);">Window End</label>
+                <input type="time" id="psmWindowEnd" value="21:00" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
+              </div>
+              <div class="form-group" id="psmIntervalHoursGroup" style="margin-bottom: 0;">
+                <label for="psmIntervalHours" style="font-size: 11px; color: var(--text-muted);">Interval (Every N Hours)</label>
+                <input type="number" id="psmIntervalHours" value="3" min="1" max="12" class="form-control" style="font-size: 12px;" oninput="handleScheduleInputChange()">
+              </div>
+            </div>
+          </div>
+
+          <!-- Days of Week Checkboxes -->
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label style="font-size: 12px; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; display: block;">Active Days of the Week</label>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              ${['Mon (1)', 'Tue (2)', 'Wed (3)', 'Thu (4)', 'Fri (5)', 'Sat (6)', 'Sun (7)'].map((d, i) => `
+                <label style="font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;">
+                  <input type="checkbox" class="psm-dow-checkbox" value="${i + 1}" checked onchange="handleScheduleInputChange()">
+                  <span>${d.split(' ')[0]}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Jitter, Min Gap & Lead Time -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 16px;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="psmJitter" style="font-size: 11px; color: var(--text-muted);">Time Jitter (± Minutes)</label>
+              <input type="number" id="psmJitter" value="10" min="0" max="60" class="form-control" style="font-size: 12px;" oninput="handleScheduleInputChange()">
+              <small style="color: var(--text-muted); font-size: 10px;">Natural time shift to avoid exact-minute robotic posting.</small>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="psmMinGap" style="font-size: 11px; color: var(--text-muted);">Minimum Gap (Minutes)</label>
+              <input type="number" id="psmMinGap" value="60" min="30" max="720" class="form-control" style="font-size: 12px;" oninput="handleScheduleInputChange()">
+              <small style="color: var(--text-muted); font-size: 10px;">Guaranteed spacing between consecutive posts (min 30m).</small>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="psmLeadTime" style="font-size: 11px; color: var(--text-muted);">Generation Lead Time</label>
+              <select id="psmLeadTime" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
+                <option value="24">24 hours ahead</option>
+                <option value="48" selected>48 hours ahead</option>
+                <option value="72">3 days ahead</option>
+                <option value="168">7 days ahead</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Vacation Pause Range -->
+          <div style="background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+            <div style="font-size: 12px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px;">🌴 Optional Vacation / Pause Date Range (Skip Posting)</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div>
+                <label for="psmVacationStart" style="font-size: 11px; color: var(--text-muted);">Pause Start Date</label>
+                <input type="date" id="psmVacationStart" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
+              </div>
+              <div>
+                <label for="psmVacationEnd" style="font-size: 11px; color: var(--text-muted);">Pause End Date</label>
+                <input type="date" id="psmVacationEnd" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
+              </div>
+            </div>
+          </div>
+
+          <!-- LIVE 7-DAY SCHEDULE PREVIEW TABLE -->
+          <div style="background: #060913; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; margin-top: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 6px;">
+              <strong style="font-size: 13px; color: #34d399;">📅 Live 7-Day Autonomous Slot Preview</strong>
+              <span id="psmSlotSummaryBadge" style="font-size: 11px; color: var(--text-muted);">Recalculating live...</span>
+            </div>
+            <div style="overflow-x: auto; max-height: 220px;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
+                <thead>
+                  <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-muted);">
+                    <th style="padding: 6px 8px;">Date & Day</th>
+                    <th style="padding: 6px 8px;">Slot #</th>
+                    <th style="padding: 6px 8px;">Audience Time</th>
+                    <th style="padding: 6px 8px; color: #93c5fd;">Your Local Time (Asia/Kolkata)</th>
+                    <th style="padding: 6px 8px;">Timing Mode</th>
+                  </tr>
+                </thead>
+                <tbody id="psmSchedulePreviewTableBody">
+                  <tr><td colspan="5" style="text-align: center; padding: 12px; color: var(--text-muted);">Configure schedule above to generate preview</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION 3: PUBLISHING MODE & AI DISCLOSURES -->
+        <div class="card" style="background: #0b0f19; border: 1px solid var(--card-border); padding: 18px; margin-bottom: 20px;">
+          <h4 style="font-size: 15px; margin: 0 0 14px 0; color: #93c5fd; display: flex; align-items: center; gap: 8px;">
+            <span>🛡️</span> 3. Publishing Mode & Content Governance
+          </h4>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 16px;">
+            <!-- Publishing Mode -->
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="psmPublishingMode" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Publishing Mode</label>
+              <select id="psmPublishingMode" name="psmPublishingMode" class="form-control" style="font-size: 13px;" onchange="handlePublishingModeChange(this.value)">
+                <option value="review">Review (Human Approval Gate - Safest)</option>
+                <option value="hybrid">Hybrid (Auto if QA Score >= Threshold)</option>
+                <option value="auto">Auto (Full Autonomous Instant Publishing)</option>
+              </select>
+            </div>
+
+            <!-- Hybrid Score Slider -->
+            <div class="form-group" id="psmHybridScoreGroup" style="margin-bottom: 0;">
+              <label for="psmHybridScore" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">
+                Hybrid QA Score Threshold: <span id="psmHybridScoreVal" style="color: #34d399; font-weight: 700;">80</span>/100
+              </label>
+              <input type="range" id="psmHybridScore" min="50" max="95" value="80" style="width: 100%; margin-top: 6px;" oninput="document.getElementById('psmHybridScoreVal').innerText = this.value">
+              <small style="color: var(--text-muted); font-size: 10px;">Scores below threshold are routed to Review Inbox.</small>
+            </div>
+
+            <!-- Daily Cap -->
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="psmDailyCap" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Hard Daily Cap</label>
+              <input type="number" id="psmDailyCap" value="3" min="1" max="20" class="form-control" style="font-size: 12px;">
+              <small style="color: var(--text-muted); font-size: 10px;">Safety ceiling for total posts per calendar day.</small>
+            </div>
+          </div>
+
+          <!-- AI Disclosure Toggle -->
+          <div style="background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; margin-bottom: 6px;">
+              <input type="checkbox" id="psmAiDisclosureToggle" onchange="document.getElementById('psmAiDisclosureBox').style.display = this.checked ? 'block' : 'none'">
+              <span style="font-weight: 600; color: #f3f4f6;">Append AI Disclosure Statement to Caption</span>
+            </label>
+            <div id="psmAiDisclosureBox" style="display: none; margin-top: 8px;">
+              <input type="text" id="psmAiDisclosureText" class="form-control" value="AI-assisted content created for Beyond the Known." style="font-size: 12px;" placeholder="Custom disclosure line">
+              <small style="color: var(--text-muted); font-size: 10px;">Ensures compliance with Meta content integrity standards.</small>
+            </div>
+          </div>
+
+          <!-- Source Attribution Line -->
+          <div style="background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; margin: 0;">
+              <input type="checkbox" id="psmSourceLineToggle" checked>
+              <span style="font-weight: 600; color: #f3f4f6;">Include Verified Source Line (e.g. "Source: NASA / Nature")</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--card-border); padding-top: 18px;">
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <button type="button" class="btn btn-secondary" style="font-size: 13px;" onclick="runTestRunFromModal()">
+              ⚡ Run Test Run Now
+            </button>
+            <button type="button" id="psmToggleLiveBtn" class="btn btn-secondary" style="font-size: 13px; font-weight: 700;" onclick="toggleLiveFromModal()">
+              🚀 Take Page Live
+            </button>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <button type="button" class="btn btn-secondary" onclick="closePageSettingsModal()">Cancel</button>
+            <button type="submit" id="psmSaveBtn" class="btn btn-primary" style="padding: 10px 24px; font-weight: 700;">
+              💾 Save Settings to Supabase
+            </button>
+          </div>
         </div>
       </form>
     </div>

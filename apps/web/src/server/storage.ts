@@ -15,6 +15,8 @@ import {
   assertSafeProductionToken,
   isTestEnv,
   isProductionEnv,
+  SAFE_DEFAULT_SCHEDULE,
+  type PageSchedule,
   type TokenInspectionResult,
   type PageDiscoveryResult,
   type DiscoveredPage,
@@ -94,15 +96,27 @@ export interface StoredPage {
   tasks?: string[];
   fan_count?: number;
   secondary_account_ids?: string[];
-  profile_id: string;
+  profile_id?: string | null;
   publishing_mode: 'auto' | 'review' | 'hybrid';
   hybrid_min_score: number;
   daily_cap: number;
   active: boolean;
-  schedule: {
+  schedule: PageSchedule | {
     postsPerDay: number;
     postingTimes: string[];
     timezone: string;
+    mode?: 'fixed' | 'interval' | 'auto_spread';
+    daysOfWeek?: number[];
+    jitterMinutes?: number;
+    minGapMinutes?: number;
+    leadTimeHours?: number;
+    intervalHours?: number;
+    windowStart?: string;
+    windowEnd?: string;
+    vacationStart?: string | null;
+    vacationEnd?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
   };
   custom_caption_prompt?: string;
   custom_caption_prompt_mode?: 'append' | 'replace';
@@ -111,6 +125,12 @@ export interface StoredPage {
   first_comment_enabled?: boolean;
   first_comment_prompt?: string;
   overrides?: Record<string, any>;
+  niche_analysis?: any;
+  ai_disclosure_enabled?: boolean;
+  ai_disclosure_text?: string;
+  source_attribution_enabled?: boolean;
+  last_test_run_at?: string | null;
+  checklist_status?: any;
   connected_at?: string;
   last_synced_at?: string;
   created_at: string;
@@ -657,16 +677,18 @@ export class SystemStore {
       tasks: Array.isArray(row.tasks) ? row.tasks : [],
       fan_count: typeof row.fan_count === 'number' ? row.fan_count : (row.fan_count ? Number(row.fan_count) : 0),
       secondary_account_ids: Array.isArray(row.secondary_account_ids) ? row.secondary_account_ids : [],
-      profile_id: row.profile_id || 'default-niche',
-      publishing_mode: row.publishing_mode || 'hybrid',
+      profile_id: row.profile_id || null,
+      publishing_mode: row.publishing_mode || 'review',
       hybrid_min_score: Number(row.hybrid_min_score) || 80,
-      daily_cap: row.daily_cap || 3,
-      active: row.active !== false,
-      schedule: row.schedule || {
-        postsPerDay: 3,
-        postingTimes: ['10:00', '15:00', '20:00'],
-        timezone: 'UTC',
-      },
+      daily_cap: row.daily_cap !== undefined ? Number(row.daily_cap) : 3,
+      active: Boolean(row.active),
+      schedule: row.schedule || SAFE_DEFAULT_SCHEDULE,
+      niche_analysis: row.niche_analysis || null,
+      ai_disclosure_enabled: Boolean(row.ai_disclosure_enabled),
+      ai_disclosure_text: row.ai_disclosure_text || '',
+      source_attribution_enabled: Boolean(row.source_attribution_enabled),
+      last_test_run_at: row.last_test_run_at || null,
+      checklist_status: row.checklist_status || null,
       custom_caption_prompt: row.custom_caption_prompt || '',
       custom_caption_prompt_mode: row.custom_caption_prompt_mode || 'append',
       custom_image_prompt: row.custom_image_prompt || '',
@@ -705,16 +727,18 @@ export class SystemStore {
       tasks: Array.isArray(data.tasks) ? data.tasks : [],
       fan_count: typeof data.fan_count === 'number' ? data.fan_count : (data.fan_count ? Number(data.fan_count) : 0),
       secondary_account_ids: Array.isArray(data.secondary_account_ids) ? data.secondary_account_ids : [],
-      profile_id: data.profile_id || 'default-niche',
-      publishing_mode: data.publishing_mode || 'hybrid',
+      profile_id: data.profile_id || null,
+      publishing_mode: data.publishing_mode || 'review',
       hybrid_min_score: Number(data.hybrid_min_score) || 80,
-      daily_cap: data.daily_cap || 3,
-      active: data.active !== false,
-      schedule: data.schedule || {
-        postsPerDay: 3,
-        postingTimes: ['10:00', '15:00', '20:00'],
-        timezone: 'UTC',
-      },
+      daily_cap: data.daily_cap !== undefined ? Number(data.daily_cap) : 3,
+      active: Boolean(data.active),
+      schedule: data.schedule || SAFE_DEFAULT_SCHEDULE,
+      niche_analysis: data.niche_analysis || null,
+      ai_disclosure_enabled: Boolean(data.ai_disclosure_enabled),
+      ai_disclosure_text: data.ai_disclosure_text || '',
+      source_attribution_enabled: Boolean(data.source_attribution_enabled),
+      last_test_run_at: data.last_test_run_at || null,
+      checklist_status: data.checklist_status || null,
       custom_caption_prompt: data.custom_caption_prompt || '',
       custom_caption_prompt_mode: data.custom_caption_prompt_mode || 'append',
       custom_image_prompt: data.custom_image_prompt || '',
@@ -733,7 +757,7 @@ export class SystemStore {
     name: string;
     fb_page_id: string;
     fb_page_token: string;
-    profile_id?: string;
+    profile_id?: string | null;
     fb_account_id?: string;
     category?: string;
     picture_url?: string;
@@ -744,7 +768,14 @@ export class SystemStore {
     publishing_mode?: 'auto' | 'review' | 'hybrid';
     hybrid_min_score?: number;
     daily_cap?: number;
-    schedule?: { postsPerDay: number; postingTimes: string[]; timezone: string };
+    active?: boolean;
+    schedule?: any;
+    niche_analysis?: any;
+    ai_disclosure_enabled?: boolean;
+    ai_disclosure_text?: string;
+    source_attribution_enabled?: boolean;
+    last_test_run_at?: string;
+    checklist_status?: any;
     custom_caption_prompt?: string;
     custom_caption_prompt_mode?: 'append' | 'replace';
     custom_image_prompt?: string;
@@ -756,6 +787,11 @@ export class SystemStore {
     last_synced_at?: string;
   }): Promise<StoredPage> {
     assertSafeProductionToken(input.fb_page_token, input.fb_page_id);
+
+    const safeActive = input.active !== undefined ? input.active : false;
+    const safeSchedule = input.schedule || SAFE_DEFAULT_SCHEDULE;
+    const safeMode = input.publishing_mode || 'review';
+    const safeProfileId = input.profile_id && input.profile_id.length > 5 ? input.profile_id : null;
 
     if (isTestEnv() && !this.client) {
       const id = crypto.randomUUID();
@@ -773,16 +809,18 @@ export class SystemStore {
         tasks: Array.isArray(input.tasks) ? input.tasks : ['CREATE_CONTENT'],
         fan_count: typeof input.fan_count === 'number' ? input.fan_count : 0,
         secondary_account_ids: input.secondary_account_ids || [],
-        profile_id: input.profile_id || 'default-niche',
-        publishing_mode: input.publishing_mode || 'hybrid',
+        profile_id: safeProfileId,
+        publishing_mode: safeMode,
         hybrid_min_score: Number(input.hybrid_min_score) || 80,
-        daily_cap: input.daily_cap || 3,
-        active: true,
-        schedule: input.schedule || {
-          postsPerDay: 3,
-          postingTimes: ['10:00', '15:00', '20:00'],
-          timezone: 'UTC',
-        },
+        daily_cap: input.daily_cap !== undefined ? Number(input.daily_cap) : 3,
+        active: safeActive,
+        schedule: safeSchedule,
+        niche_analysis: input.niche_analysis || null,
+        ai_disclosure_enabled: Boolean(input.ai_disclosure_enabled),
+        ai_disclosure_text: input.ai_disclosure_text || '',
+        source_attribution_enabled: Boolean(input.source_attribution_enabled),
+        last_test_run_at: input.last_test_run_at || null,
+        checklist_status: input.checklist_status || null,
         custom_caption_prompt: input.custom_caption_prompt || '',
         custom_caption_prompt_mode: input.custom_caption_prompt_mode || 'append',
         custom_image_prompt: input.custom_image_prompt || '',
@@ -812,16 +850,18 @@ export class SystemStore {
       tasks: input.tasks || [],
       fan_count: typeof input.fan_count === 'number' ? input.fan_count : 0,
       secondary_account_ids: input.secondary_account_ids || [],
-      profile_id: input.profile_id && input.profile_id.length > 20 ? input.profile_id : null,
-      publishing_mode: input.publishing_mode || 'hybrid',
+      profile_id: safeProfileId,
+      publishing_mode: safeMode,
       hybrid_min_score: input.hybrid_min_score ?? 80,
-      daily_cap: input.daily_cap ?? 3,
-      active: true,
-      schedule: input.schedule || {
-        postsPerDay: 3,
-        postingTimes: ['10:00', '15:00', '20:00'],
-        timezone: 'UTC',
-      },
+      daily_cap: input.daily_cap !== undefined ? Number(input.daily_cap) : 3,
+      active: safeActive,
+      schedule: safeSchedule,
+      niche_analysis: input.niche_analysis || null,
+      ai_disclosure_enabled: Boolean(input.ai_disclosure_enabled),
+      ai_disclosure_text: input.ai_disclosure_text || '',
+      source_attribution_enabled: Boolean(input.source_attribution_enabled),
+      last_test_run_at: input.last_test_run_at || null,
+      checklist_status: input.checklist_status || null,
       custom_caption_prompt: input.custom_caption_prompt || '',
       custom_caption_prompt_mode: input.custom_caption_prompt_mode || 'append',
       custom_image_prompt: input.custom_image_prompt || '',
@@ -900,6 +940,12 @@ export class SystemStore {
     if (updates.daily_cap !== undefined) updatePayload.daily_cap = updates.daily_cap;
     if (updates.active !== undefined) updatePayload.active = updates.active;
     if (updates.schedule) updatePayload.schedule = updates.schedule;
+    if (updates.niche_analysis !== undefined) updatePayload.niche_analysis = updates.niche_analysis;
+    if (updates.ai_disclosure_enabled !== undefined) updatePayload.ai_disclosure_enabled = updates.ai_disclosure_enabled;
+    if (updates.ai_disclosure_text !== undefined) updatePayload.ai_disclosure_text = updates.ai_disclosure_text;
+    if (updates.source_attribution_enabled !== undefined) updatePayload.source_attribution_enabled = updates.source_attribution_enabled;
+    if (updates.last_test_run_at !== undefined) updatePayload.last_test_run_at = updates.last_test_run_at;
+    if (updates.checklist_status !== undefined) updatePayload.checklist_status = updates.checklist_status;
     if (updates.custom_caption_prompt !== undefined) updatePayload.custom_caption_prompt = updates.custom_caption_prompt;
     if (updates.custom_caption_prompt_mode) updatePayload.custom_caption_prompt_mode = updates.custom_caption_prompt_mode;
     if (updates.custom_image_prompt !== undefined) updatePayload.custom_image_prompt = updates.custom_image_prompt;
@@ -962,6 +1008,81 @@ export class SystemStore {
     return true;
   }
 
+  public async getContentProfiles(): Promise<any[]> {
+    if (isTestEnv() && !this.client) {
+      return [];
+    }
+    const { data, error } = await this.getClient().from('content_profiles').select('*').order('created_at', { ascending: false });
+    if (error || !data) return [];
+    return data.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      type: r.type,
+      language: r.language,
+      audience: r.audience,
+      masterPrompt: r.master_prompt,
+      templates: r.templates || {},
+      captionSettings: r.caption_settings || {},
+      hashtagSettings: r.hashtag_settings || {},
+      disclosureSettings: r.disclosure_settings || {},
+      imageSettings: r.image_settings || {},
+      topicSettings: r.topic_settings || {},
+      researchSourceIds: r.research_source_ids || [],
+      customVariables: r.custom_variables || {},
+      version: r.version || 1,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  public async createContentProfile(profile: any): Promise<any> {
+    const payload = {
+      name: profile.name,
+      description: profile.description || '',
+      type: profile.type || 'factual',
+      language: profile.language || 'en',
+      audience: profile.audience || 'General audience',
+      master_prompt: profile.masterPrompt || profile.master_prompt || '',
+      templates: profile.templates || {},
+      caption_settings: profile.captionSettings || profile.caption_settings || {},
+      hashtag_settings: profile.hashtagSettings || profile.hashtag_settings || {},
+      disclosure_settings: profile.disclosureSettings || profile.disclosure_settings || {},
+      image_settings: profile.imageSettings || profile.image_settings || {},
+      topic_settings: profile.topicSettings || profile.topic_settings || {},
+      research_source_ids: profile.researchSourceIds || profile.research_source_ids || [],
+      custom_variables: profile.customVariables || profile.custom_variables || {},
+    };
+    if (isTestEnv() && !this.client) {
+      const id = crypto.randomUUID();
+      return { id, ...profile };
+    }
+    const { data, error } = await this.getClient().from('content_profiles').insert(payload).select().single();
+    if (error) {
+      throw new Error(`Failed to create content profile: ${error.message}`);
+    }
+    return {
+      id: data.id,
+      name: data.name,
+      description: data.description,
+      type: data.type,
+      language: data.language,
+      audience: data.audience,
+      masterPrompt: data.master_prompt,
+      templates: data.templates,
+      captionSettings: data.caption_settings,
+      hashtagSettings: data.hashtag_settings,
+      disclosureSettings: data.disclosure_settings,
+      imageSettings: data.image_settings,
+      topicSettings: data.topic_settings,
+      researchSourceIds: data.research_source_ids,
+      customVariables: data.custom_variables,
+      version: data.version,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
   public async upsertPageFromFacebook(input: {
     fb_account_id: string;
     name: string;
@@ -1015,9 +1136,11 @@ export class SystemStore {
         fb_page_id: input.fb_page_id,
         fb_page_token: input.fb_page_token,
         fb_account_id: input.fb_account_id,
-        profile_id: 'default-niche',
-        publishing_mode: 'hybrid',
+        profile_id: null,
+        publishing_mode: 'review',
         daily_cap: 3,
+        active: false,
+        schedule: SAFE_DEFAULT_SCHEDULE,
         category: input.category,
         picture_url: input.picture_url,
         tasks,
@@ -1073,9 +1196,11 @@ export class SystemStore {
       fb_page_id: input.fb_page_id,
       fb_page_token: input.fb_page_token,
       fb_account_id: input.fb_account_id,
-      profile_id: 'default-niche',
-      publishing_mode: 'hybrid',
+      profile_id: null,
+      publishing_mode: 'review',
       daily_cap: 3,
+      active: false,
+      schedule: SAFE_DEFAULT_SCHEDULE,
       category: input.category,
       picture_url: input.picture_url,
       tasks,
