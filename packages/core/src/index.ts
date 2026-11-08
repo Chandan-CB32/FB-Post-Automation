@@ -49,6 +49,7 @@ export * from './validation/schemas.js';
 export * from './validation/caption-validator.js';
 
 // Facebook Graph API & Tokens
+export * from './facebook/constants.js';
 export * from './facebook/types.js';
 export * from './facebook/client.js';
 export * from './facebook/tokens.js';

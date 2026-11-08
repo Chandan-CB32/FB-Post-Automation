@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { FacebookGraphClient, FacebookGraphError } from './client.js';
+import { DEFAULT_GRAPH_API_VERSION } from './constants.js';
 
 export interface GenerateFacebookAuthUrlOptions {
   appId: string;
@@ -25,7 +26,7 @@ export function generateFacebookAuthUrl(options: GenerateFacebookAuthUrlOptions)
     throw new Error('OAuth state is required for CSRF protection.');
   }
 
-  const url = new URL('https://www.facebook.com/v21.0/dialog/oauth');
+  const url = new URL(`https://www.facebook.com/${DEFAULT_GRAPH_API_VERSION}/dialog/oauth`);
   url.searchParams.set('client_id', options.appId.trim());
   url.searchParams.set('redirect_uri', options.redirectUri.trim());
   url.searchParams.set('state', options.state.trim());

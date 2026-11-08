@@ -5,7 +5,10 @@ import {
   FacebookDebugTokenResponse,
   TokenInspectionResult,
   PagePermissionCheckResult,
+  FacebookPermissionItem,
+  FacebookPermissionsResponse,
 } from './types.js';
+import { DEFAULT_GRAPH_API_VERSION, sanitizeFacebookErrorMessage } from './constants.js';
 
 export interface FacebookClientOptions {
   apiVersion?: string;
@@ -26,7 +29,7 @@ export class FacebookGraphError extends Error {
   public readonly isRetryable: boolean;
 
   constructor(errorData: FacebookGraphApiErrorData, httpStatus?: number) {
-    super(errorData.message || 'Facebook Graph API error');
+    super(sanitizeFacebookErrorMessage(errorData.message || 'Facebook Graph API error'));
     this.name = 'FacebookGraphError';
     this.code = errorData.code;
     this.subcode = errorData.error_subcode;
@@ -55,7 +58,7 @@ export class FacebookGraphClient {
   private readonly fetchFn: typeof fetch;
 
   constructor(options: FacebookClientOptions = {}) {
-    this.apiVersion = options.apiVersion || 'v21.0';
+    this.apiVersion = options.apiVersion || DEFAULT_GRAPH_API_VERSION;
     this.baseUrl = (options.baseUrl || 'https://graph.facebook.com').replace(/\/+$/, '');
     this.appAccessToken = options.appAccessToken;
     this.timeoutMs = options.timeoutMs ?? 30000;
@@ -323,6 +326,15 @@ export class FacebookGraphClient {
   }
 
   /**
+   * Retrieves granted and declined permissions for a user access token
+   * via GET /me/permissions.
+   */
+  public async getPermissions(userToken: string): Promise<FacebookPermissionItem[]> {
+    const response = await this.get<FacebookPermissionsResponse>('me/permissions', userToken);
+    return response?.data || [];
+  }
+
+  /**
    * Verifies that a Page Access Token possesses administrative / publishing permissions
    * on the specified Page ID.
    */
@@ -330,7 +342,7 @@ export class FacebookGraphClient {
     const issues: string[] = [];
 
     try {
-      const pageInfo = await this.get<{ id: string; name: string; tasks?: string[]; perms?: string[] }>(
+      const pageInfo = await this.get<{ id: string; name: string; tasks?: string[] }>(
         pageId,
         pageToken,
         {

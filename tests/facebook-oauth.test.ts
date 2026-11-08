@@ -6,6 +6,7 @@ import {
   parseFacebookDeletionSignedRequest,
   encryptPageToken,
   decryptPageToken,
+  DEFAULT_GRAPH_API_VERSION,
 } from '../packages/core/src/index.js';
 import { createDashboardServer } from '../apps/web/src/server';
 import { SystemStore } from '../apps/web/src/server/storage';
@@ -42,7 +43,7 @@ describe('Facebook OAuth & Facebook Login for Business Flow', () => {
 
       const parsed = new URL(urlStr);
       expect(parsed.origin).toBe('https://www.facebook.com');
-      expect(parsed.pathname).toBe('/v21.0/dialog/oauth');
+      expect(parsed.pathname).toBe(`/${DEFAULT_GRAPH_API_VERSION}/dialog/oauth`);
       expect(parsed.searchParams.get('client_id')).toBe('123456789012345');
       expect(parsed.searchParams.get('redirect_uri')).toBe(
         'https://my-domain.vercel.app/api/auth/facebook/callback'
@@ -188,7 +189,7 @@ describe('Facebook OAuth & Facebook Login for Business Flow', () => {
         expect(res.status).toBe(302);
         const location = res.headers.get('location');
         expect(location).toBeDefined();
-        expect(location).toContain('https://www.facebook.com/v21.0/dialog/oauth');
+        expect(location).toContain(`https://www.facebook.com/${DEFAULT_GRAPH_API_VERSION}/dialog/oauth`);
         expect(location).toContain('client_id=987654321098765');
         expect(location).toContain('config_id=test-config-id-888');
 

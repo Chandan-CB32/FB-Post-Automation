@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   discoverFacebookPages,
+  fetchManagedPages,
   canUserPublishToPage,
   testFacebookCredentials,
   FacebookGraphClient,
+  FacebookGraphError,
+  PAGE_ACCOUNTS_FIELDS,
+  sanitizeFacebookErrorMessage,
 } from '../packages/core/src/index.js';
 import { SystemStore } from '../apps/web/src/server/storage.js';
 
@@ -293,5 +299,170 @@ describe('Automatic Facebook Account & Page Discovery Engine', () => {
     expect(diag.metaAppId).toBe('app-98765');
     expect(diag.configIdValid).toBe(true);
     expect(diag.expectedRedirectUri).toBe('https://fbauto247.vercel.app/api/auth/facebook/callback');
+  });
+
+  it('fails if the string "perms" is ever requested as a Graph API field and verifies code uses "tasks" instead', async () => {
+    // 1. Static codebase audit: verify "perms" is never passed as a field in packages/core/src/facebook
+    const facebookDir = path.resolve('packages/core/src/facebook');
+    const files = fs.readdirSync(facebookDir).filter((f) => f.endsWith('.ts'));
+    for (const file of files) {
+      const content = fs.readFileSync(path.join(facebookDir, file), 'utf8');
+      // Assert that 'perms' is not present in fields query string
+      expect(content).not.toMatch(/fields\s*[:=]\s*['"`][^'"`]*\bperms\b/i);
+    }
+
+    // 2. Mock Graph API that simulates Meta's exact response if "perms" is received
+    const mockClient = new FacebookGraphClient({
+      fetchFn: async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('perms')) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                message: '(#100) Tried accessing nonexisting field (perms)',
+                type: 'OAuthException',
+                code: 100,
+                fbtrace_id: 'A1B2C3D4E5',
+              },
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (urlStr.includes('me/accounts')) {
+          expect(urlStr).toContain('tasks');
+          expect(urlStr).not.toContain('perms');
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'page-real-123',
+                  name: 'Official Brand Page',
+                  category: 'Business',
+                  access_token: 'EAAB_real_page_token',
+                  tasks: ['CREATE_CONTENT', 'MANAGE'],
+                  fan_count: 5000,
+                  picture: { data: { url: 'https://cdn.fb.com/brand.jpg' } },
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (urlStr.includes('me/businesses') || urlStr.includes('me/permissions')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                { permission: 'pages_show_list', status: 'granted' },
+                { permission: 'pages_read_engagement', status: 'granted' },
+                { permission: 'pages_manage_posts', status: 'granted' },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      },
+    });
+
+    // Calling discoverFacebookPages MUST succeed and never request perms
+    const discovery = await discoverFacebookPages('EAAB_valid_user_token', mockClient);
+    expect(discovery.totalFound).toBe(1);
+    expect(discovery.pages[0].id).toBe('page-real-123');
+    expect(discovery.pages[0].name).toBe('Official Brand Page');
+    expect(discovery.pages[0].canPublish).toBe(true);
+    expect(discovery.pages[0].token_status).toBe('valid');
+
+    // Calling fetchManagedPages MUST also succeed without error
+    const managedPages = await fetchManagedPages('EAAB_valid_user_token', mockClient);
+    expect(managedPages.length).toBe(1);
+    expect(managedPages[0].tasks).toEqual(['CREATE_CONTENT', 'MANAGE']);
+  });
+
+  it('handles empty results and provides clear actionable diagnostic reasons', async () => {
+    // Sub-case A: Missing permissions (pages_show_list was declined or missing)
+    const missingPermsClient = new FacebookGraphClient({
+      fetchFn: async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('me/permissions')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                { permission: 'public_profile', status: 'granted' },
+                { permission: 'pages_show_list', status: 'declined' },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      },
+    });
+
+    const resA = await discoverFacebookPages('token_missing_perms', missingPermsClient);
+    expect(resA.totalFound).toBe(0);
+    expect(resA.emptyReason).toBe('missing_permissions');
+    expect(resA.emptyExplanation).toContain('pages_show_list');
+
+    // Sub-case B: Permissions granted, but no pages returned (no page selected in Login dialog or account owns no pages)
+    const noPagesSelectedClient = new FacebookGraphClient({
+      fetchFn: async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('me/permissions')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                { permission: 'pages_show_list', status: 'granted' },
+                { permission: 'pages_read_engagement', status: 'granted' },
+                { permission: 'pages_manage_posts', status: 'granted' },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      },
+    });
+
+    const resB = await discoverFacebookPages('token_no_pages_selected', noPagesSelectedClient);
+    expect(resB.totalFound).toBe(0);
+    expect(resB.emptyReason).toBe('no_pages_selected');
+    expect(resB.emptyExplanation).toContain('selected/checked');
+    expect(resB.grantedPermissions).toContain('pages_show_list');
+  });
+
+  it('handles Graph API permission errors without leaking tokens or claiming token exchange failed', async () => {
+    const errorClient = new FacebookGraphClient({
+      fetchFn: async (url: any) => {
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: 'Permissions error: (#200) Requires pages_show_list with token EAABsecrettoken1234567890abcdef',
+              type: 'OAuthException',
+              code: 200,
+            },
+          }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } }
+        );
+      },
+    });
+
+    await expect(discoverFacebookPages('token_error', errorClient)).rejects.toThrowError(FacebookGraphError);
+
+    try {
+      await discoverFacebookPages('token_error', errorClient);
+    } catch (err: any) {
+      expect(err.code).toBe(200);
+      expect(err.message).not.toContain('EAABsecrettoken');
+      expect(err.message).toContain('[REDACTED_TOKEN]');
+    }
+  });
+
+  it('sanitizes Facebook error messages correctly', () => {
+    const raw = 'Failed to fetch me/accounts?access_token=EAAB1234567890abcdef1234567890 with secret=my_super_secret';
+    const clean = sanitizeFacebookErrorMessage(raw);
+    expect(clean).not.toContain('EAAB1234567890abcdef1234567890');
+    expect(clean).not.toContain('my_super_secret');
+    expect(clean).toContain('[REDACTED_TOKEN]');
+    expect(clean).toContain('[REDACTED_SECRET]');
   });
 });

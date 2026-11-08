@@ -1419,13 +1419,15 @@
       if (!res.ok || data.error) {
         alert('Sync error: ' + (data.error || 'Failed to sync account pages'));
       } else {
-        alert(
-          '🎉 Synced ' + (data.accountName || 'Account') + ' successfully!\n\n' +
+        let msg = '🎉 Synced ' + (data.accountName || 'Account') + ' successfully!\n\n' +
           'Discovered: ' + data.totalDiscovered + ' Page(s)\n' +
           'New: ' + data.newCount + ' | Updated: ' + data.updatedCount +
           (data.inaccessibleCount > 0 ? ' | Inaccessible: ' + data.inaccessibleCount : '') +
-          '\nPublishable: ' + data.publishableCount
-        );
+          '\nPublishable: ' + data.publishableCount;
+        if (data.totalDiscovered === 0 && data.emptyExplanation) {
+          msg += '\n\n⚠️ Notice: ' + data.emptyExplanation;
+        }
+        alert(msg);
         window.location.reload();
       }
     } catch (e) {

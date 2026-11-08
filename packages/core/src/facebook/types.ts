@@ -33,13 +33,21 @@ export interface FacebookDebugTokenResponse {
   data: FacebookDebugTokenData;
 }
 
+export interface FacebookPermissionItem {
+  permission: string;
+  status: 'granted' | 'declined' | 'expired';
+}
+
+export interface FacebookPermissionsResponse {
+  data: FacebookPermissionItem[];
+}
+
 export interface FacebookPageAccount {
   id: string;
   name: string;
   access_token: string;
   category?: string;
   tasks?: string[];
-  perms?: string[];
   fan_count?: number;
   picture?: {
     data?: {
@@ -88,6 +96,12 @@ export interface PageDiscoveryResult {
   publishableCount: number;
   unpublishableCount: number;
   businessesSearched: number;
+  permissions?: FacebookPermissionItem[];
+  grantedPermissions?: string[];
+  declinedPermissions?: string[];
+  missingRequiredPermissions?: string[];
+  emptyReason?: 'no_pages_selected' | 'no_pages_owned' | 'missing_permissions';
+  emptyExplanation?: string;
 }
 
 export interface FacebookAccountsResponse {

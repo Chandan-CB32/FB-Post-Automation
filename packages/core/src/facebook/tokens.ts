@@ -6,7 +6,13 @@ import {
   FacebookPageAccount,
   DiscoveredPage,
   PageDiscoveryResult,
+  FacebookPermissionItem,
 } from './types.js';
+import {
+  PAGE_ACCOUNTS_FIELDS,
+  REQUIRED_FACEBOOK_SCOPES,
+  sanitizeFacebookErrorMessage,
+} from './constants.js';
 
 /**
  * Encrypts a raw Facebook Page or User Access Token using AES-256-GCM.
@@ -106,7 +112,7 @@ export async function fetchManagedPages(
   const fbClient = client || new FacebookGraphClient();
 
   const response = await fbClient.get<FacebookAccountsResponse>('me/accounts', userAccessToken, {
-    fields: 'id,name,access_token,category,tasks,perms,picture,fan_count',
+    fields: PAGE_ACCOUNTS_FIELDS,
     limit: 100,
   });
 
@@ -115,10 +121,11 @@ export async function fetchManagedPages(
 
 /**
  * Comprehensive automatic Page discovery:
- * 1. Fetches ALL Pages from `me/accounts` with full pagination.
+ * 1. Fetches ALL Pages from `me/accounts` with full pagination using official Graph API fields (tasks, not legacy perms).
  * 2. Fetches Pages from Business Portfolios (`me/businesses` -> `owned_pages` and `client_pages`) with pagination.
  * 3. Merges duplicates by Page ID, preserving active tokens and publishing rights.
  * 4. Determines publishing rights based on tasks (`CREATE_CONTENT` or `MANAGE`).
+ * 5. Queries granted user permissions to diagnose empty page discovery results.
  */
 export async function discoverFacebookPages(
   userAccessToken: string,
@@ -143,7 +150,7 @@ export async function discoverFacebookPages(
       response = await fbClient.get<FacebookAccountsResponse>(nextUrl, userAccessToken);
     } else {
       response = await fbClient.get<FacebookAccountsResponse>('me/accounts', userAccessToken, {
-        fields: 'id,name,category,access_token,tasks,perms,picture,fan_count',
+        fields: PAGE_ACCOUNTS_FIELDS,
         limit: 100,
       });
     }
@@ -202,7 +209,7 @@ export async function discoverFacebookPages(
                   `${bus.id}/${endpoint}`,
                   userAccessToken,
                   {
-                    fields: 'id,name,category,access_token,tasks,perms,picture,fan_count',
+                    fields: PAGE_ACCOUNTS_FIELDS,
                     limit: 100,
                   }
                 );
@@ -268,8 +275,41 @@ export async function discoverFacebookPages(
     // If user has no business portfolios or lacks business permissions, continue smoothly
   }
 
+  // 3. Inspect granted permissions via GET /me/permissions
+  let permissions: FacebookPermissionItem[] = [];
+  try {
+    permissions = await fbClient.getPermissions(userAccessToken);
+  } catch {
+    // Non-fatal if permissions check fails
+  }
+
+  const grantedPermissions = permissions
+    .filter((p) => p.status === 'granted')
+    .map((p) => p.permission);
+  const declinedPermissions = permissions
+    .filter((p) => p.status === 'declined')
+    .map((p) => p.permission);
+  const missingRequiredPermissions = REQUIRED_FACEBOOK_SCOPES.filter(
+    (scope) => !grantedPermissions.includes(scope)
+  );
+
   const pages = Array.from(pagesMap.values());
   const publishableCount = pages.filter((p) => p.canPublish).length;
+
+  let emptyReason: 'no_pages_selected' | 'no_pages_owned' | 'missing_permissions' | undefined = undefined;
+  let emptyExplanation: string | undefined = undefined;
+
+  if (pages.length === 0) {
+    if (permissions.length > 0 && missingRequiredPermissions.includes('pages_show_list')) {
+      emptyReason = 'missing_permissions';
+      emptyExplanation =
+        "The required 'pages_show_list' permission was not granted by Facebook. Please click 'Reconnect' and approve Page permissions.";
+    } else {
+      emptyReason = 'no_pages_selected';
+      emptyExplanation =
+        'No Facebook Pages were returned by Meta. Possible reasons: (a) In the Facebook Login dialog, no Pages were selected/checked; (b) this Facebook account does not have Admin or Editor role on any Facebook Page; or (c) your Page belongs to a Meta Business Portfolio requiring business management permissions.';
+    }
+  }
 
   return {
     pages,
@@ -277,6 +317,12 @@ export async function discoverFacebookPages(
     publishableCount,
     unpublishableCount: pages.length - publishableCount,
     businessesSearched,
+    permissions,
+    grantedPermissions,
+    declinedPermissions,
+    missingRequiredPermissions,
+    emptyReason,
+    emptyExplanation,
   };
 }
 

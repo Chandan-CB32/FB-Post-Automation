@@ -40,6 +40,8 @@ import {
   discoverFacebookPages,
   testFacebookCredentials,
   parseFacebookDeletionSignedRequest,
+  FacebookGraphError,
+  sanitizeFacebookErrorMessage,
 } from '@fb-auto/core';
 import {
   renderPrivacyPolicyHtml,
@@ -749,22 +751,45 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         return;
       }
 
+      // Stage 1: Exchange authorization code for user access token & extend to long-lived token (~60 days)
+      let shortLivedToken: string;
+      let longLivedToken: string;
+      let expiresIn: number;
       try {
-        const { accessToken: shortLivedToken } = await exchangeCodeForUserToken(
+        const shortRes = await exchangeCodeForUserToken(
           code,
           appId,
           appSecret,
           redirectUri
         );
-        const { accessToken: longLivedToken, expiresIn } = await exchangeForLongLivedUserToken(
+        shortLivedToken = shortRes.accessToken;
+        const longRes = await exchangeForLongLivedUserToken(
           shortLivedToken,
           appId,
           appSecret
         );
-        const userProfile = await fetchFacebookUserProfile(longLivedToken);
+        longLivedToken = longRes.accessToken;
+        expiresIn = longRes.expiresIn;
+      } catch (tokenErr: any) {
+        const safeMsg = sanitizeFacebookErrorMessage(tokenErr.message || 'Unknown token error');
+        res.writeHead(302, {
+          'Set-Cookie':
+            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+          Location: `/?tab=pages&error=${encodeURIComponent(
+            `Facebook token exchange failed: ${safeMsg}. Please check your App ID, App Secret, and Redirect URI in Vercel settings.`
+          )}`,
+        });
+        res.end();
+        return;
+      }
 
+      // Stage 2: Fetch user profile and save account identity into Supabase vault
+      let userProfile: { id: string; name: string; email?: string };
+      let account: any;
+      try {
+        userProfile = await fetchFacebookUserProfile(longLivedToken);
         const expiryDate = new Date(Date.now() + (expiresIn || 5184000) * 1000).toISOString();
-        const account = await store.upsertAccount({
+        account = await store.upsertAccount({
           account_name: userProfile.name || `Facebook User ${userProfile.id}`,
           fb_user_id: userProfile.id,
           email: userProfile.email,
@@ -772,79 +797,115 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           token_expires_at: expiryDate,
           notes: 'Connected via Facebook Login for Business',
         });
-
-        // Run automatic comprehensive Page discovery (me/accounts with pagination & business portfolios)
-        const discovery = await discoverFacebookPages(longLivedToken);
-
-        let newCount = 0;
-        let updatedCount = 0;
-
-        for (const dp of discovery.pages) {
-          const res = await store.upsertPageFromFacebook({
-            fb_account_id: account.id,
-            name: dp.name,
-            fb_page_id: dp.id,
-            fb_page_token: dp.access_token,
-            category: dp.category,
-            picture_url: dp.picture_url,
-            tasks: dp.tasks,
-            fan_count: dp.fan_count,
-            token_status: dp.token_status,
-          });
-          if (res.isNew) newCount++;
-          else updatedCount++;
-        }
-
-        await store.updateAccount(account.id, {
-          pages_count: discovery.pages.length,
-          last_synced_at: new Date().toISOString(),
-          token_status: 'valid',
-        });
-
-        await store.addAuditLog({
-          level: 'success',
-          category: 'token',
-          message: `Connected Facebook account "${userProfile.name}" (${userProfile.id}): found ${discovery.totalFound} Pages (${newCount} new, ${updatedCount} updated, ${discovery.publishableCount} publishable).`,
-          details: {
-            userId: userProfile.id,
-            total: discovery.totalFound,
-            newCount,
-            updatedCount,
-            publishableCount: discovery.publishableCount,
-            businessesSearched: discovery.businessesSearched,
-          },
-        });
-
-        if (discovery.totalFound === 0) {
-          res.writeHead(302, {
-            'Set-Cookie':
-              'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-            Location: `/?tab=pages&warning=${encodeURIComponent(
-              `Connected Facebook identity "${userProfile.name}" (${userProfile.id}), but no Facebook Pages were discovered. Ensure you are an admin or editor of at least one Page and granted permissions in the Business Login dialog.`
-            )}`,
-          });
-          res.end();
-          return;
-        }
-
-        res.writeHead(302, {
-          'Set-Cookie':
-            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&connected=true&account=${encodeURIComponent(userProfile.name)}&found=${discovery.totalFound}&new=${newCount}&updated=${updatedCount}&publishable=${discovery.publishableCount}`,
-        });
-        res.end();
-        return;
-      } catch (err: any) {
+      } catch (profErr: any) {
+        const safeMsg = sanitizeFacebookErrorMessage(profErr.message || 'Unknown profile error');
         res.writeHead(302, {
           'Set-Cookie':
             'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
           Location: `/?tab=pages&error=${encodeURIComponent(
-            `Facebook token exchange failed: ${err.message || 'Unknown error'}`
+            `Could not load Facebook user profile: ${safeMsg}. Please reconnect.`
           )}`,
         });
         res.end();
         return;
       }
+
+      // Stage 3: Automatic Page Discovery via me/accounts (with tasks, pagination, and business portfolios)
+      let discovery: any;
+      try {
+        discovery = await discoverFacebookPages(longLivedToken);
+      } catch (discErr: any) {
+        let codePrefix = '';
+        if (discErr instanceof FacebookGraphError) {
+          codePrefix = `(#${discErr.code}${discErr.subcode ? ` subcode ${discErr.subcode}` : ''}) `;
+        } else if (discErr.code) {
+          codePrefix = `(#${discErr.code}) `;
+        }
+        const safeMsg = sanitizeFacebookErrorMessage(discErr.message || 'Unknown Graph API error');
+
+        await store.addAuditLog({
+          level: 'warning',
+          category: 'token',
+          message: `Connected account "${userProfile.name}" (${userProfile.id}), but could not list Pages: ${codePrefix}${safeMsg}`,
+          details: { userId: userProfile.id, error: safeMsg },
+        });
+
+        res.writeHead(302, {
+          'Set-Cookie':
+            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+          Location: `/?tab=pages&error=${encodeURIComponent(
+            `Connected identity "${userProfile.name}", but could not list Pages: ${codePrefix}${safeMsg}. What to do: Ensure your Facebook account granted Page permissions in the Login dialog, then click "Sync Pages".`
+          )}`,
+        });
+        res.end();
+        return;
+      }
+
+      let newCount = 0;
+      let updatedCount = 0;
+
+      for (const dp of discovery.pages) {
+        const res = await store.upsertPageFromFacebook({
+          fb_account_id: account.id,
+          name: dp.name,
+          fb_page_id: dp.id,
+          fb_page_token: dp.access_token,
+          category: dp.category,
+          picture_url: dp.picture_url,
+          tasks: dp.tasks,
+          fan_count: dp.fan_count,
+          token_status: dp.token_status,
+        });
+        if (res.isNew) newCount++;
+        else updatedCount++;
+      }
+
+      const updates: any = {
+        pages_count: discovery.pages.length,
+        last_synced_at: new Date().toISOString(),
+        token_status: 'valid',
+      };
+      if (discovery.grantedPermissions && discovery.grantedPermissions.length > 0) {
+        updates.notes = `Permissions: ${discovery.grantedPermissions.join(', ')}`;
+      }
+      await store.updateAccount(account.id, updates);
+
+      await store.addAuditLog({
+        level: 'success',
+        category: 'token',
+        message: `Connected Facebook account "${userProfile.name}" (${userProfile.id}): found ${discovery.totalFound} Pages (${newCount} new, ${updatedCount} updated, ${discovery.publishableCount} publishable).`,
+        details: {
+          userId: userProfile.id,
+          total: discovery.totalFound,
+          newCount,
+          updatedCount,
+          publishableCount: discovery.publishableCount,
+          businessesSearched: discovery.businessesSearched,
+          grantedPermissions: discovery.grantedPermissions,
+          declinedPermissions: discovery.declinedPermissions,
+        },
+      });
+
+      if (discovery.totalFound === 0) {
+        const reasonMsg =
+          discovery.emptyExplanation ||
+          `Connected Facebook identity "${userProfile.name}" (${userProfile.id}), but no Facebook Pages were discovered. Ensure you are an admin or editor of at least one Page and ticked your Page in the Meta Business Login dialog.`;
+        res.writeHead(302, {
+          'Set-Cookie':
+            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+          Location: `/?tab=pages&warning=${encodeURIComponent(reasonMsg)}`,
+        });
+        res.end();
+        return;
+      }
+
+      res.writeHead(302, {
+        'Set-Cookie':
+          'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+        Location: `/?tab=pages&connected=true&account=${encodeURIComponent(userProfile.name)}&found=${discovery.totalFound}&new=${newCount}&updated=${updatedCount}&publishable=${discovery.publishableCount}`,
+      });
+      res.end();
+      return;
     }
 
     // J. Auth Gate: Protect all other routes
@@ -1958,6 +2019,34 @@ export function createDashboardServer(): http.Server {
   return http.createServer(handleRequest);
 }
 
+function escapeHtml(str: any): string {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderAccountPermissionsBadges(notes?: string): string {
+  if (!notes || !notes.includes('Permissions:')) {
+    return `<div style="margin-top: 6px; font-size: 11px; color: #94a3b8; font-style: italic;">
+      🔑 Scopes: Click <strong>🩺 Check</strong> or <strong>🔄 Sync Pages</strong> to inspect live permissions.
+    </div>`;
+  }
+  const rawPerms = notes.split('Permissions:')[1]?.trim() || '';
+  const granted = rawPerms.split(',').map((s) => s.trim()).filter(Boolean);
+  const required = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'];
+  const missing = required.filter((r) => !granted.includes(r));
+
+  return `<div style="margin-top: 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+    <span style="font-size: 11px; color: #94a3b8; font-weight: 600;">🔑 Scopes:</span>
+    ${granted.map((p) => `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; font-size: 11px; padding: 2px 6px;">✓ ${escapeHtml(p)}</span>`).join('')}
+    ${missing.map((m) => `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-size: 11px; padding: 2px 6px;">⚠️ Missing: ${escapeHtml(m)}</span>`).join('')}
+  </div>`;
+}
+
 async function generateDashboardHtml(): Promise<string> {
   const [
     accounts,
@@ -2398,6 +2487,7 @@ async function generateDashboardHtml(): Promise<string> {
                     <td>
                       <strong>${acc.account_name}</strong><br>
                       <small style="color: var(--text-muted);">${acc.email || 'No email specified'} • ${acc.notes || 'Creator profile'}</small>
+                      ${renderAccountPermissionsBadges(acc.notes)}
                     </td>
                     <td><code style="font-size: 13px;">${acc.fb_user_id}</code></td>
                     <td>
@@ -2499,6 +2589,7 @@ async function generateDashboardHtml(): Promise<string> {
                         • <span style="color: #94a3b8;">${accPages.length} Page${accPages.length === 1 ? '' : 's'} linked</span>
                         • <span>🕒 Synced: ${acc.last_synced_at ? new Date(acc.last_synced_at).toLocaleString() : 'Recently'}</span>
                       </div>
+                      ${renderAccountPermissionsBadges(acc.notes)}
                     </div>
                   </div>
                   <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">

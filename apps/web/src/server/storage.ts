@@ -7,7 +7,10 @@ import {
   encrypt,
   maskSecret,
   FacebookGraphClient,
+  FacebookGraphError,
   discoverFacebookPages,
+  REQUIRED_FACEBOOK_SCOPES,
+  sanitizeFacebookErrorMessage,
   assertSafeDatabaseUrl,
   assertSafeProductionToken,
   isTestEnv,
@@ -596,8 +599,31 @@ export class SystemStore {
           : undefined,
     });
     const result = await client.inspectTokenHealth(decryptedToken);
+
+    // Fallback: If scopes weren't obtained from debug_token, inspect via /me/permissions directly
+    if (!result.scopes || result.scopes.length === 0) {
+      try {
+        const perms = await client.getPermissions(decryptedToken);
+        const granted = perms.filter((p) => p.status === 'granted').map((p) => p.permission);
+        if (granted.length > 0) {
+          result.scopes = granted;
+          result.missingRequiredScopes = REQUIRED_FACEBOOK_SCOPES.filter((s) => !granted.includes(s));
+          if (result.missingRequiredScopes.length === 0 && (result.status === 'insufficient_permissions' || result.status === 'invalid')) {
+            result.status = 'valid';
+            result.valid = true;
+          }
+        }
+      } catch {
+        // Ignore fallback error
+      }
+    }
+
     const status = result.status === 'valid' ? 'valid' : 'expired';
-    await this.updateAccount(accountId, { token_status: status });
+    const updates: Partial<StoredFacebookAccount> = { token_status: status };
+    if (result.scopes && result.scopes.length > 0) {
+      updates.notes = `Permissions: ${result.scopes.join(', ')}`;
+    }
+    await this.updateAccount(accountId, updates);
     return result;
   }
 
@@ -1069,6 +1095,9 @@ export class SystemStore {
     updatedCount: number;
     inaccessibleCount: number;
     publishableCount: number;
+    emptyReason?: string;
+    emptyExplanation?: string;
+    grantedPermissions?: string[];
     error?: string;
   }> {
     const account = await this.getAccountById(accountId);
@@ -1087,7 +1116,20 @@ export class SystemStore {
       throw new Error(`Failed to decrypt user token for account "${account.account_name}": ${err.message}`);
     }
 
-    const discovery = await discoverFacebookPages(userToken);
+    let discovery: PageDiscoveryResult;
+    try {
+      discovery = await discoverFacebookPages(userToken);
+    } catch (discErr: any) {
+      let codePrefix = '';
+      if (discErr instanceof FacebookGraphError) {
+        codePrefix = `(#${discErr.code}${discErr.subcode ? ` subcode ${discErr.subcode}` : ''}) `;
+      } else if (discErr.code) {
+        codePrefix = `(#${discErr.code}) `;
+      }
+      const safeMsg = sanitizeFacebookErrorMessage(discErr.message || 'Unknown Graph API error');
+      throw new Error(`Could not list Pages: ${codePrefix}${safeMsg}. What to do: Ensure your Facebook account granted Page permissions in the Login dialog, then try Reconnect.`);
+    }
+
     let newCount = 0;
     let updatedCount = 0;
     const discoveredPageIds = new Set<string>();
@@ -1122,17 +1164,29 @@ export class SystemStore {
       }
     }
 
-    await this.updateAccount(accountId, {
+    const updates: Partial<StoredFacebookAccount> = {
       pages_count: discovery.pages.length,
       last_synced_at: new Date().toISOString(),
       token_status: 'valid',
-    });
+    };
+    if (discovery.grantedPermissions && discovery.grantedPermissions.length > 0) {
+      updates.notes = `Permissions: ${discovery.grantedPermissions.join(', ')}`;
+    }
+    await this.updateAccount(accountId, updates);
 
     await this.addAuditLog({
       level: 'info',
       category: 'token',
       message: `Synced account "${account.account_name}": found ${discovery.pages.length} Pages (${newCount} new, ${updatedCount} updated, ${inaccessibleCount} inaccessible).`,
-      details: { accountId, totalDiscovered: discovery.pages.length, newCount, updatedCount, inaccessibleCount },
+      details: {
+        accountId,
+        totalDiscovered: discovery.pages.length,
+        newCount,
+        updatedCount,
+        inaccessibleCount,
+        grantedPermissions: discovery.grantedPermissions,
+        emptyReason: discovery.emptyReason,
+      },
     });
 
     return {
@@ -1143,6 +1197,9 @@ export class SystemStore {
       updatedCount,
       inaccessibleCount,
       publishableCount: discovery.publishableCount,
+      emptyReason: discovery.emptyReason,
+      emptyExplanation: discovery.emptyExplanation,
+      grantedPermissions: discovery.grantedPermissions,
     };
   }
 
