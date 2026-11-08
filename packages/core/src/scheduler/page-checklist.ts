@@ -103,3 +103,4 @@ export function evaluatePageChecklist(page: PageOnboardingInput): PageChecklistS
     missingSteps,
   };
 }
+
