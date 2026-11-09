@@ -45,6 +45,10 @@ export interface StoredProvider {
   used_today?: number;
   enabled: boolean;
   priority: number;
+  health_status?: 'healthy' | 'failing' | 'unknown';
+  latency_ms?: number;
+  test_error?: string;
+  last_tested_at?: string;
   created_at: string;
   updated_at?: string;
 }
@@ -1708,6 +1712,10 @@ export class SystemStore {
       used_today: 0,
       enabled: row.active !== false,
       priority: row.priority || 1,
+      health_status: row.config?.health_status || 'unknown',
+      latency_ms: row.config?.latency_ms,
+      test_error: row.config?.test_error,
+      last_tested_at: row.config?.last_tested_at,
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));
@@ -1855,6 +1863,21 @@ export class SystemStore {
     if (updates.enabled !== undefined) updatePayload.active = updates.enabled;
     if (updates.priority !== undefined) updatePayload.priority = Number(updates.priority);
 
+    if (
+      updates.health_status !== undefined ||
+      updates.latency_ms !== undefined ||
+      updates.test_error !== undefined ||
+      updates.last_tested_at !== undefined
+    ) {
+      updatePayload.config = {
+        ...(updatePayload.config || {}),
+        health_status: updates.health_status,
+        latency_ms: updates.latency_ms,
+        test_error: updates.test_error,
+        last_tested_at: updates.last_tested_at,
+      };
+    }
+
     const { data, error } = await this.getClient()
       .from('providers')
       .update(updatePayload)
@@ -1876,6 +1899,10 @@ export class SystemStore {
       used_today: 0,
       enabled: data.active !== false,
       priority: data.priority || 1,
+      health_status: data.config?.health_status || updates.health_status || 'unknown',
+      latency_ms: data.config?.latency_ms ?? updates.latency_ms,
+      test_error: data.config?.test_error ?? updates.test_error,
+      last_tested_at: data.config?.last_tested_at ?? updates.last_tested_at,
       created_at: data.created_at,
       updated_at: data.updated_at,
     };

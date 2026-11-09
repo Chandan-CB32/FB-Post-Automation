@@ -74,3 +74,4 @@ for (const f of files) {
 
 fs.writeFileSync('supabase/all_migrations.sql', fullContent, 'utf8');
 console.log('Successfully wrote supabase/all_migrations.sql, bytes:', fullContent.length);
+

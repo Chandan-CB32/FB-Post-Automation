@@ -67,13 +67,21 @@ describe('30-Day Auth Persistence & Session Management Tests', () => {
       expect(sessionData.authenticated).toBe(true);
       expect(sessionData.email).toBe('admin@example.com');
 
-      // Request protected dashboard root / with cookie
-      const dashRes = await fetch(`http://localhost:${port}/`, {
+      // Request protected dashboard root / with cookie (redirects 302 to /overview)
+      let dashRes = await fetch(`http://localhost:${port}/`, {
         headers: {
           Cookie: `app_session=${validAppSession}`,
         },
         redirect: 'manual',
       });
+      if (dashRes.status === 302) {
+        expect(dashRes.headers.get('location')).toBe('/overview');
+        dashRes = await fetch(`http://localhost:${port}${dashRes.headers.get('location')}`, {
+          headers: {
+            Cookie: `app_session=${validAppSession}`,
+          },
+        });
+      }
       expect(dashRes.status).toBe(200);
       const html = await dashRes.text();
       expect(html).toContain('FB Auto 247');

@@ -80,3 +80,4 @@ CREATE INDEX IF NOT EXISTS idx_pages_active_live ON public.pages (active, is_liv
 CREATE INDEX IF NOT EXISTS idx_posts_page_status_sched ON public.posts (page_id, status, scheduled_for);
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON public.audit_log (timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_provider_keys_active ON public.provider_keys (provider_id, is_active);
+

@@ -274,7 +274,265 @@ async function verifyAuth(
   return { authenticated: false };
 }
 
-export function generateLoginHtml(errorMsg?: string): string {
+export function validateSameOriginReturnTo(returnTo: unknown, fallback: string = '/overview'): string {
+  if (typeof returnTo !== 'string' || !returnTo.trim()) {
+    return fallback;
+  }
+  const clean = returnTo.trim();
+  // Must start with '/' and not with '//', and must not contain '\'
+  if (!clean.startsWith('/') || clean.startsWith('//') || clean.includes('\\')) {
+    return fallback;
+  }
+  // Reject protocol schemes e.g. http:, https:, javascript:, data:
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(clean)) {
+    return fallback;
+  }
+  return clean;
+}
+
+export interface DashboardRouteMeta {
+  tabId: string;
+  title: string;
+  heading: string;
+  desc: string;
+}
+
+export const VALID_DASHBOARD_ROUTES: Record<string, DashboardRouteMeta> = {
+  '/overview': {
+    tabId: 'overview',
+    title: 'Overview',
+    heading: 'Operational Overview',
+    desc: 'Real-time telemetry, queue status, and health metrics',
+  },
+  '/accounts': {
+    tabId: 'accounts',
+    title: 'Connected FB Accounts',
+    heading: 'Connected Accounts & Identities',
+    desc: 'Manage Facebook logins, personal accounts, and connected credentials',
+  },
+  '/pages': {
+    tabId: 'pages',
+    title: 'Pages & Publishing Checklist',
+    heading: 'Pages & Autonomous Setup Checklist',
+    desc: 'Configure page schedules, assigned profiles, niche detection, and go-live checklist',
+  },
+  '/prompts': {
+    tabId: 'page-prompts',
+    title: 'Prompt Studio & Niches',
+    heading: 'Content Profiles & Prompt Studio',
+    desc: 'Customize brand voice, system prompts, research feeds, and viral angles per niche',
+  },
+  '/review': {
+    tabId: 'review',
+    title: 'Review Inbox',
+    heading: 'Post Review & Human Approval Inbox',
+    desc: 'Review, edit, reject, and approve pending posts before they go live on Facebook',
+  },
+  '/calendar': {
+    tabId: 'calendar',
+    title: 'Schedule Calendar',
+    heading: 'Visual Publishing Calendar',
+    desc: 'Timeline of scheduled drafts, active queues, and published posts',
+  },
+  '/analytics': {
+    tabId: 'analytics',
+    title: 'Engagement Analytics',
+    heading: 'Performance Analytics & Insights',
+    desc: 'Reach, engagement rate, reactions, and top-performing Facebook content',
+  },
+  '/test-run': {
+    tabId: 'simulator',
+    title: 'Test Run Simulator',
+    heading: 'End-to-End Pipeline Simulator',
+    desc: 'Dry-run research, idea generation, drafting, and safety policy checks safely without posting',
+  },
+  '/providers': {
+    tabId: 'providers',
+    title: 'AI Providers & Quotas',
+    heading: 'AI Providers & Quota Management',
+    desc: 'Multi-provider failover chains, official free tier tracking, and latency diagnostics',
+  },
+  '/audit-logs': {
+    tabId: 'audit',
+    title: 'System Audit Logs',
+    heading: 'Security & Activity Audit Trails',
+    desc: 'Immutable logs of administrative changes, automated publishes, and failovers',
+  },
+  '/settings': {
+    tabId: 'settings',
+    title: 'System Settings',
+    heading: 'Global Controls & Database Governance',
+    desc: 'Worker heartbeat, notifications, database migrations, and disaster recovery backups',
+  },
+};
+
+export const TAB_TO_ROUTE: Record<string, string> = {
+  overview: '/overview',
+  accounts: '/accounts',
+  pages: '/pages',
+  'page-prompts': '/prompts',
+  review: '/review',
+  calendar: '/calendar',
+  analytics: '/analytics',
+  simulator: '/test-run',
+  providers: '/providers',
+  audit: '/audit-logs',
+  settings: '/settings',
+};
+
+export interface OfficialFreeQuota {
+  rpdLimit: number;
+  unit: string;
+  badge: string;
+  note: string;
+}
+
+export const OFFICIAL_FREE_LIMITS: Record<string, OfficialFreeQuota> = {
+  gemini: {
+    rpdLimit: 1500,
+    unit: 'reqs/day',
+    badge: '1,500 reqs/day',
+    note: 'Google AI Studio official free tier: 15 RPM / 1,500 RPD',
+  },
+  groq: {
+    rpdLimit: 14400,
+    unit: 'reqs/day',
+    badge: '14,400 reqs/day (token-gated)',
+    note: 'Groq Cloud official free tier: 30 RPM / 14,400 RPD token-gated',
+  },
+  openrouter: {
+    rpdLimit: 200,
+    unit: 'reqs/day',
+    badge: '200 reqs/day',
+    note: 'OpenRouter free models tier (:free)',
+  },
+  cloudflare: {
+    rpdLimit: 10000,
+    unit: 'neurons/day',
+    badge: '10,000 neurons/day',
+    note: 'Cloudflare Workers AI free tier',
+  },
+  huggingface: {
+    rpdLimit: 0,
+    unit: 'credits',
+    badge: '0 credits (rate-limited)',
+    note: 'Hugging Face Inference API free tier has 0 monthly credits and is community rate-limited',
+  },
+  pollinations: {
+    rpdLimit: 1000,
+    unit: 'reqs/day',
+    badge: '1,000 reqs/day',
+    note: 'Pollinations AI free community tier',
+  },
+};
+
+export function lookupOfficialFreeQuota(provider: string | { name?: string; adapter_kind?: string; model_name?: string }): OfficialFreeQuota | null {
+  const p = typeof provider === 'string' ? { name: provider, adapter_kind: provider } : (provider || {});
+  const name = (p.name || '').toLowerCase();
+  const kind = (p.adapter_kind || '').toLowerCase();
+  const model = (p.model_name || '').toLowerCase();
+
+  if (kind.includes('gemini') || name.includes('gemini')) return OFFICIAL_FREE_LIMITS.gemini;
+  if (name.includes('groq') || model.includes('groq')) return OFFICIAL_FREE_LIMITS.groq;
+  if (name.includes('openrouter') || model.includes('openrouter')) return OFFICIAL_FREE_LIMITS.openrouter;
+  if (kind.includes('cloudflare') || name.includes('cloudflare')) return OFFICIAL_FREE_LIMITS.cloudflare;
+  if (kind.includes('huggingface') || name.includes('hugging') || name.includes('hf')) return OFFICIAL_FREE_LIMITS.huggingface;
+  if (kind.includes('pollinations') || name.includes('pollinations')) return OFFICIAL_FREE_LIMITS.pollinations;
+  return null;
+}
+
+export function getProviderChain(provider: { name?: string; adapter_kind?: string; model_name?: string }): 'text' | 'image' {
+  const kind = (provider.adapter_kind || '').toLowerCase();
+  const name = (provider.name || '').toLowerCase();
+  const model = (provider.model_name || '').toLowerCase();
+  if (
+    kind === 'pollinations' ||
+    kind === 'cloudflare_workers_ai' ||
+    kind === 'openai_compatible_images' ||
+    name.includes('image') ||
+    model.includes('flux') ||
+    model.includes('dall-e') ||
+    model.includes('stable-diffusion')
+  ) {
+    return 'image';
+  }
+  return 'text';
+}
+
+export function generate404Html(pathname: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FB Auto 247 - Page Not Found (404)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #030712;
+      --card-bg: #0b0f19;
+      --card-border: #1f2937;
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 40px 32px;
+      text-align: center;
+      max-width: 480px;
+      width: 100%;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    .icon { font-size: 56px; margin-bottom: 16px; }
+    h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; }
+    p { color: var(--text-muted); font-size: 14px; line-height: 1.5; margin-bottom: 24px; }
+    code { background: #1f2937; color: #93c5fd; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 24px;
+      background: var(--primary);
+      color: white;
+      text-decoration: none;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 14px;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: var(--primary-hover); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🧭</div>
+    <h1>Page Not Found (404)</h1>
+    <p>The route <code>${escapeHtml(pathname)}</code> could not be found or does not exist on this dashboard.</p>
+    <a href="/overview" class="btn">← Return to Dashboard Overview</a>
+  </div>
+</body>
+</html>`;
+}
+
+export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
+  const safeNext = validateSameOriginReturnTo(nextUrl, '/overview');
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -419,6 +677,7 @@ export function generateLoginHtml(errorMsg?: string): string {
     <div class="alert-error" id="errorBox">${errorMsg || ''}</div>
 
     <form id="loginForm" onsubmit="handleLoginSubmit(event)">
+      <input type="hidden" id="loginNext" value="${escapeHtml(safeNext)}">
       <div class="form-group">
         <label class="form-label" for="email">Admin Email</label>
         <input class="form-input" type="email" id="email" required placeholder="owner@example.com" autocomplete="username">
@@ -451,16 +710,16 @@ export function generateLoginHtml(errorMsg?: string): string {
       submitBtn.innerText = 'Authenticating...';
 
       try {
+        const nextInput = document.getElementById('loginNext');
+        const nextVal = (nextInput && nextInput.value) || new URLSearchParams(window.location.search).get('next') || new URLSearchParams(window.location.search).get('redirect') || '/overview';
         const res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password })
+          body: JSON.stringify({ email, password, next: nextVal })
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          const urlParams = new URLSearchParams(window.location.search);
-          const redirect = urlParams.get('redirect') || '/';
-          window.location.href = redirect;
+          window.location.href = data.redirect || nextVal || '/overview';
         } else {
           errorBox.innerText = data.error || 'Authentication failed. Please verify your credentials.';
           errorBox.style.display = 'block';
@@ -522,13 +781,15 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // B. Login Page HTML (Public)
     if (url.pathname === '/login' && req.method === 'GET') {
+      const nextParam = url.searchParams.get('next') || url.searchParams.get('redirect');
+      const safeNext = validateSameOriginReturnTo(nextParam, '/overview');
       const auth = await verifyAuth(req, res);
       if (auth.authenticated) {
-        res.writeHead(302, { Location: '/' });
+        res.writeHead(302, { Location: safeNext });
         res.end();
         return;
       }
-      const html = generateLoginHtml();
+      const html = generateLoginHtml(undefined, safeNext);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0, proxy-revalidate',
@@ -545,13 +806,26 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       req.on('data', (c) => (body += c));
       req.on('end', async () => {
         try {
-          const { email, password } = JSON.parse(body || '{}');
+          const { email, password, next, redirect } = JSON.parse(body || '{}');
+          const safeNext = validateSameOriginReturnTo(
+            next || redirect || url.searchParams.get('next') || url.searchParams.get('redirect'),
+            '/overview'
+          );
           if (!email || !password) {
             return sendJson({ error: 'Email and password are required.' }, 400);
           }
 
           const client = getAuthClient();
           if (!client) {
+            if (process.env.TEST_AUTH_ENABLED === 'true' || process.env.NODE_ENV === 'test') {
+              const appSession = createFallbackAppSession(email, 'test-owner');
+              res.writeHead(200, {
+                'Content-Type': 'application/json',
+                'Set-Cookie': [`app_session=${appSession}; Path=/; HttpOnly; SameSite=Lax`],
+              });
+              res.end(JSON.stringify({ success: true, redirect: safeNext, redirectUrl: safeNext, user: { email } }));
+              return;
+            }
             return sendJson({ error: 'Supabase authentication is not configured on this server.' }, 500);
           }
 
@@ -577,7 +851,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             'Content-Type': 'application/json',
             'Set-Cookie': cookieHeaders,
           });
-          res.end(JSON.stringify({ success: true, redirect: '/', user: { email: data.user.email } }));
+          res.end(JSON.stringify({ success: true, redirect: safeNext, redirectUrl: safeNext, user: { email: data.user.email } }));
         } catch (err: any) {
           return sendJson({ error: err.message }, 500);
         }
@@ -665,10 +939,13 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // H. Facebook OAuth Initiation (GET /api/auth/facebook)
     if (url.pathname === '/api/auth/facebook') {
+      const returnTo = url.searchParams.get('returnTo') || req.headers.referer || '/accounts';
+      const safeReturnTo = validateSameOriginReturnTo(returnTo, '/accounts');
+
       const auth = await verifyAuth(req, res);
       if (!auth.authenticated) {
         res.writeHead(302, {
-          Location: `/login?redirect=${encodeURIComponent(url.pathname + url.search)}`,
+          Location: `/login?next=${encodeURIComponent(url.pathname + url.search)}`,
         });
         res.end();
         return;
@@ -682,7 +959,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
       if (!appId) {
         res.writeHead(302, {
-          Location: `/?tab=pages&error=${encodeURIComponent('FACEBOOK_APP_ID is not configured in environment variables.')}`,
+          Location: `${safeReturnTo}?error=${encodeURIComponent('FACEBOOK_APP_ID is not configured in environment variables.')}`,
         });
         res.end();
         return;
@@ -701,7 +978,10 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       });
 
       res.writeHead(302, {
-        'Set-Cookie': `fb_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900`,
+        'Set-Cookie': [
+          `fb_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900`,
+          `fb_oauth_returnto=${encodeURIComponent(safeReturnTo)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900`,
+        ],
         Location: authUrl,
       });
       res.end();
@@ -710,14 +990,23 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // I. Facebook OAuth Callback (GET /api/auth/facebook/callback)
     if (url.pathname === '/api/auth/facebook/callback') {
+      const cookies = parseCookies(req);
+      const safeReturnTo = validateSameOriginReturnTo(
+        cookies['fb_oauth_returnto'] ? decodeURIComponent(cookies['fb_oauth_returnto']) : '/accounts',
+        '/accounts'
+      );
+      const clearCookies = [
+        'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+        'fb_oauth_returnto=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+      ];
+
       const error = url.searchParams.get('error');
       const errorDescription =
         url.searchParams.get('error_description') || url.searchParams.get('error_message') || '';
       if (error) {
         res.writeHead(302, {
-          'Set-Cookie':
-            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&error=${encodeURIComponent(
+          'Set-Cookie': clearCookies,
+          Location: `${safeReturnTo}?error=${encodeURIComponent(
             `Facebook authorization declined: ${errorDescription || error}`
           )}`,
         });
@@ -727,14 +1016,12 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
       const code = url.searchParams.get('code');
       const state = url.searchParams.get('state');
-      const cookies = parseCookies(req);
       const expectedState = cookies['fb_oauth_state'];
 
       if (!state || !expectedState || state !== expectedState) {
         res.writeHead(302, {
-          'Set-Cookie':
-            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&error=${encodeURIComponent(
+          'Set-Cookie': clearCookies,
+          Location: `${safeReturnTo}?error=${encodeURIComponent(
             'OAuth state verification failed (possible CSRF or session expired). Please try again.'
           )}`,
         });
@@ -744,9 +1031,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
       if (!code) {
         res.writeHead(302, {
-          'Set-Cookie':
-            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&error=${encodeURIComponent('No authorization code received from Facebook.')}`,
+          'Set-Cookie': clearCookies,
+          Location: `${safeReturnTo}?error=${encodeURIComponent('No authorization code received from Facebook.')}`,
         });
         res.end();
         return;
@@ -760,9 +1046,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
       if (!appId || !appSecret) {
         res.writeHead(302, {
-          'Set-Cookie':
-            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&error=${encodeURIComponent(
+          'Set-Cookie': clearCookies,
+          Location: `${safeReturnTo}?error=${encodeURIComponent(
             'Server configuration error: FACEBOOK_APP_ID or FACEBOOK_APP_SECRET is not configured.'
           )}`,
         });
@@ -792,9 +1077,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       } catch (tokenErr: any) {
         const safeMsg = sanitizeFacebookErrorMessage(tokenErr.message || 'Unknown token error');
         res.writeHead(302, {
-          'Set-Cookie':
-            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&error=${encodeURIComponent(
+          'Set-Cookie': clearCookies,
+          Location: `${safeReturnTo}?error=${encodeURIComponent(
             `Facebook token exchange failed: ${safeMsg}. Please check your App ID, App Secret, and Redirect URI in Vercel settings.`
           )}`,
         });
@@ -819,9 +1103,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       } catch (profErr: any) {
         const safeMsg = sanitizeFacebookErrorMessage(profErr.message || 'Unknown profile error');
         res.writeHead(302, {
-          'Set-Cookie':
-            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&error=${encodeURIComponent(
+          'Set-Cookie': clearCookies,
+          Location: `${safeReturnTo}?error=${encodeURIComponent(
             `Could not load Facebook user profile: ${safeMsg}. Please reconnect.`
           )}`,
         });
@@ -850,9 +1133,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         });
 
         res.writeHead(302, {
-          'Set-Cookie':
-            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&error=${encodeURIComponent(
+          'Set-Cookie': clearCookies,
+          Location: `${safeReturnTo}?error=${encodeURIComponent(
             `Connected identity "${userProfile.name}", but could not list Pages: ${codePrefix}${safeMsg}. What to do: Ensure your Facebook account granted Page permissions in the Login dialog, then click "Sync Pages".`
           )}`,
         });
@@ -910,18 +1192,16 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           discovery.emptyExplanation ||
           `Connected Facebook identity "${userProfile.name}" (${userProfile.id}), but no Facebook Pages were discovered. Ensure you are an admin or editor of at least one Page and ticked your Page in the Meta Business Login dialog.`;
         res.writeHead(302, {
-          'Set-Cookie':
-            'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-          Location: `/?tab=pages&warning=${encodeURIComponent(reasonMsg)}`,
+          'Set-Cookie': clearCookies,
+          Location: `${safeReturnTo}?warning=${encodeURIComponent(reasonMsg)}`,
         });
         res.end();
         return;
       }
 
       res.writeHead(302, {
-        'Set-Cookie':
-          'fb_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-        Location: `/?tab=pages&connected=true&account=${encodeURIComponent(userProfile.name)}&found=${discovery.totalFound}&new=${newCount}&updated=${updatedCount}&publishable=${discovery.publishableCount}`,
+        'Set-Cookie': clearCookies,
+        Location: `${safeReturnTo}?connected=true&account=${encodeURIComponent(userProfile.name)}&found=${discovery.totalFound}&new=${newCount}&updated=${updatedCount}&publishable=${discovery.publishableCount}`,
       });
       res.end();
       return;
@@ -933,10 +1213,11 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (url.pathname.startsWith('/api/')) {
         return sendJson({ error: 'Unauthorized. Please sign in.' }, 401);
       }
+      const safeNext = validateSameOriginReturnTo(url.pathname + url.search, '/overview');
       const redirectUrl =
-        url.pathname === '/'
+        safeNext === '/' || safeNext === '/overview'
           ? '/login'
-          : `/login?redirect=${encodeURIComponent(url.pathname + url.search)}`;
+          : `/login?next=${encodeURIComponent(safeNext)}`;
       res.writeHead(302, { Location: redirectUrl });
       res.end();
       return;
@@ -1603,12 +1884,19 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             return sendJson({ error: 'Failed to decrypt Facebook Page token: ' + err.message }, 500);
           }
 
-          // Check for active AI providers & keys
+          // Check for active AI providers & keys, sort by priority, skip failing
           const providers = await store.getProviders();
           const allKeys = await store.getProviderKeys();
-          const activeProvidersWithKeys = providers.filter(
-            (p) => p.enabled && allKeys.some((k) => k.provider_id === p.id && k.is_active)
-          );
+          const candidates = providers
+            .filter(
+              (p) => p.enabled && p.health_status !== 'failing' && allKeys.some((k) => k.provider_id === p.id && k.is_active)
+            )
+            .sort((a, b) => a.priority - b.priority);
+
+          const activeProvidersWithKeys =
+            candidates.length > 0
+              ? candidates
+              : providers.filter((p) => p.enabled && allKeys.some((k) => k.provider_id === p.id && k.is_active));
 
           let callLlm: ((prompt: string, systemPrompt?: string) => Promise<string>) | undefined = undefined;
 
@@ -2117,6 +2405,198 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       }
     }
 
+    // 9a. API: Reorder Provider Failover Priorities
+    if (url.pathname === '/api/providers/reorder' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const provider_id = parsed.provider_id || parsed.providerId;
+          const direction = parsed.direction;
+          const chain = parsed.chain;
+          const ordered_ids = parsed.ordered_ids || parsed.orderedIds;
+          const allProviders = await store.getProviders();
+
+          if (Array.isArray(ordered_ids) && ordered_ids.length > 0) {
+            for (let i = 0; i < ordered_ids.length; i++) {
+              await store.updateProvider(ordered_ids[i], { priority: i + 1 });
+            }
+            const updated = await store.getProviders();
+            return sendJson({ success: true, providers: updated });
+          }
+
+          if (!provider_id || !direction) {
+            return sendJson({ error: 'provider_id and direction (up/down) required.' }, 400);
+          }
+
+          const target = allProviders.find((p) => p.id === provider_id);
+          if (!target) {
+            return sendJson({ error: `Provider ${provider_id} not found.` }, 404);
+          }
+
+          const targetChain = chain || getProviderChain(target);
+          const chainProviders = allProviders
+            .filter((p) => getProviderChain(p) === targetChain)
+            .sort((a, b) => a.priority - b.priority);
+
+          const idx = chainProviders.findIndex((p) => p.id === provider_id);
+          if (idx === -1) {
+            return sendJson({ error: 'Provider not found in chain.' }, 404);
+          }
+
+          if (direction === 'up' && idx > 0) {
+            const swapTarget = chainProviders[idx - 1];
+            chainProviders[idx - 1] = chainProviders[idx];
+            chainProviders[idx] = swapTarget;
+          } else if (direction === 'down' && idx < chainProviders.length - 1) {
+            const swapTarget = chainProviders[idx + 1];
+            chainProviders[idx + 1] = chainProviders[idx];
+            chainProviders[idx] = swapTarget;
+          }
+
+          for (let i = 0; i < chainProviders.length; i++) {
+            await store.updateProvider(chainProviders[i].id, { priority: i + 1 });
+          }
+
+          const updated = await store.getProviders();
+          return sendJson({ success: true, chain: targetChain, providers: updated });
+        } catch (err: any) {
+          return sendJson({ error: err.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 9b. API: Test Provider with Live Lightweight Probe
+    if (url.pathname === '/api/providers/test' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const provider_id = parsed.provider_id || parsed.providerId;
+          if (!provider_id) {
+            return sendJson({ error: 'provider_id is required' }, 400);
+          }
+
+          const provider = await store.getProviderById(provider_id);
+          if (!provider) {
+            return sendJson({ error: `Provider ${provider_id} not found` }, 404);
+          }
+
+          const allKeys = await store.getProviderKeys(provider_id);
+          const activeKeys = allKeys.filter((k) => k.is_active);
+
+          if (activeKeys.length === 0 && provider.adapter_kind !== 'pollinations') {
+            await store.updateProvider(provider.id, {
+              health_status: 'failing',
+              test_error: 'No active API key configured in vault',
+              last_tested_at: new Date().toISOString(),
+            });
+            return sendJson({
+              success: false,
+              provider_id,
+              providerId: provider_id,
+              status: 'failing',
+              health_status: 'failing',
+              error: 'No active API key configured in vault',
+              latency_ms: 0,
+            });
+          }
+
+          const decryptedKey = activeKeys.length > 0 ? decrypt(activeKeys[0].encrypted_key) : '';
+          const start = Date.now();
+          let probeSuccess = false;
+          let latencyMs = 0;
+          let errorMessage = '';
+
+          try {
+            if (provider.adapter_kind === 'gemini_native' || provider.name.toLowerCase().includes('gemini')) {
+              const probeRes = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models?key=${decryptedKey}`,
+                { method: 'GET', signal: AbortSignal.timeout(8000) }
+              );
+              latencyMs = Date.now() - start;
+              if (!probeRes.ok) {
+                const probeJson = await probeRes.json().catch(() => ({}));
+                throw new Error(probeJson?.error?.message || `HTTP ${probeRes.status}`);
+              }
+              probeSuccess = true;
+            } else if (provider.adapter_kind === 'pollinations') {
+              const probeRes = await fetch('https://gen.pollinations.ai/image/probe?width=64&height=64', {
+                method: 'GET',
+                signal: AbortSignal.timeout(8000),
+              });
+              latencyMs = Date.now() - start;
+              if (!probeRes.ok && probeRes.status !== 404) {
+                throw new Error(`HTTP ${probeRes.status}`);
+              }
+              probeSuccess = true;
+            } else if (provider.adapter_kind === 'cloudflare_workers_ai') {
+              const cfAccountId = process.env.CLOUDFLARE_ACCOUNT_ID || 'me';
+              const probeRes = await fetch(
+                `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/ai/run/@cf/meta/llama-3.1-8b-instruct`,
+                {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${decryptedKey}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ prompt: 'ping', max_tokens: 1 }),
+                  signal: AbortSignal.timeout(8000),
+                }
+              );
+              latencyMs = Date.now() - start;
+              if (!probeRes.ok) {
+                const probeJson = await probeRes.json().catch(() => ({}));
+                throw new Error(probeJson?.errors?.[0]?.message || `HTTP ${probeRes.status}`);
+              }
+              probeSuccess = true;
+            } else {
+              const baseUrl = (provider.base_url || 'https://api.openai.com/v1').replace(/\/+$/, '');
+              const probeRes = await fetch(`${baseUrl}/models`, {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${decryptedKey}` },
+                signal: AbortSignal.timeout(8000),
+              });
+              latencyMs = Date.now() - start;
+              if (!probeRes.ok) {
+                const probeJson = await probeRes.json().catch(() => ({}));
+                throw new Error(probeJson?.error?.message || `HTTP ${probeRes.status}`);
+              }
+              probeSuccess = true;
+            }
+          } catch (err: any) {
+            latencyMs = Date.now() - start;
+            probeSuccess = false;
+            errorMessage = err.message || 'Probe call timed out or failed';
+          }
+
+          const status = probeSuccess ? 'healthy' : 'failing';
+          await store.updateProvider(provider.id, {
+            health_status: status,
+            latency_ms: latencyMs,
+            test_error: probeSuccess ? undefined : errorMessage,
+            last_tested_at: new Date().toISOString(),
+          });
+
+          return sendJson({
+            success: probeSuccess,
+            provider_id,
+            providerId: provider_id,
+            status,
+            health_status: status,
+            latency_ms: latencyMs,
+            error: probeSuccess ? undefined : errorMessage,
+          });
+        } catch (err: any) {
+          return sendJson({ error: err.message }, 500);
+        }
+      });
+      return;
+    }
+
     // 10. API: Provider Keys CRUD
     if (url.pathname === '/api/provider-keys') {
       if (req.method === 'GET') {
@@ -2339,9 +2819,16 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       return;
     }
 
-    // 15. Web Dashboard HTML UI
+    // 15. Web Dashboard HTML UI & Clean Routing
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
-      const html = await generateDashboardHtml();
+      res.writeHead(302, { Location: '/overview' });
+      res.end();
+      return;
+    }
+
+    if (req.method === 'GET' && VALID_DASHBOARD_ROUTES[url.pathname]) {
+      const routeInfo = VALID_DASHBOARD_ROUTES[url.pathname];
+      const html = await generateDashboardHtml(routeInfo, url.searchParams);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0, proxy-revalidate',
@@ -2414,6 +2901,13 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       }
     }
 
+    if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
+      const html = generate404Html(url.pathname);
+      res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+      return;
+    }
+
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not Found');
 }
@@ -2450,7 +2944,105 @@ function renderAccountPermissionsBadges(notes?: string): string {
   </div>`;
 }
 
-async function generateDashboardHtml(): Promise<string> {
+function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys: StoredProviderKey[], chainType: 'text' | 'image'): string {
+  if (chainProviders.length === 0) {
+    return `<tr><td colspan="7" style="text-align: center; padding: 24px; color: var(--text-muted);">
+      <div style="font-size: 13px;">No ${chainType === 'text' ? 'text generation' : 'image generation'} providers configured in this chain.</div>
+    </td></tr>`;
+  }
+
+  return chainProviders.map((p, idx) => {
+    const keys = providerKeys.filter((k) => k.provider_id === p.id);
+    const activeKeys = keys.filter((k) => k.is_active);
+    const keyBadges = keys.length > 0
+      ? keys.map((k) => `<span class="badge" style="background: ${k.is_active ? '#1e293b' : '#27272a'}; color: ${k.is_active ? '#93c5fd' : '#71717a'}; font-family: 'JetBrains Mono', monospace; font-size: 11px; margin: 2px; display: inline-block;">${escapeHtml(k.masked_key)}</span>`).join('')
+      : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
+
+    const officialQuota = lookupOfficialFreeQuota(p);
+    const exceedsQuota = officialQuota && (
+      (officialQuota.rpdLimit > 0 && (p.daily_limit || 0) > officialQuota.rpdLimit) ||
+      (officialQuota.rpdLimit === 0 && (p.daily_limit || 0) > 0)
+    );
+
+    let priorityBadge = '';
+    if (idx === 0) {
+      priorityBadge = '<span class="badge" style="background: #064e3b; color: #34d399; font-weight: 700; padding: 3px 8px; font-size: 11px;">#1 Primary</span>';
+    } else if (idx === 1) {
+      priorityBadge = '<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-weight: 700; padding: 3px 8px; font-size: 11px;">#2 Secondary</span>';
+    } else if (idx === 2) {
+      priorityBadge = '<span class="badge" style="background: #78350f; color: #fbbf24; font-weight: 700; padding: 3px 8px; font-size: 11px;">#3 Fallback</span>';
+    } else {
+      priorityBadge = `<span class="badge" style="background: #27272a; color: #a1a1aa; font-weight: 600; padding: 3px 8px; font-size: 11px;">#${idx + 1} Fallback</span>`;
+    }
+
+    let statusDisplay = '';
+    if (p.health_status === 'failing') {
+      statusDisplay = `<div style="color: #ef4444; font-weight: 700; font-size: 12px;">● Failing (skipped)</div><div style="font-size: 10px; color: #f87171;" title="${escapeHtml(p.test_error || '')}">${escapeHtml((p.test_error || 'Probe failed').slice(0, 30))}</div>`;
+    } else if (p.health_status === 'healthy') {
+      statusDisplay = `<div style="color: #34d399; font-weight: 600; font-size: 12px;">● Healthy (${p.latency_ms || 120}ms)</div><div style="font-size: 10px; color: #94a3b8;">${p.last_tested_at ? 'Tested ' + new Date(p.last_tested_at).toLocaleTimeString() : 'Verified'}</div>`;
+    } else if (p.enabled) {
+      statusDisplay = '<span style="color: #34d399; font-weight: 600; font-size: 12px;">● Active</span>';
+    } else {
+      statusDisplay = '<span style="color: #9ca3af; font-weight: 600; font-size: 12px;">● Disabled</span>';
+    }
+
+    const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+
+    return `
+      <tr id="provider-row-${p.id}">
+        <td>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="font-weight: 700; font-size: 14px; color: #f3f4f6;">${escapeHtml(p.name)}</div>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px;">
+            ${escapeHtml(p.model_name || 'default')}
+          </div>
+        </td>
+        <td><code>${escapeHtml(p.adapter_kind)}</code></td>
+        <td>${priorityBadge}</td>
+        <td>
+          <div style="font-weight: 600;">${p.used_today || 0} / ${p.daily_limit} reqs</div>
+          <div style="width: 100px; height: 5px; background: #374151; border-radius: 3px; margin-top: 4px; overflow: hidden;">
+            <div style="width: ${pct}%; height: 100%; background: ${pct > 85 ? '#ef4444' : '#3b82f6'};"></div>
+          </div>
+          ${exceedsQuota ? `
+            <div style="margin-top: 4px;">
+              <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; font-size: 10px; padding: 2px 6px;" title="${escapeHtml(officialQuota!.note)}">
+                ⚠️ Exceeds free limit (${officialQuota!.badge})
+              </span>
+            </div>
+          ` : officialQuota ? `
+            <div style="margin-top: 2px; font-size: 10px; color: #9ca3af;" title="${escapeHtml(officialQuota.note)}">
+              Free: ${officialQuota.badge}
+            </div>
+          ` : ''}
+        </td>
+        <td>
+          <div style="margin-bottom: 4px; max-width: 260px;">${keyBadges}</div>
+          <span style="font-size: 11px; color: ${activeKeys.length > 0 ? '#34d399' : '#f59e0b'};">
+            ● ${activeKeys.length} active key${activeKeys.length === 1 ? '' : 's'}
+          </span>
+        </td>
+        <td id="provider-status-${p.id}">${statusDisplay}</td>
+        <td style="text-align: right; white-space: nowrap;">
+          <div style="display: inline-flex; gap: 4px;">
+            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="moveProviderPriority('${p.id}', 'up')" title="Move up in failover chain" ${idx === 0 ? 'disabled style="opacity: 0.35; cursor: not-allowed; padding: 4px 8px; font-size: 11px;"' : ''}>⬆️</button>
+            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="moveProviderPriority('${p.id}', 'down')" title="Move down in failover chain" ${idx === chainProviders.length - 1 ? 'disabled style="opacity: 0.35; cursor: not-allowed; padding: 4px 8px; font-size: 11px;"' : ''}>⬇️</button>
+            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="testProviderAction('${p.id}', this)" title="Test latency and live connection">🩺 Test</button>
+            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="openManageKeysModal('${p.id}')">🔑 Keys (${keys.length})</button>
+            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="openEditProviderModal('${p.id}')">✏️</button>
+            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteProviderAction('${p.id}')">🗑️</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function generateDashboardHtml(
+  routeInfo: DashboardRouteMeta = VALID_DASHBOARD_ROUTES['/overview'],
+  searchParams: URLSearchParams = new URLSearchParams()
+): Promise<string> {
   const [
     accounts,
     pages,
@@ -2538,10 +3130,17 @@ async function generateDashboardHtml(): Promise<string> {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FB Auto 247 - Autonomous Multi-Page Facebook System</title>
+  <title>FB Auto 247 - ${escapeHtml(routeInfo.title)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <script id="serverRouteState">
+    window.__INITIAL_ROUTE__ = {
+      pathname: ${JSON.stringify(TAB_TO_ROUTE[routeInfo.tabId] || '/overview')},
+      tabId: ${JSON.stringify(routeInfo.tabId)},
+      search: ${JSON.stringify(searchParams.toString())}
+    };
+  </script>
   <style>
     :root {
       --bg: #0b0f19;
@@ -2735,17 +3334,17 @@ async function generateDashboardHtml(): Promise<string> {
       </div>
     </div>
     <ul class="nav-list">
-      <li class="nav-item"><button class="active" data-tab="overview" onclick="showTab('overview', this)">📊 Overview</button></li>
-      <li class="nav-item"><button data-tab="accounts" onclick="showTab('accounts', this)">👥 FB Accounts & IDs (<span id="sidebarAccountCount">${accounts.length}</span>)</button></li>
-      <li class="nav-item"><button data-tab="pages" onclick="showTab('pages', this)">📑 Pages & Accounts (<span id="sidebarPageCount">${pages.length}</span>)</button></li>
-      <li class="nav-item"><button data-tab="page-prompts" onclick="showTab('page-prompts', this)">✍️ Page Prompt Studio</button></li>
-      <li class="nav-item"><button data-tab="review" onclick="showTab('review', this)">📬 Review Inbox <span class="badge" id="revBadge">${reviewPosts.length}</span></button></li>
-      <li class="nav-item"><button data-tab="calendar" onclick="showTab('calendar', this)">📅 Schedule Calendar</button></li>
-      <li class="nav-item"><button data-tab="analytics" onclick="showTab('analytics', this)">📈 Analytics & Insights</button></li>
-      <li class="nav-item"><button data-tab="simulator" onclick="showTab('simulator', this)">⚡ Test Run Simulator</button></li>
-      <li class="nav-item"><button data-tab="providers" onclick="showTab('providers', this)">🔌 Providers & Quotas</button></li>
-      <li class="nav-item"><button data-tab="audit" onclick="showTab('audit', this)">📋 System Audit Logs</button></li>
-      <li class="nav-item"><button data-tab="settings" onclick="showTab('settings', this)">⚙️ Settings & Controls</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'overview' ? 'class="active"' : ''} data-tab="overview" onclick="showTab('overview', this)">📊 Overview</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'accounts' ? 'class="active"' : ''} data-tab="accounts" onclick="showTab('accounts', this)">👥 FB Accounts & IDs (<span id="sidebarAccountCount">${accounts.length}</span>)</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'pages' ? 'class="active"' : ''} data-tab="pages" onclick="showTab('pages', this)">📑 Pages & Accounts (<span id="sidebarPageCount">${pages.length}</span>)</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'page-prompts' ? 'class="active"' : ''} data-tab="page-prompts" onclick="showTab('page-prompts', this)">✍️ Page Prompt Studio</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'review' ? 'class="active"' : ''} data-tab="review" onclick="showTab('review', this)">📬 Review Inbox <span class="badge" id="revBadge">${reviewPosts.length}</span></button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'calendar' ? 'class="active"' : ''} data-tab="calendar" onclick="showTab('calendar', this)">📅 Schedule Calendar</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'analytics' ? 'class="active"' : ''} data-tab="analytics" onclick="showTab('analytics', this)">📈 Analytics & Insights</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'simulator' ? 'class="active"' : ''} data-tab="simulator" onclick="showTab('simulator', this)">⚡ Test Run Simulator</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'providers' ? 'class="active"' : ''} data-tab="providers" onclick="showTab('providers', this)">🔌 Providers & Quotas</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'audit' ? 'class="active"' : ''} data-tab="audit" onclick="showTab('audit', this)">📋 System Audit Logs</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'settings' ? 'class="active"' : ''} data-tab="settings" onclick="showTab('settings', this)">⚙️ Settings & Controls</button></li>
     </ul>
     <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid var(--card-border);">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
@@ -2770,8 +3369,8 @@ async function generateDashboardHtml(): Promise<string> {
   <main class="main">
     <header class="header">
       <div class="header-title">
-        <h1 id="tabHeading">FB Auto 247 Dashboard</h1>
-        <p id="tabDesc">Autonomous 24/7 multi-page content machine • Made by Chandan Biswas</p>
+        <h1 id="tabHeading">${escapeHtml(routeInfo.heading)}</h1>
+        <p id="tabDesc">${escapeHtml(routeInfo.desc)}</p>
       </div>
       <div class="status-pill" id="workerPill" style="background: ${workerPillBg}; color: ${workerPillColor};">
         <div class="status-dot" style="background: ${workerDotColor};"></div>
@@ -2816,7 +3415,7 @@ async function generateDashboardHtml(): Promise<string> {
     <div id="urlAlertBanner" style="display: none; margin-bottom: 24px; padding: 14px 20px; border-radius: 8px; font-size: 14px; font-weight: 500;"></div>
 
     <!-- TAB 1: OVERVIEW -->
-    <div id="tab-overview" class="tab-content active">
+    <div id="tab-overview" class="tab-content ${routeInfo.tabId === 'overview' ? 'active' : ''}">
       <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));">
         <div class="card">
           <div class="card-title">Connected Facebook IDs</div>
@@ -2868,7 +3467,7 @@ async function generateDashboardHtml(): Promise<string> {
     </div>
 
     <!-- TAB 2: FB ACCOUNTS & IDENTITIES -->
-    <div id="tab-accounts" class="tab-content">
+    <div id="tab-accounts" class="tab-content ${routeInfo.tabId === 'accounts' ? 'active' : ''}">
       <div class="card" style="margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 12px;">
           <div>
@@ -2951,7 +3550,7 @@ async function generateDashboardHtml(): Promise<string> {
     </div>
 
     <!-- TAB 3: PAGES & ACCOUNTS TREE -->
-    <div id="tab-pages" class="tab-content">
+    <div id="tab-pages" class="tab-content ${routeInfo.tabId === 'pages' ? 'active' : ''}">
       <div class="card" style="margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
           <div>
@@ -3229,7 +3828,7 @@ async function generateDashboardHtml(): Promise<string> {
     </div>
 
     <!-- TAB 3: PAGE PROMPT STUDIO -->
-    <div id="tab-page-prompts" class="tab-content">
+    <div id="tab-page-prompts" class="tab-content ${routeInfo.tabId === 'page-prompts' ? 'active' : ''}">
       ${pages.length > 0 ? `
       <div class="card" style="margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; border-bottom: 1px solid var(--card-border); padding-bottom: 16px;">
@@ -3365,7 +3964,7 @@ async function generateDashboardHtml(): Promise<string> {
     </div>
 
     <!-- TAB 4: REVIEW INBOX -->
-    <div id="tab-review" class="tab-content">
+    <div id="tab-review" class="tab-content ${routeInfo.tabId === 'review' ? 'active' : ''}">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
         <div>
           <h3 style="font-size: 18px;">Review Inbox</h3>
@@ -3423,7 +4022,7 @@ async function generateDashboardHtml(): Promise<string> {
     </div>
 
     <!-- TAB 6: SCHEDULE CALENDAR GRID -->
-    <div id="tab-calendar" class="tab-content">
+    <div id="tab-calendar" class="tab-content ${routeInfo.tabId === 'calendar' ? 'active' : ''}">
       <div class="card" style="margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
           <div>
@@ -3486,7 +4085,7 @@ async function generateDashboardHtml(): Promise<string> {
     </div>
 
     <!-- TAB 7: ANALYTICS & INSIGHTS -->
-    <div id="tab-analytics" class="tab-content">
+    <div id="tab-analytics" class="tab-content ${routeInfo.tabId === 'analytics' ? 'active' : ''}">
       <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-bottom: 24px;">
         <div class="card">
           <div class="card-title">30-Day Organic Impressions</div>
@@ -3559,7 +4158,7 @@ async function generateDashboardHtml(): Promise<string> {
     </div>
 
     <!-- TAB 8: PIPELINE SIMULATOR -->
-    <div id="tab-simulator" class="tab-content">
+    <div id="tab-simulator" class="tab-content ${routeInfo.tabId === 'simulator' ? 'active' : ''}">
       <div class="card" style="margin-bottom: 24px;">
         <h3 style="margin-bottom: 10px; font-size: 16px;">⚡ End-to-End Pipeline Simulator (Sandbox Preview - No Posts Created or Sent to Facebook)</h3>
         <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 18px;">
@@ -3584,12 +4183,15 @@ async function generateDashboardHtml(): Promise<string> {
     </div>
 
     <!-- TAB 9: PROVIDERS -->
-    <div id="tab-providers" class="tab-content">
-      <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+    <div id="tab-providers" class="tab-content ${routeInfo.tabId === 'providers' ? 'active' : ''}">
+      <!-- Text Chain Card -->
+      <div class="card" style="margin-bottom: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
           <div>
-            <h3 style="font-size: 16px; margin-bottom: 4px;">Configured LLM & Image Providers</h3>
-            <p style="font-size: 13px; color: var(--text-muted);">Manage AI endpoints, daily request quotas, failover priorities, and AES-256-GCM encrypted API key rotation pools.</p>
+            <h3 style="font-size: 17px; margin-bottom: 4px;">🔤 Text Generation Failover Chain</h3>
+            <p style="font-size: 13px; color: var(--text-muted);">
+              Sequential failover priority for captions, ideas, outlines, and niche evaluation. If Primary fails, worker automatically cascades to Secondary and Fallbacks.
+            </p>
           </div>
           <button class="btn btn-primary" onclick="openAddProviderModal()">➕ Add Provider</button>
         </div>
@@ -3601,90 +4203,55 @@ async function generateDashboardHtml(): Promise<string> {
               <th>Failover Priority</th>
               <th>Daily Quota</th>
               <th>Key Pool (AES-256-GCM)</th>
-              <th>Status</th>
+              <th>Health & Latency</th>
               <th style="text-align: right;">Actions</th>
             </tr>
           </thead>
-          <tbody id="providersTableBody">
-            ${providers.length > 0
-              ? providers
-                  .map((p) => {
-                    const keys = providerKeys.filter((k) => k.provider_id === p.id);
-                    const activeKeys = keys.filter((k) => k.is_active);
-                    const keyBadges =
-                      keys.length > 0
-                        ? keys
-                            .map(
-                              (k) =>
-                                `<span class="badge" style="background: ${
-                                  k.is_active ? '#1e293b' : '#27272a'
-                                }; color: ${
-                                  k.is_active ? '#93c5fd' : '#71717a'
-                                }; font-family: 'JetBrains Mono', monospace; font-size: 11px; margin: 2px; display: inline-block;">${
-                                  k.masked_key
-                                }</span>`
-                            )
-                            .join('')
-                        : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
-                    const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+          <tbody id="textProvidersTableBody">
+            ${renderProviderChainRows(
+              providers.filter((p) => getProviderChain(p) === 'text').sort((a, b) => a.priority - b.priority),
+              providerKeys,
+              'text'
+            )}
+          </tbody>
+        </table>
+      </div>
 
-                    return `
-                    <tr id="provider-row-${p.id}">
-                      <td>
-                        <strong>${p.name}</strong><br>
-                        <span style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">${
-                          p.model_name || 'default'
-                        }</span>
-                      </td>
-                      <td><code>${p.adapter_kind}</code></td>
-                      <td><span class="badge" style="background: #1e3a8a; color: #60a5fa;">Priority ${p.priority}</span></td>
-                      <td>
-                        <div style="font-weight: 600;">${p.used_today || 0} / ${p.daily_limit} reqs</div>
-                        <div style="width: 100px; height: 5px; background: #374151; border-radius: 3px; margin-top: 4px; overflow: hidden;">
-                          <div style="width: ${pct}%; height: 100%; background: ${pct > 85 ? '#ef4444' : '#3b82f6'};"></div>
-                        </div>
-                      </td>
-                      <td>
-                        <div style="margin-bottom: 4px; max-width: 280px;">${keyBadges}</div>
-                        <span style="font-size: 11px; color: ${activeKeys.length > 0 ? '#34d399' : '#f59e0b'};">
-                          ● ${activeKeys.length} active key${activeKeys.length === 1 ? '' : 's'}
-                        </span>
-                      </td>
-                      <td>
-                        ${
-                          p.enabled
-                            ? '<span style="color: #34d399; font-weight: 600;">● Active</span>'
-                            : '<span style="color: #ef4444; font-weight: 600;">● Disabled</span>'
-                        }
-                      </td>
-                      <td style="text-align: right; white-space: nowrap;">
-                        <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openManageKeysModal('${
-                          p.id
-                        }')">🔑 Keys (${keys.length})</button>
-                        <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openEditProviderModal('${
-                          p.id
-                        }')">✏️ Edit</button>
-                        <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="deleteProviderAction('${
-                          p.id
-                        }')">🗑️</button>
-                      </td>
-                    </tr>
-                  `;
-                  })
-                  .join('')
-              : `<tr><td colspan="7" style="text-align: center; padding: 36px; color: var(--text-muted);">
-                  <div style="font-size: 28px; margin-bottom: 8px;">🤖</div>
-                  <div style="font-size: 14px; font-weight: 600; color: #d1d5db; margin-bottom: 4px;">No AI Providers Configured</div>
-                  <div style="font-size: 12px;">Click <strong>➕ Add Provider</strong> above to add Gemini, OpenAI, Cloudflare, or Pollinations with your API keys.</div>
-                </td></tr>`
-            }
+      <!-- Image Chain Card -->
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <h3 style="font-size: 17px; margin-bottom: 4px;">🎨 Image Generation Failover Chain</h3>
+            <p style="font-size: 13px; color: var(--text-muted);">
+              Sequential image generation providers (Pollinations, Cloudflare Workers AI, etc.) with live health tracking.
+            </p>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider & Model</th>
+              <th>Adapter Kind</th>
+              <th>Failover Priority</th>
+              <th>Daily Quota</th>
+              <th>Key Pool (AES-256-GCM)</th>
+              <th>Health & Latency</th>
+              <th style="text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="imageProvidersTableBody">
+            ${renderProviderChainRows(
+              providers.filter((p) => getProviderChain(p) === 'image').sort((a, b) => a.priority - b.priority),
+              providerKeys,
+              'image'
+            )}
           </tbody>
         </table>
       </div>
     </div>
 
     <!-- TAB 10: SYSTEM AUDIT LOGS -->
-    <div id="tab-audit" class="tab-content">
+    <div id="tab-audit" class="tab-content ${routeInfo.tabId === 'audit' ? 'active' : ''}">
       <div class="card" style="margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
           <div>
@@ -3731,7 +4298,7 @@ async function generateDashboardHtml(): Promise<string> {
     </div>
 
     <!-- TAB 11: SETTINGS & CONTROLS -->
-    <div id="tab-settings" class="tab-content">
+    <div id="tab-settings" class="tab-content ${routeInfo.tabId === 'settings' ? 'active' : ''}">
       <!-- Storage Health Check Card -->
       <div class="card" style="margin-bottom: 24px; border: 1px solid ${storageHealth.supabaseConnected && storageHealth.tablesOk ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'};">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">

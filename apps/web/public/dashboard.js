@@ -34,7 +34,7 @@
     }
   }
 
-  // --- Tab Navigation & Titles ---
+  // --- Tab Navigation, Titles & Clean Routing ---
   const TAB_TITLES = {
     overview: ['Overview Dashboard', 'Autonomous multi-page content production status and operational metrics.'],
     accounts: ['Facebook Accounts & Identities', 'Manage multiple Facebook User/Business IDs, token rotation, and linked pages.'],
@@ -49,7 +49,53 @@
     settings: ['System Controls & Settings', 'Emergency pause switch, retention cleaner, and storage policies.'],
   };
 
-  function showTab(tabId, btn) {
+  const TAB_TO_ROUTE = {
+    overview: '/overview',
+    accounts: '/accounts',
+    pages: '/pages',
+    'page-prompts': '/prompts',
+    review: '/review',
+    calendar: '/calendar',
+    analytics: '/analytics',
+    simulator: '/test-run',
+    providers: '/providers',
+    audit: '/audit-logs',
+    settings: '/settings',
+  };
+
+  const ROUTE_TO_TAB = {
+    '/overview': 'overview',
+    '/accounts': 'accounts',
+    '/pages': 'pages',
+    '/prompts': 'page-prompts',
+    '/review': 'review',
+    '/calendar': 'calendar',
+    '/analytics': 'analytics',
+    '/test-run': 'simulator',
+    '/providers': 'providers',
+    '/audit-logs': 'audit',
+    '/settings': 'settings',
+  };
+
+  function hasUnsavedModalChanges() {
+    var modal = document.getElementById('pageSettingsModal');
+    if (!modal || !modal.classList.contains('active')) return false;
+    if (typeof getModalSnapshot !== 'function' || !currentModalOriginalSnapshot) return false;
+    var currentSnapshot = getModalSnapshot();
+    return currentSnapshot !== currentModalOriginalSnapshot;
+  }
+
+  function showTab(tabId, btn, pushState) {
+    if (pushState === undefined) pushState = true;
+    if (!tabId) tabId = 'overview';
+
+    if (hasUnsavedModalChanges()) {
+      if (!confirm('You have unsaved changes in Page Settings. Discard changes and switch tabs?')) {
+        return;
+      }
+      closePageSettingsModal(false);
+    }
+
     document.querySelectorAll('.tab-content').forEach(function (el) {
       el.classList.remove('active');
     });
@@ -74,7 +120,19 @@
       const desc = document.getElementById('tabDesc');
       if (heading) heading.innerText = TAB_TITLES[tabId][0];
       if (desc) desc.innerText = TAB_TITLES[tabId][1];
+      document.title = 'FB Auto 247 - ' + TAB_TITLES[tabId][0];
     }
+
+    const routePath = TAB_TO_ROUTE[tabId] || '/overview';
+    if (pushState && window.location.pathname !== routePath) {
+      try {
+        history.pushState({ tabId: tabId }, '', routePath);
+      } catch (e) {}
+    }
+
+    try {
+      sessionStorage.setItem('last_active_tab', routePath);
+    } catch (e) {}
 
     if (tabId === 'page-prompts') {
       loadPageIntoStudio();
@@ -86,6 +144,58 @@
 
   // Expose showTab immediately on window
   window.showTab = showTab;
+  window.TAB_TO_ROUTE = TAB_TO_ROUTE;
+  window.ROUTE_TO_TAB = ROUTE_TO_TAB;
+
+  function restoreSubStateFromUrl() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const panel = params.get('panel');
+      const pageId = params.get('page');
+      const dialog = params.get('dialog');
+      const providerId = params.get('provider');
+      const profileId = params.get('profile');
+
+      if (panel === 'settings' && pageId) {
+        openPageSettingsModal(pageId);
+      } else if (!panel) {
+        closePageSettingsModal(false);
+      }
+
+      if (dialog === 'keys' && providerId) {
+        openManageKeysModal(providerId);
+      } else if (!dialog) {
+        closeManageKeysModal(false);
+      }
+
+      if (profileId) {
+        const select = document.getElementById('editProfileSelect');
+        if (select) {
+          select.value = profileId;
+          if (typeof toggleCustomNicheField === 'function') {
+            toggleCustomNicheField(profileId, 'studioCustomNicheBox');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Dashboard] Error restoring sub-state:', e);
+    }
+  }
+
+  window.addEventListener('popstate', function (e) {
+    const path = window.location.pathname;
+    const tabId = ROUTE_TO_TAB[path] || (e.state && e.state.tabId) || 'overview';
+    showTab(tabId, null, false);
+    restoreSubStateFromUrl();
+  });
+
+  window.addEventListener('beforeunload', function (e) {
+    if (hasUnsavedModalChanges()) {
+      e.preventDefault();
+      e.returnValue = 'You have unsaved changes in Page Settings.';
+      return e.returnValue;
+    }
+  });
 
   function ensureTabDataLoaded(tabId) {
     if (loadedTabs.has(tabId)) return;
@@ -172,10 +282,181 @@
         const keysObj = await kRes.json();
         providerKeysData = keysObj.keys || keysObj;
       }
+      renderProvidersTables();
     } catch (err) {
       showTabError('providers', err.message, fetchProvidersTab);
     }
   }
+
+  function isImageProvider(p) {
+    const kind = (p.adapter_kind || '').toLowerCase();
+    const name = (p.name || '').toLowerCase();
+    const model = (p.model_name || '').toLowerCase();
+    return (
+      kind === 'pollinations' ||
+      kind === 'cloudflare_workers_ai' ||
+      kind === 'openai_compatible_images' ||
+      name.includes('image') ||
+      model.includes('flux') ||
+      model.includes('dall-e') ||
+      model.includes('stable-diffusion')
+    );
+  }
+
+  function getOfficialFreeQuotaClient(p) {
+    const name = (p.name || '').toLowerCase();
+    const kind = (p.adapter_kind || '').toLowerCase();
+    const model = (p.model_name || '').toLowerCase();
+
+    if (kind.includes('gemini') || name.includes('gemini')) return { limit: 1500, badge: '1,500 reqs/day', note: 'Google AI Studio free tier: 15 RPM / 1,500 RPD' };
+    if (name.includes('groq') || model.includes('groq')) return { limit: 14400, badge: '14,400 reqs/day (token-gated)', note: 'Groq Cloud free tier: 30 RPM / 14,400 RPD' };
+    if (name.includes('openrouter') || model.includes('openrouter')) return { limit: 200, badge: '200 reqs/day', note: 'OpenRouter free models tier (:free)' };
+    if (kind.includes('cloudflare') || name.includes('cloudflare')) return { limit: 10000, badge: '10,000 neurons/day', note: 'Cloudflare Workers AI free tier' };
+    if (kind.includes('huggingface') || name.includes('hugging') || name.includes('hf')) return { limit: 0, badge: '0 credits (rate-limited)', note: 'Hugging Face free tier: 0 monthly credits' };
+    if (kind.includes('pollinations') || name.includes('pollinations')) return { limit: 1000, badge: '1,000 reqs/day', note: 'Pollinations AI free tier' };
+    return null;
+  }
+
+  function renderChainTableBody(tbodyId, chainProviders, chainType) {
+    const tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
+    if (chainProviders.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 13px;">No ' + (chainType === 'text' ? 'text generation' : 'image generation') + ' providers configured in this chain.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = chainProviders.map(function (p, idx) {
+      const keys = providerKeysData.filter(function (k) { return k.provider_id === p.id; });
+      const activeKeys = keys.filter(function (k) { return k.is_active; });
+      const keyBadges = keys.length > 0
+        ? keys.map(function (k) {
+            return '<span class="badge" style="background: ' + (k.is_active ? '#1e293b' : '#27272a') + '; color: ' + (k.is_active ? '#93c5fd' : '#71717a') + '; font-family: \'JetBrains Mono\', monospace; font-size: 11px; margin: 2px; display: inline-block;">' + escapeHtml(k.masked_key) + '</span>';
+          }).join('')
+        : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
+
+      const officialQuota = getOfficialFreeQuotaClient(p);
+      const exceedsQuota = officialQuota && (
+        (officialQuota.limit > 0 && (p.daily_limit || 0) > officialQuota.limit) ||
+        (officialQuota.limit === 0 && (p.daily_limit || 0) > 0)
+      );
+
+      let priorityBadge = '';
+      if (idx === 0) {
+        priorityBadge = '<span class="badge" style="background: #064e3b; color: #34d399; font-weight: 700; padding: 3px 8px; font-size: 11px;">#1 Primary</span>';
+      } else if (idx === 1) {
+        priorityBadge = '<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-weight: 700; padding: 3px 8px; font-size: 11px;">#2 Secondary</span>';
+      } else if (idx === 2) {
+        priorityBadge = '<span class="badge" style="background: #78350f; color: #fbbf24; font-weight: 700; padding: 3px 8px; font-size: 11px;">#3 Fallback</span>';
+      } else {
+        priorityBadge = '<span class="badge" style="background: #27272a; color: #a1a1aa; font-weight: 600; padding: 3px 8px; font-size: 11px;">#' + (idx + 1) + ' Fallback</span>';
+      }
+
+      let statusDisplay = '';
+      if (p.health_status === 'failing') {
+        statusDisplay = '<div style="color: #ef4444; font-weight: 700; font-size: 12px;">● Failing (skipped)</div><div style="font-size: 10px; color: #f87171;" title="' + escapeHtml(p.test_error || '') + '">' + escapeHtml((p.test_error || 'Probe failed').slice(0, 30)) + '</div>';
+      } else if (p.health_status === 'healthy') {
+        statusDisplay = '<div style="color: #34d399; font-weight: 600; font-size: 12px;">● Healthy (' + (p.latency_ms || 120) + 'ms)</div><div style="font-size: 10px; color: #94a3b8;">' + (p.last_tested_at ? 'Tested ' + new Date(p.last_tested_at).toLocaleTimeString() : 'Verified') + '</div>';
+      } else if (p.enabled) {
+        statusDisplay = '<span style="color: #34d399; font-weight: 600; font-size: 12px;">● Active</span>';
+      } else {
+        statusDisplay = '<span style="color: #9ca3af; font-weight: 600; font-size: 12px;">● Disabled</span>';
+      }
+
+      const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+
+      return (
+        '<tr id="provider-row-' + p.id + '">' +
+        '<td><div style="font-weight: 700; font-size: 14px; color: #f3f4f6;">' + escapeHtml(p.name) + '</div>' +
+        '<div style="font-size: 12px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">' + escapeHtml(p.model_name || 'default') + '</div></td>' +
+        '<td><code>' + escapeHtml(p.adapter_kind) + '</code></td>' +
+        '<td>' + priorityBadge + '</td>' +
+        '<td><div style="font-weight: 600;">' + (p.used_today || 0) + ' / ' + p.daily_limit + ' reqs</div>' +
+        '<div style="width: 100px; height: 5px; background: #374151; border-radius: 3px; margin-top: 4px; overflow: hidden;">' +
+        '<div style="width: ' + pct + '%; height: 100%; background: ' + (pct > 85 ? '#ef4444' : '#3b82f6') + ';"></div>' +
+        '</div>' +
+        (exceedsQuota ? '<div style="margin-top: 4px;"><span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; font-size: 10px; padding: 2px 6px;" title="' + escapeHtml(officialQuota.note) + '">⚠️ Exceeds free limit (' + officialQuota.badge + ')</span></div>' : (officialQuota ? '<div style="margin-top: 2px; font-size: 10px; color: #9ca3af;">Free: ' + officialQuota.badge + '</div>' : '')) +
+        '</td>' +
+        '<td><div style="margin-bottom: 4px; max-width: 260px;">' + keyBadges + '</div>' +
+        '<span style="font-size: 11px; color: ' + (activeKeys.length > 0 ? '#34d399' : '#f59e0b') + ';">● ' + activeKeys.length + ' active key' + (activeKeys.length === 1 ? '' : 's') + '</span></td>' +
+        '<td id="provider-status-' + p.id + '">' + statusDisplay + '</td>' +
+        '<td style="text-align: right; white-space: nowrap;"><div style="display: inline-flex; gap: 4px;">' +
+        '<button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="moveProviderPriority(\'' + p.id + '\', \'up\')" title="Move up in chain" ' + (idx === 0 ? 'disabled style="opacity: 0.35; cursor: not-allowed; padding: 4px 8px; font-size: 11px;"' : '') + '>⬆️</button>' +
+        '<button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="moveProviderPriority(\'' + p.id + '\', \'down\')" title="Move down in chain" ' + (idx === chainProviders.length - 1 ? 'disabled style="opacity: 0.35; cursor: not-allowed; padding: 4px 8px; font-size: 11px;"' : '') + '>⬇️</button>' +
+        '<button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="testProviderAction(\'' + p.id + '\', this)" title="Test latency & connection">🩺 Test</button>' +
+        '<button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="openManageKeysModal(\'' + p.id + '\')">🔑 Keys (' + keys.length + ')</button>' +
+        '<button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="openEditProviderModal(\'' + p.id + '\')">✏️</button>' +
+        '<button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteProviderAction(\'' + p.id + '\')">🗑️</button>' +
+        '</div></td>' +
+        '</tr>'
+      );
+    }).join('');
+  }
+
+  function renderProvidersTables() {
+    const textProvs = providersData.filter(function (p) { return !isImageProvider(p); }).sort(function (a, b) { return a.priority - b.priority; });
+    const imageProvs = providersData.filter(function (p) { return isImageProvider(p); }).sort(function (a, b) { return a.priority - b.priority; });
+    renderChainTableBody('textProvidersTableBody', textProvs, 'text');
+    renderChainTableBody('imageProvidersTableBody', imageProvs, 'image');
+  }
+  window.renderProvidersTables = renderProvidersTables;
+
+  async function moveProviderPriority(providerId, direction) {
+    try {
+      var res = await fetch('/api/providers/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: providerId, direction: direction })
+      });
+      var data = await res.json();
+      if (res.ok && data.success) {
+        providersData = data.providers;
+        renderProvidersTables();
+        showToast('Saved and verified failover priority order', 'success');
+      } else {
+        alert('Could not reorder provider: ' + (data.error || 'Unknown error'));
+      }
+    } catch (e) {
+      alert('Network error while reordering provider: ' + e.message);
+    }
+  }
+  window.moveProviderPriority = moveProviderPriority;
+
+  async function testProviderAction(providerId, btn) {
+    var origText = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Testing...';
+    }
+    try {
+      var res = await fetch('/api/providers/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: providerId })
+      });
+      var data = await res.json();
+      var target = providersData.find(function (p) { return p.id === providerId; });
+      if (target) {
+        target.health_status = data.status || (data.success ? 'healthy' : 'failing');
+        target.latency_ms = data.latency_ms;
+        target.test_error = data.error;
+        target.last_tested_at = new Date().toISOString();
+      }
+      renderProvidersTables();
+      if (data.success) {
+        showToast('✅ Probe succeeded in ' + (data.latency_ms || 0) + 'ms', 'success');
+      } else {
+        showToast('⚠️ Provider failing: ' + (data.error || 'Connection failed'), 'error');
+      }
+    } catch (e) {
+      alert('Network error testing provider: ' + e.message);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+  }
+  window.testProviderAction = testProviderAction;
 
   async function fetchAuditTab() {
     try {
@@ -276,11 +557,11 @@
 
     if (res.ok) {
       closeAddAccountModal();
-      alert('Facebook Account connected and token encrypted in vault!');
-      window.location.reload();
+      showToast('Facebook Account connected and token encrypted in vault!');
+      fetchAccountsTab();
     } else {
       const err = await res.json();
-      alert('Failed to connect Facebook account: ' + (err.error || 'Unknown error'));
+      showToast('Failed to connect Facebook account: ' + (err.error || 'Unknown error'), 'error');
     }
   }
 
@@ -325,10 +606,10 @@
 
     if (res.ok) {
       closeEditAccountModal();
-      alert('Facebook Account updated!');
-      window.location.reload();
+      showToast('Facebook Account updated!');
+      fetchAccountsTab();
     } else {
-      alert('Failed to update account.');
+      showToast('Failed to update account.', 'error');
     }
   }
 
@@ -340,8 +621,8 @@
       body: JSON.stringify({ id: id }),
     });
     if (res.ok) {
-      alert('Facebook Account disconnected.');
-      window.location.reload();
+      showToast('Facebook Account disconnected.');
+      fetchAccountsTab();
     }
   }
 
@@ -367,6 +648,13 @@
         row.style.display = 'none';
       }
     });
+    try {
+      if (accId && accId !== 'all') {
+        history.replaceState(null, '', '/pages?account=' + encodeURIComponent(accId));
+      } else if (window.location.search.includes('account=')) {
+        history.replaceState(null, '', '/pages');
+      }
+    } catch (_) {}
   }
 
   // --- Pages Management ---
@@ -430,11 +718,11 @@
 
     if (res.ok) {
       closeAddPageModal();
-      alert('Page successfully added and encrypted under selected Facebook ID! Refreshing...');
-      window.location.reload();
+      showToast('Page successfully added and encrypted under selected Facebook ID!');
+      fetchPagesTab();
     } else {
       const err = await res.json();
-      alert('Failed to add page: ' + (err.error || 'Unknown error'));
+      showToast('Failed to add page: ' + (err.error || 'Unknown error'), 'error');
     }
   }
 
@@ -446,8 +734,8 @@
       body: JSON.stringify({ id: id }),
     });
     if (res.ok) {
-      alert('Page deleted.');
-      window.location.reload();
+      showToast('Page deleted.');
+      fetchPagesTab();
     }
   }
 
@@ -456,6 +744,9 @@
     const sel = document.getElementById('studioPageSelect');
     if (sel) sel.value = pageId;
     loadPageIntoStudio();
+    try {
+      history.replaceState(null, '', '/prompts?profile=' + encodeURIComponent(pageId));
+    } catch (_) {}
   }
 
   function loadPageIntoStudio() {
@@ -642,8 +933,12 @@
     if (res.ok) {
       const card = document.getElementById('card-' + postId);
       if (card) card.remove();
-      alert('Post approved! Scheduled on Facebook.');
-      window.location.reload();
+      const badge = document.getElementById('revBadge');
+      if (badge) {
+        const c = parseInt(badge.innerText, 10);
+        if (!isNaN(c) && c > 0) badge.innerText = c - 1;
+      }
+      showToast('Post approved! Scheduled on Facebook.');
     }
   }
 
@@ -658,8 +953,12 @@
     if (res.ok) {
       const card = document.getElementById('card-' + postId);
       if (card) card.remove();
-      alert('Post rejected and skipped.');
-      window.location.reload();
+      const badge = document.getElementById('revBadge');
+      if (badge) {
+        const c = parseInt(badge.innerText, 10);
+        if (!isNaN(c) && c > 0) badge.innerText = c - 1;
+      }
+      showToast('Post rejected and skipped.');
     }
   }
 
@@ -670,9 +969,14 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ postId: postId, action: 'edit', updates: { caption: newCaption } }),
-      }).then(function () {
-        alert('Caption updated! Word count and content hash recalculated.');
-        window.location.reload();
+      }).then(function (res) {
+        if (res.ok) {
+          const capElem = document.getElementById('caption-' + postId);
+          if (capElem) capElem.innerText = newCaption;
+          showToast('Caption updated! Word count and content hash recalculated.');
+        } else {
+          showToast('Failed to update caption.', 'error');
+        }
       });
     }
   }
@@ -812,14 +1116,14 @@
       const data = await res.json();
       closeAddProviderModal();
       if (data.is_existing) {
-        alert('Provider "' + data.provider.name + '" updated! Added ' + (data.addedKeys ? data.addedKeys.length : 0) + ' API key(s) to its existing rotation pool (Total in pool: ' + data.totalKeys + '). Existing keys are preserved!');
+        showToast('Provider "' + data.provider.name + '" updated! Added ' + (data.addedKeys ? data.addedKeys.length : 0) + ' API key(s).');
       } else {
-        alert('AI Provider "' + data.provider.name + '" successfully connected and ' + (data.addedKeys ? data.addedKeys.length : 0) + ' API key(s) encrypted!');
+        showToast('AI Provider "' + data.provider.name + '" successfully connected!');
       }
-      window.location.reload();
+      fetchProvidersTab();
     } else {
       const err = await res.json();
-      alert('Failed to add provider: ' + (err.error || 'Unknown error'));
+      showToast('Failed to add provider: ' + (err.error || 'Unknown error'), 'error');
     }
   }
 
@@ -1104,11 +1408,11 @@
 
     if (res.ok) {
       closeEditProviderModal();
-      alert('Provider settings and keys successfully saved!');
-      window.location.reload();
+      showToast('Provider settings and keys successfully saved!');
+      fetchProvidersTab();
     } else {
       const err = await res.json();
-      alert('Failed to update provider: ' + (err.error || 'Unknown error'));
+      showToast('Failed to update provider: ' + (err.error || 'Unknown error'), 'error');
     }
   }
 
@@ -1120,10 +1424,10 @@
       body: JSON.stringify({ id: id }),
     });
     if (res.ok) {
-      alert('Provider deleted.');
-      window.location.reload();
+      showToast('Provider deleted.');
+      fetchProvidersTab();
     } else {
-      alert('Failed to delete provider.');
+      showToast('Failed to delete provider.', 'error');
     }
   }
 
@@ -1131,6 +1435,9 @@
   function openManageKeysModal(providerId) {
     const p = providersData.find(function (item) { return item.id === providerId; });
     if (!p) return;
+    try {
+      history.replaceState(null, '', '/providers?provider=' + encodeURIComponent(providerId) + '&dialog=keys');
+    } catch (_) {}
     document.getElementById('keyPoolProviderId').value = providerId;
     document.getElementById('manageKeysTitle').innerText = '🔑 Keys for ' + p.name;
     document.getElementById('manageKeysSubtitle').innerText = 'Adapter: ' + p.adapter_kind + ' • Model: ' + (p.model_name || 'default');
@@ -1139,9 +1446,16 @@
     if (modal) modal.classList.add('active');
   }
 
-  function closeManageKeysModal() {
+  function closeManageKeysModal(updateUrl) {
     const modal = document.getElementById('manageKeysModal');
     if (modal) modal.classList.remove('active');
+    if (updateUrl !== false) {
+      try {
+        if (window.location.search.includes('dialog=keys')) {
+          history.replaceState(null, '', '/providers');
+        }
+      } catch (_) {}
+    }
   }
 
   function renderKeysList(providerId) {
@@ -1293,7 +1607,6 @@
           lines.push('• Missing Permissions: ' + r.missingRequiredScopes.join(', '));
         }
         alert(lines.join('\n'));
-        window.location.reload();
       } else {
         alert('Failed to check token: ' + (data.error || 'Unknown error'));
       }
@@ -1329,7 +1642,6 @@
           lines.push('• Missing Permissions: ' + r.missingRequiredScopes.join(', '));
         }
         alert(lines.join('\n'));
-        window.location.reload();
       } else {
         alert('Failed to check token: ' + (data.error || 'Unknown error'));
       }
@@ -1426,7 +1738,8 @@
           msg += '\n\n⚠️ Notice: ' + data.emptyExplanation;
         }
         alert(msg);
-        window.location.reload();
+        fetchPagesTab();
+        fetchAccountsTab();
       }
     } catch (e) {
       alert('Network error while syncing account: ' + (e && e.message ? e.message : String(e)));
@@ -1459,7 +1772,8 @@
           'New Pages: ' + data.newPages + ' | Updated: ' + data.updatedPages +
           (data.inaccessiblePages > 0 ? ' | Inaccessible: ' + data.inaccessiblePages : '')
         );
-        window.location.reload();
+        fetchPagesTab();
+        fetchAccountsTab();
       }
     } catch (e) {
       alert('Network error while syncing all accounts: ' + (e && e.message ? e.message : String(e)));
@@ -2220,7 +2534,7 @@
       }
 
       showToast('⏸️ Autonomous posting paused (' + (selectedAction === 'cancel_pending' ? 'scheduled posts cancelled' : 'in-flight preserved') + ')', 'warning');
-      setTimeout(function() { window.location.reload(); }, 1200);
+      fetchPagesTab();
     } catch (err) {
       alert('Network error pausing auto-posting: ' + err.message);
     }
@@ -2246,10 +2560,15 @@
       });
       var data = await res.json();
       if (res.ok && data.success) {
-        alert('⚡ Simulation Succeeded!\n\nTopic: ' + (data.topic ? data.topic.title : 'Generated') + '\nQA Score: ' + (data.qaScore || 95) + '/100\n\nWord Count: ' + (data.wordCount || 0) + ' words\nStep 4 (Test Run) marked verified on the Page checklist!');
-        window.location.reload();
+        showToast('⚡ Simulation Succeeded! Step 4 marked verified.', 'success');
+        var p = pagesData.find(function (x) { return x.id === pageId; });
+        if (p) {
+          p.test_run_completed = true;
+          if (currentSettingsPageId === pageId) updateModalChecklistDisplay(p);
+        }
+        fetchPagesTab();
       } else {
-        alert('Simulation notice: ' + (data.error || 'Failed to run test'));
+        showToast('Simulation notice: ' + (data.error || 'Failed to run test'), 'error');
       }
     } catch (err) {
       alert('Error executing test run: ' + err.message);
@@ -2339,7 +2658,9 @@
       var data = await res.json();
       if (res.ok && data.success) {
         showToast('✅ Niche profile applied!', 'success');
-        setTimeout(function() { window.location.reload(); }, 1000);
+        var page = pagesData.find(function (p) { return p.id === pageId; });
+        if (page) page.profile_id = profileId;
+        fetchPagesTab();
       } else {
         alert('Notice: ' + (data.error || 'Failed to apply niche profile'));
       }
@@ -2359,7 +2680,17 @@
       var data = await res.json();
       if (res.ok && data.success) {
         showToast('🎉 New Content Profile created!', 'success');
-        setTimeout(function() { window.location.reload(); }, 1200);
+        if (data.profile) {
+          var profSelect = document.getElementById('psmProfileSelect');
+          if (profSelect) {
+            var opt = document.createElement('option');
+            opt.value = data.profile.id;
+            opt.innerText = data.profile.name + ' (' + data.profile.niche + ')';
+            profSelect.insertBefore(opt, profSelect.lastElementChild);
+            profSelect.value = data.profile.id;
+          }
+        }
+        fetchPagesTab();
       } else {
         alert('Failed: ' + (data.error || 'Could not generate profile'));
       }
@@ -2408,7 +2739,7 @@
       var data = await res.json();
       if (res.ok && data.success) {
         showToast('📦 Imported ' + data.importedCount + ' starter profiles to Supabase!', 'success');
-        setTimeout(function() { window.location.reload(); }, 1200);
+        fetchPagesTab();
       } else {
         alert('Notice: ' + (data.error || 'Failed to import starter profiles'));
       }
@@ -2557,7 +2888,9 @@
         var data = await res.json();
         if (res.ok && data.success) {
           showToast('✅ Settings restored: ' + data.restored.pages + ' pages, ' + data.restored.profiles + ' profiles!', 'success');
-          setTimeout(function() { window.location.reload(); }, 1500);
+          fetchPagesTab();
+          fetchAccountsTab();
+          fetchProvidersTab();
         } else {
           alert('Restore notice: ' + (data.error || 'Failed to restore backup'));
         }
@@ -2743,13 +3076,28 @@
         }
       }
 
-      if (params.get('tab')) {
-        const tabName = params.get('tab');
-        const targetBtn = document.querySelector('.nav-list .nav-item button[data-tab="' + tabName + '"]');
-        if (targetBtn) {
-          showTab(tabName, targetBtn);
-        }
+      if (params.get('connected') === 'true' || params.get('error') || params.get('warning')) {
+        try {
+          const cleanParams = new URLSearchParams(window.location.search);
+          cleanParams.delete('connected');
+          cleanParams.delete('count');
+          cleanParams.delete('account');
+          cleanParams.delete('found');
+          cleanParams.delete('new');
+          cleanParams.delete('updated');
+          cleanParams.delete('publishable');
+          cleanParams.delete('error');
+          cleanParams.delete('warning');
+          const cleanSearch = cleanParams.toString() ? ('?' + cleanParams.toString()) : '';
+          history.replaceState(null, '', window.location.pathname + cleanSearch);
+        } catch (_) {}
       }
+
+      const path = window.location.pathname;
+      const initialTab = (window.__INITIAL_ROUTE__ && window.__INITIAL_ROUTE__.tabId) || ROUTE_TO_TAB[path] || params.get('tab') || sessionStorage.getItem('last_active_tab') || 'overview';
+      const targetBtn = document.querySelector('.nav-list .nav-item button[data-tab="' + initialTab + '"]');
+      showTab(initialTab, targetBtn, false);
+      restoreSubStateFromUrl();
     } catch (e) {
       console.warn('[Dashboard] Error parsing URL parameters:', e);
     }
