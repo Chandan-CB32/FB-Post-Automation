@@ -52,7 +52,12 @@ export function evaluatePageChecklist(page: PageOnboardingInput): PageChecklistS
   const missingSteps: string[] = [];
 
   // Step 1: Content Profile
-  const profileChosen = Boolean(page.profile_id && page.profile_id.trim() && page.profile_id !== 'default-niche');
+  const profileChosen = Boolean(
+    page.profile_id &&
+    page.profile_id.trim() &&
+    page.profile_id !== 'default-niche' &&
+    page.profile_id !== '__custom__'
+  );
   if (!profileChosen) {
     missingSteps.push('Select a Content Profile or run Automatic Niche Detection');
   }

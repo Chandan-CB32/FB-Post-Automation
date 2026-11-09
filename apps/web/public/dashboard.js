@@ -1399,28 +1399,6 @@
   window.quickTogglePageActive = quickTogglePageActive;
   window.quickUpdatePageProfile = quickUpdatePageProfile;
   window.quickUpdatePageTimezone = quickUpdatePageTimezone;
-  window.copyExpectedRedirectUri = copyExpectedRedirectUri;
-  window.testFacebookConnectionAction = testFacebookConnectionAction;
-  window.openPageSettingsModal = openPageSettingsModal;
-  window.closePageSettingsModal = closePageSettingsModal;
-  window.setScheduleTimingMode = setScheduleTimingMode;
-  window.addFixedTimePicker = addFixedTimePicker;
-  window.removeFixedTimePicker = removeFixedTimePicker;
-  window.handleScheduleInputChange = handleScheduleInputChange;
-  window.updateLiveSchedulePreview = updateLiveSchedulePreview;
-  window.handlePublishingModeChange = handlePublishingModeChange;
-  window.handleModalProfileChange = handleModalProfileChange;
-  window.handleSavePageSettings = handleSavePageSettings;
-  window.toggleLiveFromModal = toggleLiveFromModal;
-  window.runTestRunFromModal = runTestRunFromModal;
-  window.triggerPageTestRun = triggerPageTestRun;
-  window.analyzePageNicheAction = analyzePageNicheAction;
-  window.analyzePageNicheActionFromModal = analyzePageNicheActionFromModal;
-  window.dismissModalNicheSuggestion = dismissModalNicheSuggestion;
-  window.acceptModalNicheSuggestion = acceptModalNicheSuggestion;
-  window.applyNicheProfile = applyNicheProfile;
-  window.createProfileFromModalNiche = createProfileFromModalNiche;
-  window.openPagePromptStudioFromModal = openPagePromptStudioFromModal;
 
   async function syncAccountAction(accountId, btn) {
     if (!accountId) return;
@@ -1542,17 +1520,156 @@
   }
 
   // --- Page Settings & Scheduling Controls Modal ---
-  let currentSettingsPageId = null;
-  let currentScheduleTimingMode = 'fixed';
-  let previewDebounceTimer = null;
+  // --- Toast Notification System ---
+  function showToast(message, type) {
+    type = type || 'success';
+    var container = document.getElementById('toastContainer');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toastContainer';
+      container.style.cssText = 'position: fixed; bottom: 24px; right: 24px; z-index: 99999; display: flex; flex-direction: column; gap: 8px; pointer-events: none;';
+      document.body.appendChild(container);
+    }
+    var toast = document.createElement('div');
+    var bg = type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#10b981';
+    toast.style.cssText = 'background: ' + bg + '; color: #ffffff; padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); pointer-events: auto; display: flex; align-items: center; gap: 8px; transition: opacity 0.3s ease; opacity: 1;';
+    toast.innerText = message;
+    container.appendChild(toast);
+    setTimeout(function() {
+      toast.style.opacity = '0';
+      setTimeout(function() {
+        if (toast.parentElement) toast.parentElement.removeChild(toast);
+      }, 300);
+    }, 4500);
+  }
+
+  // --- Page Settings & Scheduling State ---
+  var currentSettingsPageId = null;
+  var currentStopPageId = null;
+  var currentScheduleTimingMode = 'fixed';
+  var previewDebounceTimer = null;
+  var currentModalOriginalSnapshot = null;
+  var currentExpectedUpdatedAt = null;
+  var currentExpectedVersion = 1;
+
+  function setScheduleTimingMode(mode) {
+    currentScheduleTimingMode = mode || 'fixed';
+  }
+
+  function handlePublishingModeChange(mode) {
+    selectPublishingMode(mode);
+  }
+
+  function toggleLiveFromModal() {
+    toggleAutoPostingFromSwitch();
+  }
+
+  function getModalSnapshot() {
+    var fixedTimes = [];
+    document.querySelectorAll('.psm-fixed-time-input').forEach(function (inp) {
+      if (inp.value) fixedTimes.push(inp.value);
+    });
+    return JSON.stringify({
+      profile_id: document.getElementById('psmProfileSelect') ? document.getElementById('psmProfileSelect').value : '',
+      publishing_mode: document.getElementById('psmPublishingMode') ? document.getElementById('psmPublishingMode').value : 'review',
+      hybrid_min_score: document.getElementById('psmHybridScore') ? document.getElementById('psmHybridScore').value : '80',
+      timezone: document.getElementById('psmTimezone') ? document.getElementById('psmTimezone').value : 'America/New_York',
+      fixedTimes: fixedTimes.sort(),
+      jitter: document.getElementById('psmJitter') ? document.getElementById('psmJitter').value : '10',
+      minGap: document.getElementById('psmMinGap') ? document.getElementById('psmMinGap').value : '60',
+      leadTime: document.getElementById('psmLeadTime') ? document.getElementById('psmLeadTime').value : '48',
+      dailyCap: document.getElementById('psmDailyCap') ? document.getElementById('psmDailyCap').value : '3',
+      vacationStart: document.getElementById('psmVacationStart') ? document.getElementById('psmVacationStart').value : '',
+      vacationEnd: document.getElementById('psmVacationEnd') ? document.getElementById('psmVacationEnd').value : '',
+      aiDisclosure: document.getElementById('psmAiDisclosureToggle') ? document.getElementById('psmAiDisclosureToggle').checked : false,
+      aiText: document.getElementById('psmAiDisclosureText') ? document.getElementById('psmAiDisclosureText').value : '',
+      sourceLine: document.getElementById('psmSourceLineToggle') ? document.getElementById('psmSourceLineToggle').checked : true,
+    });
+  }
+
+  function markFormModified() {
+    if (!currentModalOriginalSnapshot) return;
+    var snap = getModalSnapshot();
+    var isDirty = snap !== currentModalOriginalSnapshot;
+    var unsavedBadge = document.getElementById('psmUnsavedBadge');
+    var revertBtn = document.getElementById('psmRevertBtn');
+    if (unsavedBadge) unsavedBadge.style.display = isDirty ? 'inline-block' : 'none';
+    if (revertBtn) revertBtn.disabled = !isDirty;
+  }
+
+  function revertModalChanges() {
+    if (!currentSettingsPageId) return;
+    var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
+    if (!page) return;
+    populateModalFromPage(page);
+    var unsavedBadge = document.getElementById('psmUnsavedBadge');
+    var revertBtn = document.getElementById('psmRevertBtn');
+    if (unsavedBadge) unsavedBadge.style.display = 'none';
+    if (revertBtn) revertBtn.disabled = true;
+    showToast('↩️ Changes reverted to Supabase saved state', 'info');
+  }
+
+  function updateBigSwitchUI(isLive) {
+    var liveBadge = document.getElementById('psmLiveBadge');
+    var switchLabel = document.getElementById('psmSwitchLabel');
+    var bigBtn = document.getElementById('psmBigSwitchBtn');
+    var stepLive = document.getElementById('psmStepLive');
+
+    if (isLive) {
+      if (liveBadge) {
+        liveBadge.innerText = '● LIVE (AUTONOMOUS)';
+        liveBadge.style.background = 'rgba(16,185,129,0.2)';
+        liveBadge.style.color = '#34d399';
+      }
+      if (switchLabel) {
+        switchLabel.innerText = 'ON';
+        switchLabel.style.color = '#34d399';
+      }
+      if (bigBtn) {
+        bigBtn.innerText = '⏸️ Turn Auto-Posting OFF';
+        bigBtn.className = 'btn btn-secondary';
+        bigBtn.style.color = '#f87171';
+        bigBtn.style.borderColor = 'rgba(239,68,68,0.4)';
+      }
+      if (stepLive) {
+        stepLive.querySelector('.psm-step-icon').innerText = '✅';
+        stepLive.querySelector('.psm-step-status').innerText = 'Live';
+        stepLive.querySelector('.psm-step-status').style.color = '#34d399';
+      }
+    } else {
+      if (liveBadge) {
+        liveBadge.innerText = '● POSTING DISABLED';
+        liveBadge.style.background = 'rgba(239,68,68,0.2)';
+        liveBadge.style.color = '#f87171';
+      }
+      if (switchLabel) {
+        switchLabel.innerText = 'OFF';
+        switchLabel.style.color = '#f87171';
+      }
+      if (bigBtn) {
+        bigBtn.innerText = '🚀 Turn Auto-Posting ON';
+        bigBtn.className = 'btn btn-primary';
+        bigBtn.style.color = '#ffffff';
+        bigBtn.style.borderColor = '';
+      }
+      if (stepLive) {
+        stepLive.querySelector('.psm-step-icon').innerText = '⭕';
+        stepLive.querySelector('.psm-step-status').innerText = 'Paused';
+        stepLive.querySelector('.psm-step-status').style.color = '#9ca3af';
+      }
+    }
+  }
 
   function openPageSettingsModal(pageId) {
     currentSettingsPageId = pageId;
-    const page = pagesData.find(function (p) { return p.id === pageId; });
+    var page = pagesData.find(function (p) { return p.id === pageId; });
     if (!page) {
       alert('Page not found.');
       return;
     }
+
+    currentExpectedUpdatedAt = page.updated_at;
+    currentExpectedVersion = page.version || 1;
 
     document.getElementById('psmPageId').value = page.id;
     document.getElementById('psmTitle').innerText = '⚙️ Page Settings: ' + page.name;
@@ -1560,37 +1677,52 @@
     document.getElementById('psmPageFbId').innerText = page.fb_page_id;
     document.getElementById('psmTokenStatus').innerText = (page.token_status || 'valid').toUpperCase();
 
-    // Live status badge & toggle button
-    const liveBadge = document.getElementById('psmLiveBadge');
-    const toggleBtn = document.getElementById('psmToggleLiveBtn');
-    if (page.active) {
-      liveBadge.innerText = '● LIVE (AUTONOMOUS)';
-      liveBadge.style.background = 'rgba(16,185,129,0.2)';
-      liveBadge.style.color = '#34d399';
-      toggleBtn.innerText = '⏸️ Pause Autonomous Posting';
-      toggleBtn.className = 'btn btn-secondary';
-    } else {
-      liveBadge.innerText = '● POSTING DISABLED';
-      liveBadge.style.background = 'rgba(239,68,68,0.2)';
-      liveBadge.style.color = '#f87171';
-      toggleBtn.innerText = '🚀 Take Page Live';
-      toggleBtn.className = 'btn btn-primary';
-    }
+    // Populate Modal Inputs
+    populateModalFromPage(page);
 
-    // Profile select
-    const profSelect = document.getElementById('psmProfileSelect');
+    // Save snapshot for unsaved detection
+    currentModalOriginalSnapshot = getModalSnapshot();
+    var unsavedBadge = document.getElementById('psmUnsavedBadge');
+    var revertBtn = document.getElementById('psmRevertBtn');
+    if (unsavedBadge) unsavedBadge.style.display = 'none';
+    if (revertBtn) revertBtn.disabled = true;
+
+    // Update Checklist Banner
+    updateModalChecklistDisplay(page);
+
+    // Live preview
+    updateLiveSchedulePreview();
+
+    var modal = document.getElementById('pageSettingsModal');
+    if (modal) modal.classList.add('active');
+  }
+
+  function closePageSettingsModal() {
+    var modal = document.getElementById('pageSettingsModal');
+    if (modal) modal.classList.remove('active');
+    currentSettingsPageId = null;
+  }
+
+  function populateModalFromPage(page) {
+    var isLive = Boolean(page.active || page.is_live);
+    updateBigSwitchUI(isLive);
+
+    // Step 1: Profile Select
+    var profSelect = document.getElementById('psmProfileSelect');
     if (profSelect) {
       profSelect.value = page.profile_id || '__custom__';
     }
+    var cardCheck1 = document.getElementById('psmCardCheck1');
+    if (cardCheck1) cardCheck1.innerText = (page.profile_id && page.profile_id !== '__custom__') ? '✅' : '⭕';
 
     // Niche suggestion box
-    const suggestionBox = document.getElementById('psmNicheSuggestionBox');
+    var suggestionBox = document.getElementById('psmNicheSuggestionBox');
     if (page.niche_analysis && page.niche_analysis.suggested_profile_name) {
       document.getElementById('psmNicheSuggestedName').innerText = page.niche_analysis.suggested_profile_name;
       document.getElementById('psmNicheConfidenceBadge').innerText = Math.round((page.niche_analysis.confidence || 0) * 100) + '% Match';
       document.getElementById('psmNicheReasoning').innerText = page.niche_analysis.reasoning || '';
-      
-      const meta = document.getElementById('psmNicheMeta');
+
+      var meta = document.getElementById('psmNicheMeta');
       meta.innerHTML = '';
       if (page.niche_analysis.detected_tone) {
         meta.innerHTML += '<span>Tone: <strong style="color: #cbd5e1;">' + escapeHtml(page.niche_analysis.detected_tone) + '</strong></span>';
@@ -1603,85 +1735,68 @@
       }
       suggestionBox.style.display = 'block';
     } else {
-      suggestionBox.style.display = 'none';
+      if (suggestionBox) suggestionBox.style.display = 'none';
     }
 
-    // Schedule config
-    const sched = page.schedule || { postsPerDay: 0, postingTimes: [], timezone: 'Asia/Kolkata', mode: 'fixed' };
-    document.getElementById('psmPostsPerDay').value = sched.postsPerDay !== undefined ? sched.postsPerDay : 0;
-    document.getElementById('psmTimezone').value = sched.timezone || 'Asia/Kolkata';
+    // Step 2: Schedule & Timezone
+    var sched = page.schedule || { postsPerDay: 0, postingTimes: [], timezone: 'America/New_York' };
+    var tzSelect = document.getElementById('psmTimezone');
+    if (tzSelect) {
+      tzSelect.value = sched.timezone || 'America/New_York';
+    }
 
-    currentScheduleTimingMode = sched.mode || 'fixed';
-    setScheduleTimingMode(currentScheduleTimingMode);
+    var fixedList = document.getElementById('psmFixedTimesList');
+    if (fixedList) {
+      fixedList.innerHTML = '';
+      var times = sched.postingTimes && sched.postingTimes.length > 0 ? sched.postingTimes : [];
+      times.forEach(function (t) {
+        addFixedTimePicker(t);
+      });
+    }
 
-    // Fixed times
-    const fixedList = document.getElementById('psmFixedTimesList');
-    fixedList.innerHTML = '';
-    const times = sched.postingTimes && sched.postingTimes.length > 0 ? sched.postingTimes : ['10:00', '15:00', '20:00'];
-    times.forEach(function (t) {
-      addFixedTimePicker(t);
-    });
+    // Step 3: Publishing mode
+    selectPublishingMode(page.publishing_mode || 'review');
+    var hybridScore = document.getElementById('psmHybridScore');
+    if (hybridScore) {
+      hybridScore.value = page.hybrid_min_score || 80;
+      document.getElementById('psmHybridScoreVal').innerText = page.hybrid_min_score || 80;
+    }
 
-    // Window & interval
-    document.getElementById('psmWindowStart').value = sched.windowStart || '09:00';
-    document.getElementById('psmWindowEnd').value = sched.windowEnd || '21:00';
-    document.getElementById('psmIntervalHours').value = sched.intervalHours || 3;
-
-    // Days of week
-    const activeDays = Array.isArray(sched.daysOfWeek) && sched.daysOfWeek.length > 0 ? sched.daysOfWeek : [1, 2, 3, 4, 5, 6, 7];
-    document.querySelectorAll('.psm-dow-checkbox').forEach(function (cb) {
-      cb.checked = activeDays.includes(Number(cb.value));
-    });
-
-    // Jitter & gap
+    // Advanced inputs
     document.getElementById('psmJitter').value = sched.jitterMinutes !== undefined ? sched.jitterMinutes : 10;
     document.getElementById('psmMinGap').value = sched.minGapMinutes !== undefined ? sched.minGapMinutes : 60;
     document.getElementById('psmLeadTime').value = sched.leadTimeHours !== undefined ? sched.leadTimeHours : 48;
+    document.getElementById('psmDailyCap').value = page.daily_cap || 3;
     document.getElementById('psmVacationStart').value = sched.vacationStart || '';
     document.getElementById('psmVacationEnd').value = sched.vacationEnd || '';
 
-    // Publishing controls
-    document.getElementById('psmPublishingMode').value = page.publishing_mode || 'review';
-    handlePublishingModeChange(page.publishing_mode || 'review');
-    document.getElementById('psmHybridScore').value = page.hybrid_min_score || 80;
-    document.getElementById('psmHybridScoreVal').innerText = page.hybrid_min_score || 80;
-    document.getElementById('psmDailyCap').value = page.daily_cap || 3;
+    var aiToggle = document.getElementById('psmAiDisclosureToggle');
+    if (aiToggle) {
+      aiToggle.checked = Boolean(page.ai_disclosure_enabled);
+      document.getElementById('psmAiDisclosureBox').style.display = aiToggle.checked ? 'block' : 'none';
+      document.getElementById('psmAiDisclosureText').value = page.ai_disclosure_text || 'AI-assisted content created for Beyond the Known.';
+    }
+    var srcToggle = document.getElementById('psmSourceLineToggle');
+    if (srcToggle) {
+      srcToggle.checked = page.source_attribution_enabled !== false;
+    }
 
-    // Disclosures
-    const aiToggle = document.getElementById('psmAiDisclosureToggle');
-    aiToggle.checked = Boolean(page.ai_disclosure_enabled);
-    document.getElementById('psmAiDisclosureBox').style.display = aiToggle.checked ? 'block' : 'none';
-    document.getElementById('psmAiDisclosureText').value = page.ai_disclosure_text || 'AI-assisted content created for Beyond the Known.';
-    document.getElementById('psmSourceLineToggle').checked = page.source_attribution_enabled !== false;
-
-    // Update Checklist UI
-    updateModalChecklistDisplay(page);
-
-    // Live preview
-    updateLiveSchedulePreview();
-
-    document.getElementById('pageSettingsModal').classList.add('active');
-  }
-
-  function closePageSettingsModal() {
-    const modal = document.getElementById('pageSettingsModal');
-    if (modal) modal.classList.remove('active');
-    currentSettingsPageId = null;
+    handleScheduleInputChange();
   }
 
   function updateModalChecklistDisplay(page) {
-    const sched = page.schedule || {};
-    const profileChosen = Boolean(page.profile_id && page.profile_id !== 'default-niche' && page.profile_id !== '__custom__');
-    const scheduleSet = Boolean(sched.postsPerDay && sched.postsPerDay > 0);
-    const modeChosen = Boolean(page.publishing_mode);
-    const testDone = Boolean(page.last_test_run_at);
-    const isLive = Boolean(page.active);
+    var sched = page.schedule || {};
+    var profileChosen = Boolean(page.profile_id && page.profile_id !== 'default-niche' && page.profile_id !== '__custom__');
+    var scheduleSet = Boolean(sched.postsPerDay && sched.postsPerDay > 0);
+    var modeChosen = Boolean(page.publishing_mode);
+    var testDone = Boolean(page.last_test_run_at);
+    var isLive = Boolean(page.active || page.is_live);
 
     function setStep(id, done, label) {
-      const el = document.getElementById(id);
+      var el = document.getElementById(id);
       if (!el) return;
       el.querySelector('.psm-step-icon').innerText = done ? '✅' : '⭕';
-      const st = el.querySelector('.psm-step-status');
+      var st = el.querySelector('.psm-step-status');
       st.innerText = label;
       st.style.color = done ? '#34d399' : '#f87171';
     }
@@ -1692,14 +1807,14 @@
     setStep('psmStepTest', testDone, testDone ? 'Verified' : 'Needed');
     setStep('psmStepLive', isLive, isLive ? 'Live' : 'Paused');
 
-    const totalDone = (profileChosen ? 1 : 0) + (scheduleSet ? 1 : 0) + (modeChosen ? 1 : 0) + (testDone ? 1 : 0);
-    const progressElem = document.getElementById('psmChecklistProgress');
+    var totalDone = (profileChosen ? 1 : 0) + (scheduleSet ? 1 : 0) + (modeChosen ? 1 : 0) + (testDone ? 1 : 0);
+    var progressElem = document.getElementById('psmChecklistProgress');
     if (progressElem) {
       if (isLive) {
         progressElem.innerText = 'All Steps Complete • Page Active';
         progressElem.style.color = '#34d399';
       } else if (totalDone === 4) {
-        progressElem.innerText = 'Ready to Go Live! Click "Take Page Live"';
+        progressElem.innerText = 'Ready to Go Live! Click "Turn Auto-Posting ON"';
         progressElem.style.color = '#34d399';
       } else {
         progressElem.innerText = (4 - totalDone) + ' Step(s) Incomplete before Live';
@@ -1708,130 +1823,196 @@
     }
   }
 
-  function setScheduleTimingMode(mode, btn) {
-    currentScheduleTimingMode = mode || 'fixed';
-    document.querySelectorAll('.psm-mode-btn').forEach(function (b) {
-      if (b.getAttribute('data-mode') === currentScheduleTimingMode) {
-        b.className = 'btn btn-primary psm-mode-btn';
-      } else {
-        b.className = 'btn btn-secondary psm-mode-btn';
-      }
-    });
-
-    const fixedSec = document.getElementById('psmTimingSectionFixed');
-    const intervalSec = document.getElementById('psmTimingSectionInterval');
-    const intervalHoursGrp = document.getElementById('psmIntervalHoursGroup');
-
-    if (currentScheduleTimingMode === 'fixed') {
-      if (fixedSec) fixedSec.style.display = 'block';
-      if (intervalSec) intervalSec.style.display = 'none';
-    } else if (currentScheduleTimingMode === 'interval') {
-      if (fixedSec) fixedSec.style.display = 'none';
-      if (intervalSec) intervalSec.style.display = 'block';
-      if (intervalHoursGrp) intervalHoursGrp.style.display = 'block';
-    } else { // auto_spread
-      if (fixedSec) fixedSec.style.display = 'none';
-      if (intervalSec) intervalSec.style.display = 'block';
-      if (intervalHoursGrp) intervalHoursGrp.style.display = 'none';
-    }
-
-    handleScheduleInputChange();
-  }
-
   function addFixedTimePicker(timeVal) {
-    const list = document.getElementById('psmFixedTimesList');
+    var list = document.getElementById('psmFixedTimesList');
     if (!list) return;
-    const val = timeVal || '12:00';
-    const tag = document.createElement('div');
-    tag.style = 'display: inline-flex; align-items: center; gap: 4px; background: #1e293b; padding: 4px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);';
-    tag.innerHTML = '<input type="time" class="psm-fixed-time-input" value="' + val + '" style="background: none; border: none; color: #f3f4f6; font-size: 13px; font-weight: 600;" onchange="handleScheduleInputChange()">' +
+    var val = timeVal || '12:00';
+    var tag = document.createElement('div');
+    tag.style.cssText = 'display: inline-flex; align-items: center; gap: 4px; background: #1e293b; padding: 4px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);';
+    tag.innerHTML = '<input type="time" class="psm-fixed-time-input" value="' + val + '" style="background: none; border: none; color: #f3f4f6; font-size: 13px; font-weight: 600;" onchange="handleScheduleInputChange(); markFormModified();">' +
       '<button type="button" onclick="removeFixedTimePicker(this)" style="background: none; border: none; color: #ef4444; font-size: 14px; cursor: pointer; padding: 0 4px;" title="Remove time">✕</button>';
     list.appendChild(tag);
     handleScheduleInputChange();
   }
 
   function removeFixedTimePicker(btn) {
-    const parent = btn.parentElement;
+    var parent = btn.parentElement;
     if (parent && parent.parentElement) {
       parent.parentElement.removeChild(parent);
       handleScheduleInputChange();
+      markFormModified();
     }
   }
 
   function handleScheduleInputChange() {
-    const postsPerDay = Number(document.getElementById('psmPostsPerDay').value) || 0;
-    const warning = document.getElementById('psmHighCadenceWarning');
+    var fixedTimes = [];
+    document.querySelectorAll('.psm-fixed-time-input').forEach(function (inp) {
+      if (inp.value) fixedTimes.push(inp.value);
+    });
+
+    var postsPerDay = fixedTimes.length;
+    var postsInp = document.getElementById('psmPostsPerDay');
+    if (postsInp) postsInp.value = postsPerDay;
+
+    var cadenceBadge = document.getElementById('psmCadenceBadge');
+    if (cadenceBadge) cadenceBadge.innerText = postsPerDay + ' posts / day';
+
+    var warning = document.getElementById('psmHighCadenceWarning');
     if (warning) {
       warning.style.display = postsPerDay > 5 ? 'block' : 'none';
+    }
+
+    // Update Step 2 Card Check
+    var cardCheck2 = document.getElementById('psmCardCheck2');
+    if (cardCheck2) cardCheck2.innerText = postsPerDay > 0 ? '✅' : '⭕';
+
+    var stepSchedule = document.getElementById('psmStepSchedule');
+    if (stepSchedule) {
+      stepSchedule.querySelector('.psm-step-icon').innerText = postsPerDay > 0 ? '✅' : '⭕';
+      stepSchedule.querySelector('.psm-step-status').innerText = postsPerDay + ' posts/day';
+      stepSchedule.querySelector('.psm-step-status').style.color = postsPerDay > 0 ? '#34d399' : '#9ca3af';
+    }
+
+    // Update Audience Timezone current time display
+    var tzSelect = document.getElementById('psmTimezone');
+    var tzDisplay = document.getElementById('psmCurrentTzTime');
+    if (tzSelect && tzDisplay) {
+      try {
+        var nowStr = new Intl.DateTimeFormat('en-US', {
+          timeZone: tzSelect.value,
+          hour: 'numeric',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+          weekday: 'short'
+        }).format(new Date());
+        tzDisplay.innerText = 'Current time in ' + tzSelect.value + ': ' + nowStr;
+      } catch (e) {
+        tzDisplay.innerText = '';
+      }
     }
 
     if (previewDebounceTimer) clearTimeout(previewDebounceTimer);
     previewDebounceTimer = setTimeout(updateLiveSchedulePreview, 250);
   }
 
-  function handlePublishingModeChange(mode) {
-    const group = document.getElementById('psmHybridScoreGroup');
-    if (group) {
-      group.style.display = mode === 'hybrid' ? 'block' : 'none';
+  function applyQuickSchedule(count) {
+    var list = document.getElementById('psmFixedTimesList');
+    if (!list) return;
+    list.innerHTML = '';
+    var times = count === 5
+      ? ['09:00', '12:00', '15:00', '18:00', '21:00']
+      : ['10:00', '15:00', '20:00'];
+    times.forEach(function (t) {
+      addFixedTimePicker(t);
+    });
+    handleScheduleInputChange();
+    markFormModified();
+    showToast('Applied ' + count + ' posts/day quick schedule!', 'info');
+  }
+
+  function selectPublishingMode(mode) {
+    var modeInp = document.getElementById('psmPublishingMode');
+    if (modeInp) modeInp.value = mode;
+
+    var cards = [
+      { id: 'modeCardReview', name: 'review' },
+      { id: 'modeCardAuto', name: 'auto' },
+      { id: 'modeCardHybrid', name: 'hybrid' }
+    ];
+
+    cards.forEach(function (c) {
+      var el = document.getElementById(c.id);
+      if (!el) return;
+      if (c.name === mode) {
+        el.style.border = '2px solid #3b82f6';
+        el.style.background = 'rgba(59,130,246,0.1)';
+      } else {
+        el.style.border = '1px solid var(--card-border)';
+        el.style.background = 'rgba(255,255,255,0.02)';
+      }
+    });
+
+    var hybridGrp = document.getElementById('psmHybridScoreGroup');
+    if (hybridGrp) {
+      hybridGrp.style.display = mode === 'hybrid' ? 'block' : 'none';
     }
+
+    var stepMode = document.getElementById('psmStepMode');
+    if (stepMode) {
+      stepMode.querySelector('.psm-step-icon').innerText = '✅';
+      stepMode.querySelector('.psm-step-status').innerText = mode.toUpperCase();
+      stepMode.querySelector('.psm-step-status').style.color = '#34d399';
+    }
+    var cardCheck3 = document.getElementById('psmCardCheck3');
+    if (cardCheck3) cardCheck3.innerText = '✅';
+
+    markFormModified();
   }
 
   function handleModalProfileChange(val) {
+    var cardCheck1 = document.getElementById('psmCardCheck1');
+    if (cardCheck1) {
+      cardCheck1.innerText = (val && val !== '__custom__') ? '✅' : '⭕';
+    }
+    var stepProfile = document.getElementById('psmStepProfile');
+    if (stepProfile) {
+      var isChosen = Boolean(val && val !== '__custom__');
+      stepProfile.querySelector('.psm-step-icon').innerText = isChosen ? '✅' : '⭕';
+      stepProfile.querySelector('.psm-step-status').innerText = isChosen ? 'Chosen' : 'Not Chosen';
+      stepProfile.querySelector('.psm-step-status').style.color = isChosen ? '#34d399' : '#f87171';
+    }
     if (val === '__custom__') {
       openPagePromptStudioFromModal();
     }
+    markFormModified();
   }
 
   function getSchedulePayloadFromModal() {
-    const postsPerDay = Number(document.getElementById('psmPostsPerDay').value) || 0;
-    const timezone = document.getElementById('psmTimezone').value || 'Asia/Kolkata';
-
-    const fixedTimes = [];
+    var fixedTimes = [];
     document.querySelectorAll('.psm-fixed-time-input').forEach(function (inp) {
       if (inp.value) fixedTimes.push(inp.value);
     });
 
-    const daysOfWeek = [];
-    document.querySelectorAll('.psm-dow-checkbox:checked').forEach(function (cb) {
-      daysOfWeek.push(Number(cb.value));
-    });
+    var postsPerDay = fixedTimes.length;
+    var timezone = document.getElementById('psmTimezone') ? document.getElementById('psmTimezone').value : 'America/New_York';
 
     return {
       postsPerDay: postsPerDay,
-      mode: currentScheduleTimingMode,
+      mode: 'fixed',
       postingTimes: fixedTimes,
-      daysOfWeek: daysOfWeek.length > 0 ? daysOfWeek : [1, 2, 3, 4, 5, 6, 7],
+      daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
       timezone: timezone,
-      windowStart: document.getElementById('psmWindowStart').value || '09:00',
-      windowEnd: document.getElementById('psmWindowEnd').value || '21:00',
-      intervalHours: Number(document.getElementById('psmIntervalHours').value) || 3,
-      jitterMinutes: Number(document.getElementById('psmJitter').value) || 10,
-      minGapMinutes: Number(document.getElementById('psmMinGap').value) || 60,
-      leadTimeHours: Number(document.getElementById('psmLeadTime').value) || 48,
-      vacationStart: document.getElementById('psmVacationStart').value || null,
-      vacationEnd: document.getElementById('psmVacationEnd').value || null,
+      windowStart: '09:00',
+      windowEnd: '21:00',
+      intervalHours: 3,
+      jitterMinutes: Number(document.getElementById('psmJitter') ? document.getElementById('psmJitter').value : 10) || 10,
+      minGapMinutes: Number(document.getElementById('psmMinGap') ? document.getElementById('psmMinGap').value : 60) || 60,
+      leadTimeHours: Number(document.getElementById('psmLeadTime') ? document.getElementById('psmLeadTime').value : 48) || 48,
+      vacationStart: document.getElementById('psmVacationStart') ? document.getElementById('psmVacationStart').value : null,
+      vacationEnd: document.getElementById('psmVacationEnd') ? document.getElementById('psmVacationEnd').value : null,
     };
   }
 
   async function updateLiveSchedulePreview() {
-    const tableBody = document.getElementById('psmSchedulePreviewTableBody');
-    const badge = document.getElementById('psmSlotSummaryBadge');
+    var tableBody = document.getElementById('psmSchedulePreviewTableBody');
+    var badge = document.getElementById('psmSlotSummaryBadge');
     if (!tableBody) return;
 
-    const sched = getSchedulePayloadFromModal();
+    var sched = getSchedulePayloadFromModal();
     if (!sched.postsPerDay || sched.postsPerDay === 0) {
-      tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 12px; color: var(--text-muted); font-style: italic;">Posting is disabled (0 posts/day). Set posts per day to generate preview.</td></tr>';
-      if (badge) badge.innerText = 'Posting Disabled';
+      tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 12px; color: var(--text-muted); font-style: italic;">Cadence is 0 posts/day. Click "+ Add Time" or a Quick-fill button above to plan slots.</td></tr>';
+      if (badge) badge.innerText = 'Posting Disabled (0 posts/day)';
       return;
     }
 
     try {
-      const res = await fetch('/api/pages/preview-schedule', {
+      var res = await fetch('/api/pages/preview-schedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ schedule: sched, countDays: 7, userTimezone: 'Asia/Kolkata' }),
       });
-      const data = await res.json();
+      var data = await res.json();
       if (!res.ok || !data.success) {
         tableBody.innerHTML = '<tr><td colspan="5" style="color: #f87171; padding: 8px;">' + escapeHtml(data.error || (data.errors ? data.errors.join('; ') : 'Validation error')) + '</td></tr>';
         if (badge) badge.innerText = 'Validation Error';
@@ -1846,7 +2027,7 @@
 
       if (badge) badge.innerText = data.preview.length + ' slots planned over next 7 days';
 
-      let html = '';
+      var html = '';
       data.preview.forEach(function (slot) {
         html += '<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">' +
           '<td style="padding: 6px 8px; font-weight: 600; color: #f3f4f6;">' + escapeHtml(slot.dayOfWeek) + ' (' + escapeHtml(slot.audienceDate) + ')</td>' +
@@ -1866,46 +2047,66 @@
     if (e) e.preventDefault();
     if (!currentSettingsPageId) return;
 
-    const saveBtn = document.getElementById('psmSaveBtn');
-    const origText = saveBtn ? saveBtn.innerText : '';
+    var saveBtn = document.getElementById('psmSaveBtn');
+    var origText = saveBtn ? saveBtn.innerText : '';
     if (saveBtn) {
       saveBtn.disabled = true;
-      saveBtn.innerText = '💾 Saving to Supabase...';
+      saveBtn.innerText = '💾 Saving & Verifying...';
     }
 
-    const payload = {
+    var sched = getSchedulePayloadFromModal();
+    var payload = {
       pageId: currentSettingsPageId,
       profile_id: document.getElementById('psmProfileSelect').value,
       publishing_mode: document.getElementById('psmPublishingMode').value,
       hybrid_min_score: Number(document.getElementById('psmHybridScore').value) || 80,
       daily_cap: Number(document.getElementById('psmDailyCap').value) || 3,
-      schedule: getSchedulePayloadFromModal(),
+      schedule: sched,
       ai_disclosure_enabled: document.getElementById('psmAiDisclosureToggle').checked,
       ai_disclosure_text: document.getElementById('psmAiDisclosureText').value,
       source_attribution_enabled: document.getElementById('psmSourceLineToggle').checked,
+      expected_updated_at: currentExpectedUpdatedAt,
+      expected_version: currentExpectedVersion,
     };
 
     try {
-      const res = await fetch('/api/pages/update-settings', {
+      var res = await fetch('/api/pages/update-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      var data = await res.json();
+
+      if (res.status === 409) {
+        alert('⚠️ Concurrency Conflict:\n\nThese Page settings were updated in another session or window.\nPlease close this modal, refresh the page, and re-apply your changes.');
+        return;
+      }
+
       if (!res.ok || data.error) {
         alert('Failed to save settings: ' + (data.error || 'Unknown error'));
         return;
       }
 
       // Update in local pagesData
-      const idx = pagesData.findIndex(function (p) { return p.id === currentSettingsPageId; });
+      var idx = pagesData.findIndex(function (p) { return p.id === currentSettingsPageId; });
       if (idx !== -1 && data.page) {
         pagesData[idx] = data.page;
+        currentExpectedUpdatedAt = data.page.updated_at;
+        currentExpectedVersion = data.page.version;
       }
 
-      alert('✅ Page settings & schedule saved successfully to Supabase!');
-      closePageSettingsModal();
-      window.location.reload();
+      currentModalOriginalSnapshot = getModalSnapshot();
+      var unsavedBadge = document.getElementById('psmUnsavedBadge');
+      var revertBtn = document.getElementById('psmRevertBtn');
+      if (unsavedBadge) unsavedBadge.style.display = 'none';
+      if (revertBtn) revertBtn.disabled = true;
+
+      var savedTime = new Date(data.savedAt || Date.now()).toLocaleTimeString();
+      showToast('✅ Saved and verified at ' + savedTime, 'success');
+
+      if (data.page) {
+        updateModalChecklistDisplay(data.page);
+      }
     } catch (err) {
       alert('Network error while saving settings: ' + err.message);
     } finally {
@@ -1916,52 +2117,118 @@
     }
   }
 
-  async function toggleLiveFromModal() {
+  async function toggleAutoPostingFromSwitch() {
     if (!currentSettingsPageId) return;
-    const page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
+    var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
     if (!page) return;
 
-    const targetActive = !page.active;
+    var isCurrentlyLive = Boolean(page.active || page.is_live);
+    if (isCurrentlyLive) {
+      promptStopAutoPosting(currentSettingsPageId, page.name);
+    } else {
+      var sched = getSchedulePayloadFromModal();
+      var profileId = document.getElementById('psmProfileSelect') ? document.getElementById('psmProfileSelect').value : page.profile_id;
+      var hasProfile = Boolean(profileId && profileId !== '__custom__');
+      var hasSchedule = Boolean(sched.postsPerDay && sched.postsPerDay > 0 && sched.postingTimes && sched.postingTimes.length > 0);
+      var hasMode = Boolean(document.getElementById('psmPublishingMode') ? document.getElementById('psmPublishingMode').value : page.publishing_mode);
+
+      var missing = [];
+      if (!hasProfile) missing.push('Step 1: Choose a Content Profile (not Custom)');
+      if (!hasSchedule) missing.push('Step 2: Set daily cadence and posting times');
+      if (!hasMode) missing.push('Step 3: Select a publishing mode');
+
+      if (missing.length > 0) {
+        var force = confirm('⚠️ Setup Checklist Incomplete:\n\n' + missing.map(function (m, i) { return (i + 1) + '. ' + m; }).join('\n') + '\n\nDo you want to FORCE taking this page live anyway?');
+        if (!force) return;
+      }
+
+      var bigBtn = document.getElementById('psmBigSwitchBtn');
+      if (bigBtn) bigBtn.disabled = true;
+
+      try {
+        var res = await fetch('/api/pages/toggle-live', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: currentSettingsPageId, active: true, force: true }),
+        });
+        var data = await res.json();
+        if (!res.ok || data.error) {
+          alert('Failed to activate: ' + (data.error || 'Unknown error'));
+          return;
+        }
+
+        page.active = true;
+        page.is_live = true;
+        updateBigSwitchUI(true);
+        updateModalChecklistDisplay(page);
+        showToast('🚀 Autonomous posting is now LIVE for ' + page.name + '!', 'success');
+      } catch (err) {
+        alert('Network error activating page: ' + err.message);
+      } finally {
+        if (bigBtn) bigBtn.disabled = false;
+      }
+    }
+  }
+
+  function promptStopAutoPosting(pageId, pageName) {
+    currentStopPageId = pageId;
+    var modal = document.getElementById('stopAutoPostingModal');
+    var nameEl = document.getElementById('stopModalPageName');
+    if (nameEl) nameEl.innerText = pageName || 'Page';
+    if (modal) modal.classList.add('active');
+  }
+
+  function closeStopAutoPostingModal() {
+    var modal = document.getElementById('stopAutoPostingModal');
+    if (modal) modal.classList.remove('active');
+  }
+
+  async function confirmStopAutoPosting() {
+    var pageId = currentStopPageId || currentSettingsPageId;
+    if (!pageId) return;
+
+    var selectedAction = 'pause';
+    var radios = document.querySelectorAll('input[name="stopActionChoice"]');
+    radios.forEach(function (r) {
+      if (r.checked) selectedAction = r.value;
+    });
 
     try {
-      const res = await fetch('/api/pages/toggle-live', {
+      var res = await fetch('/api/pages/toggle-live', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: currentSettingsPageId, active: targetActive }),
+        body: JSON.stringify({ pageId: pageId, active: false, action: selectedAction }),
       });
-      const data = await res.json();
-
-      if (!res.ok && data.blocked) {
-        const proceed = confirm('⚠️ Setup Checklist Incomplete:\n\n' + data.missingSteps.map(function(s, i) { return (i + 1) + '. ' + s; }).join('\n') + '\n\nDo you want to FORCE taking this page live anyway?');
-        if (proceed) {
-          const forceRes = await fetch('/api/pages/toggle-live', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pageId: currentSettingsPageId, active: true, force: true }),
-          });
-          const forceData = await forceRes.json();
-          if (forceRes.ok && forceData.success) {
-            alert('🚀 Page is now LIVE with autonomous posting!');
-            window.location.reload();
-            return;
-          } else {
-            alert('Error: ' + (forceData.error || 'Failed to activate'));
-            return;
-          }
-        }
-        return;
-      }
-
+      var data = await res.json();
       if (!res.ok || data.error) {
-        alert('Notice: ' + (data.error || 'Failed to update live status'));
+        alert('Failed to pause: ' + (data.error || 'Unknown error'));
         return;
       }
 
-      alert(targetActive ? '🚀 Page is now LIVE!' : '⏸️ Autonomous posting paused for this page.');
-      window.location.reload();
+      closeStopAutoPostingModal();
+
+      var page = pagesData.find(function (p) { return p.id === pageId; });
+      if (page) {
+        page.active = false;
+        page.is_live = false;
+        page.auto_posting_stopped_action = selectedAction;
+      }
+
+      if (currentSettingsPageId === pageId) {
+        updateBigSwitchUI(false);
+        if (page) updateModalChecklistDisplay(page);
+      }
+
+      showToast('⏸️ Autonomous posting paused (' + (selectedAction === 'cancel_pending' ? 'scheduled posts cancelled' : 'in-flight preserved') + ')', 'warning');
+      setTimeout(function() { window.location.reload(); }, 1200);
     } catch (err) {
-      alert('Error updating live status: ' + err.message);
+      alert('Network error pausing auto-posting: ' + err.message);
     }
+  }
+
+  function startAutoPostingFromRow(pageId) {
+    currentSettingsPageId = pageId;
+    toggleAutoPostingFromSwitch();
   }
 
   async function runTestRunFromModal() {
@@ -1972,12 +2239,12 @@
   async function triggerPageTestRun(pageId) {
     if (!pageId) return;
     try {
-      const res = await fetch('/api/test-run', {
+      var res = await fetch('/api/test-run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pageId: pageId }),
       });
-      const data = await res.json();
+      var data = await res.json();
       if (res.ok && data.success) {
         alert('⚡ Simulation Succeeded!\n\nTopic: ' + (data.topic ? data.topic.title : 'Generated') + '\nQA Score: ' + (data.qaScore || 95) + '/100\n\nWord Count: ' + (data.wordCount || 0) + ' words\nStep 4 (Test Run) marked verified on the Page checklist!');
         window.location.reload();
@@ -1991,19 +2258,19 @@
 
   async function analyzePageNicheAction(pageId) {
     if (!pageId) return;
-    const page = pagesData.find(function (p) { return p.id === pageId; });
-    const pageName = page ? page.name : 'this Page';
+    var page = pagesData.find(function (p) { return p.id === pageId; });
+    var pageName = page ? page.name : 'this Page';
 
-    const ok = confirm('✨ Run Automatic Niche Detection for "' + pageName + '"?\n\nThis will scan public Page metadata and the last 25 posts via Meta Graph API, and evaluate the ideal content profile with strict privacy (zero tokens transmitted).');
+    var ok = confirm('✨ Run Automatic Niche Detection for "' + pageName + '"?\n\nThis will scan public Page metadata and recent posts via Meta Graph API, and evaluate the ideal content profile with strict privacy (zero tokens transmitted).');
     if (!ok) return;
 
     try {
-      const res = await fetch('/api/pages/analyze-niche', {
+      var res = await fetch('/api/pages/analyze-niche', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pageId: pageId }),
       });
-      const data = await res.json();
+      var data = await res.json();
 
       if (!res.ok && data.noProviders) {
         alert('⚠️ No active AI providers configured.\n\nPlease add an API key under the "Providers & Quotas" tab first to enable AI Niche Detection.');
@@ -2017,8 +2284,8 @@
       }
 
       if (data.analysis) {
-        const ana = data.analysis;
-        const msg = '✨ Niche Evaluation Complete for "' + pageName + '":\n\n' +
+        var ana = data.analysis;
+        var msg = '✨ Niche Evaluation Complete for "' + pageName + '":\n\n' +
           '• Suggested Profile: ' + (ana.suggested_profile_name || 'N/A') + '\n' +
           '• Match Confidence: ' + Math.round((ana.confidence || 0) * 100) + '%\n' +
           '• Reasoning: ' + (ana.reasoning || '') + '\n' +
@@ -2040,39 +2307,39 @@
   }
 
   function dismissModalNicheSuggestion() {
-    const box = document.getElementById('psmNicheSuggestionBox');
+    var box = document.getElementById('psmNicheSuggestionBox');
     if (box) box.style.display = 'none';
   }
 
   async function acceptModalNicheSuggestion() {
     if (!currentSettingsPageId) return;
-    const page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
+    var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
     if (!page || !page.niche_analysis || !page.niche_analysis.suggested_profile_id) return;
 
-    const profSelect = document.getElementById('psmProfileSelect');
+    var profSelect = document.getElementById('psmProfileSelect');
     if (profSelect) {
       profSelect.value = page.niche_analysis.suggested_profile_id;
     }
     if (page.niche_analysis.suggested_posts_per_day) {
-      document.getElementById('psmPostsPerDay').value = page.niche_analysis.suggested_posts_per_day;
-      handleScheduleInputChange();
+      applyQuickSchedule(page.niche_analysis.suggested_posts_per_day);
     }
     dismissModalNicheSuggestion();
-    alert('✅ Suggested profile "' + page.niche_analysis.suggested_profile_name + '" selected! Click "Save Settings" below to apply.');
+    markFormModified();
+    showToast('Suggested profile "' + page.niche_analysis.suggested_profile_name + '" applied! Click Save Settings to persist.', 'success');
   }
 
   async function applyNicheProfile(pageId, profileId) {
     if (!pageId || !profileId) return;
     try {
-      const res = await fetch('/api/pages/update-settings', {
+      var res = await fetch('/api/pages/update-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pageId: pageId, profile_id: profileId }),
       });
-      const data = await res.json();
+      var data = await res.json();
       if (res.ok && data.success) {
-        alert('✅ Niche profile applied!');
-        window.location.reload();
+        showToast('✅ Niche profile applied!', 'success');
+        setTimeout(function() { window.location.reload(); }, 1000);
       } else {
         alert('Notice: ' + (data.error || 'Failed to apply niche profile'));
       }
@@ -2084,15 +2351,15 @@
   async function createProfileFromModalNiche() {
     if (!currentSettingsPageId) return;
     try {
-      const res = await fetch('/api/pages/create-profile-from-niche', {
+      var res = await fetch('/api/pages/create-profile-from-niche', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pageId: currentSettingsPageId }),
       });
-      const data = await res.json();
+      var data = await res.json();
       if (res.ok && data.success) {
-        alert('🎉 New Content Profile "' + data.profile.name + '" generated and assigned to this Page!\n\nYou can refine its prompts, visual bible, and topics in Page Prompt Studio.');
-        window.location.reload();
+        showToast('🎉 New Content Profile created!', 'success');
+        setTimeout(function() { window.location.reload(); }, 1200);
       } else {
         alert('Failed: ' + (data.error || 'Could not generate profile'));
       }
@@ -2101,13 +2368,249 @@
     }
   }
 
+  async function importStarterProfilesFromModal() {
+    try {
+      var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
+      var data = await res.json();
+      if (res.ok && data.success) {
+        showToast('📦 Imported ' + data.importedCount + ' starter profiles!', 'success');
+        var profSelect = document.getElementById('psmProfileSelect');
+        if (profSelect && data.profiles) {
+          profSelect.innerHTML = '';
+          data.profiles.forEach(function (prof) {
+            var opt = document.createElement('option');
+            opt.value = prof.id;
+            opt.innerText = prof.name + ' (' + prof.niche + ')';
+            profSelect.appendChild(opt);
+          });
+          var customOpt = document.createElement('option');
+          customOpt.value = '__custom__';
+          customOpt.innerText = '✍️ Custom / Type Your Own Profile...';
+          profSelect.appendChild(customOpt);
+        }
+      } else {
+        alert('Notice: ' + (data.error || 'Failed to import starter profiles'));
+      }
+    } catch (err) {
+      alert('Network error importing starter profiles: ' + err.message);
+    }
+  }
+
+  async function importStarterProfilesFromSettings(btn) {
+    var origText = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Importing...';
+    }
+
+    try {
+      var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
+      var data = await res.json();
+      if (res.ok && data.success) {
+        showToast('📦 Imported ' + data.importedCount + ' starter profiles to Supabase!', 'success');
+        setTimeout(function() { window.location.reload(); }, 1200);
+      } else {
+        alert('Notice: ' + (data.error || 'Failed to import starter profiles'));
+      }
+    } catch (err) {
+      alert('Network error importing starter profiles: ' + err.message);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+  }
+
+  async function runSystemReadinessAuditAction(btn) {
+    var origText = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Auditing System...';
+    }
+    var container = document.getElementById('readinessAuditContainer');
+    if (!container) return;
+    container.style.display = 'block';
+    container.innerHTML = '<div style="padding: 14px; color: var(--text-muted); font-size: 13px;">Checking all 11 production readiness vectors against Supabase and Meta...</div>';
+
+    try {
+      var res = await fetch('/api/settings/readiness');
+      var data = await res.json();
+      if (!res.ok || !data.success) {
+        container.innerHTML = '<div style="color: #f87171; padding: 12px; background: rgba(239,68,68,0.1); border-radius: 6px;">Audit failed: ' + escapeHtml(data.error || 'Unknown error') + '</div>';
+        return;
+      }
+
+      var overallColor = data.overallReady ? '#34d399' : '#f59e0b';
+      var overallTitle = data.overallReady ? '🟢 100% PRODUCTION READY' : '⚠️ ATTENTION NEEDED BEFORE GO-LIVE';
+
+      var html = '<div style="background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px;">' +
+        '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">' +
+        '<strong style="color: ' + overallColor + '; font-size: 14px;">' + overallTitle + '</strong>' +
+        '<span style="font-size: 12px; color: var(--text-muted);">' + data.passedCount + ' / ' + data.totalCount + ' Checks Passed</span>' +
+        '</div>' +
+        '<div style="display: flex; flex-direction: column; gap: 8px;">';
+
+      data.checks.forEach(function (c) {
+        var statusPill = c.passed
+          ? '<span class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; font-size: 10px; font-weight: 700;">PASS</span>'
+          : (c.critical ? '<span class="badge" style="background: rgba(239,68,68,0.2); color: #f87171; font-size: 10px; font-weight: 700;">FAIL</span>' : '<span class="badge" style="background: rgba(245,158,11,0.2); color: #fbbf24; font-size: 10px; font-weight: 700;">WARN</span>');
+        html += '<div style="display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 10px; background: rgba(255,255,255,0.02); border-radius: 6px; font-size: 12px;">' +
+          '<div>' +
+          '<div style="font-weight: 600; color: #f3f4f6;">' + escapeHtml(c.title) + '</div>' +
+          '<div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">' + escapeHtml(c.message) + '</div>' +
+          '</div>' +
+          '<div>' + statusPill + '</div>' +
+          '</div>';
+      });
+
+      html += '</div></div>';
+      container.innerHTML = html;
+    } catch (err) {
+      container.innerHTML = '<div style="color: #f87171; padding: 12px;">Audit request error: ' + escapeHtml(err.message) + '</div>';
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+  }
+
+  async function runDatabaseSchemaCheckAction(btn) {
+    var origText = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Verifying Schema...';
+    }
+    var container = document.getElementById('schemaCheckContainer');
+    if (!container) return;
+    container.style.display = 'block';
+    container.innerHTML = '<div style="padding: 14px; color: var(--text-muted); font-size: 13px;">Checking all 19 database tables and columns in Supabase...</div>';
+
+    try {
+      var res = await fetch('/api/settings/schema-check');
+      var data = await res.json();
+      if (!res.ok) throw new Error('Status ' + res.status);
+
+      var color = data.isComplete ? '#34d399' : '#f87171';
+      var title = data.isComplete ? '✅ Database Schema 100% Complete & Synchronized' : '⚠️ Missing Schema Tables or Columns';
+
+      var html = '<div style="background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px;">' +
+        '<div style="margin-bottom: 12px; font-weight: 700; color: ' + color + '; font-size: 14px;">' + title + '</div>' +
+        '<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">' +
+        'Verified: ' + data.tablesFound.length + ' / ' + data.expectedTables.length + ' tables present in public schema.' +
+        '</div>';
+
+      if (data.missingTables && data.missingTables.length > 0) {
+        html += '<div style="padding: 10px; background: rgba(239,68,68,0.15); border: 1px solid #ef4444; border-radius: 6px; margin-bottom: 10px; font-size: 12px; color: #fecaca;">' +
+          '<strong>Missing Tables:</strong> ' + escapeHtml(data.missingTables.join(', ')) +
+          '<div style="margin-top: 6px; font-size: 11px;">Run <code>supabase/all_migrations.sql</code> or <code>supabase/delta_20261109.sql</code> in Supabase SQL Editor.</div>' +
+          '</div>';
+      }
+
+      if (data.missingColumns && data.missingColumns.length > 0) {
+        html += '<div style="padding: 10px; background: rgba(245,158,11,0.15); border: 1px solid #f59e0b; border-radius: 6px; margin-bottom: 10px; font-size: 12px; color: #fde68a;">' +
+          '<strong>Missing Columns:</strong> ' + escapeHtml(data.missingColumns.map(function(m) { return m.table + '.' + m.column; }).join(', ')) +
+          '<div style="margin-top: 6px; font-size: 11px;">Run <code>supabase/delta_20261109.sql</code> in Supabase SQL Editor to add these columns.</div>' +
+          '</div>';
+      }
+
+      if (data.isComplete) {
+        html += '<div style="font-size: 12px; color: #a7f3d0;">All core tables, RLS policies, indexes, and versioning columns are present and ready for autonomous operations.</div>';
+      }
+
+      html += '</div>';
+      container.innerHTML = html;
+    } catch (err) {
+      container.innerHTML = '<div style="color: #f87171; padding: 12px;">Schema check error: ' + escapeHtml(err.message) + '</div>';
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+  }
+
+  function downloadSettingsBackupAction() {
+    var a = document.createElement('a');
+    a.href = '/api/settings/backup';
+    a.download = 'fb-auto-settings-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('📥 Downloading settings backup (zero secrets)...', 'info');
+  }
+
+  async function handleRestoreBackupFile(fileInput) {
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
+    var file = fileInput.files[0];
+    var reader = new FileReader();
+
+    reader.onload = async function (e) {
+      try {
+        var json = JSON.parse(e.target.result);
+        var res = await fetch('/api/settings/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(json),
+        });
+        var data = await res.json();
+        if (res.ok && data.success) {
+          showToast('✅ Settings restored: ' + data.restored.pages + ' pages, ' + data.restored.profiles + ' profiles!', 'success');
+          setTimeout(function() { window.location.reload(); }, 1500);
+        } else {
+          alert('Restore notice: ' + (data.error || 'Failed to restore backup'));
+        }
+      } catch (err) {
+        alert('Invalid backup JSON file: ' + err.message);
+      } finally {
+        fileInput.value = '';
+      }
+    };
+
+    reader.readAsText(file);
+  }
+
   function openPagePromptStudioFromModal() {
-    const pageId = currentSettingsPageId;
+    var pageId = currentSettingsPageId;
     closePageSettingsModal();
     if (pageId) {
       openPagePromptStudio(pageId);
     }
   }
+
+  window.showToast = showToast;
+  window.openPageSettingsModal = openPageSettingsModal;
+  window.closePageSettingsModal = closePageSettingsModal;
+  window.setScheduleTimingMode = setScheduleTimingMode;
+  window.handlePublishingModeChange = handlePublishingModeChange;
+  window.toggleLiveFromModal = toggleLiveFromModal;
+  window.toggleAutoPostingFromSwitch = toggleAutoPostingFromSwitch;
+  window.promptStopAutoPosting = promptStopAutoPosting;
+  window.startAutoPostingFromRow = startAutoPostingFromRow;
+  window.closeStopAutoPostingModal = closeStopAutoPostingModal;
+  window.confirmStopAutoPosting = confirmStopAutoPosting;
+  window.addFixedTimePicker = addFixedTimePicker;
+  window.removeFixedTimePicker = removeFixedTimePicker;
+  window.applyQuickSchedule = applyQuickSchedule;
+  window.selectPublishingMode = selectPublishingMode;
+  window.handleModalProfileChange = handleModalProfileChange;
+  window.handleScheduleInputChange = handleScheduleInputChange;
+  window.handleSavePageSettings = handleSavePageSettings;
+  window.revertModalChanges = revertModalChanges;
+  window.markFormModified = markFormModified;
+  window.runTestRunFromModal = runTestRunFromModal;
+  window.analyzePageNicheActionFromModal = analyzePageNicheActionFromModal;
+  window.dismissModalNicheSuggestion = dismissModalNicheSuggestion;
+  window.acceptModalNicheSuggestion = acceptModalNicheSuggestion;
+  window.createProfileFromModalNiche = createProfileFromModalNiche;
+  window.importStarterProfilesFromModal = importStarterProfilesFromModal;
+  window.importStarterProfilesFromSettings = importStarterProfilesFromSettings;
+  window.runSystemReadinessAuditAction = runSystemReadinessAuditAction;
+  window.runDatabaseSchemaCheckAction = runDatabaseSchemaCheckAction;
+  window.downloadSettingsBackupAction = downloadSettingsBackupAction;
+  window.handleRestoreBackupFile = handleRestoreBackupFile;
+  window.openPagePromptStudioFromModal = openPagePromptStudioFromModal;
 
   function copyExpectedRedirectUri() {
     const el = document.getElementById('expectedRedirectUriText');

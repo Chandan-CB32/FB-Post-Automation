@@ -58,6 +58,19 @@ EXCEPTION WHEN OTHERS THEN
 END
 $$;
 
+
+-- ============================================================================
+-- Migration: 20261102000000_init_schema.sql
+-- ============================================================================
+
+-- ============================================================================
+-- Supabase Migration: 20261102000000_init_schema.sql
+-- Autonomous Multi-Page Facebook Content System
+-- ============================================================================
+
+-- Enable pgcrypto / uuid-ossp for UUID generation
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- ----------------------------------------------------------------------------
 -- 1. Content Profiles (Reusable Topic Packages)
 -- ----------------------------------------------------------------------------
@@ -95,48 +108,20 @@ CREATE TABLE IF NOT EXISTS public.profile_versions (
 CREATE INDEX IF NOT EXISTS idx_profile_versions_profile ON public.profile_versions(profile_id, version DESC);
 
 -- ----------------------------------------------------------------------------
--- 3. Facebook Accounts / Identities (Multi-Account Management)
--- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.facebook_accounts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_name TEXT NOT NULL,
-    fb_user_id TEXT NOT NULL UNIQUE,
-    email TEXT,
-    user_access_token TEXT, -- AES-256-GCM encrypted
-    masked_token TEXT,
-    token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited')),
-    token_expires_at TIMESTAMPTZ,
-    notes TEXT,
-    pages_count INTEGER DEFAULT 0,
-    last_synced_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
-);
-CREATE INDEX IF NOT EXISTS idx_facebook_accounts_status ON public.facebook_accounts(token_status);
-
--- ----------------------------------------------------------------------------
--- 4. Facebook Pages
+-- 3. Facebook Pages
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.pages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    fb_account_id UUID REFERENCES public.facebook_accounts(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     fb_page_id TEXT NOT NULL UNIQUE,
     fb_page_token TEXT NOT NULL, -- AES-256-GCM encrypted
-    token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited', 'cannot_publish', 'inaccessible')),
-    category TEXT,
-    picture_url TEXT,
-    tasks JSONB NOT NULL DEFAULT '[]'::jsonb,
-    fan_count INTEGER DEFAULT 0,
-    secondary_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-    profile_id UUID REFERENCES public.content_profiles(id) ON DELETE SET NULL,
+    token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited')),
+    profile_id UUID NOT NULL REFERENCES public.content_profiles(id) ON DELETE RESTRICT,
     overrides JSONB NOT NULL DEFAULT '{}'::jsonb,
     custom_caption_prompt TEXT,
     custom_caption_prompt_mode TEXT NOT NULL DEFAULT 'append' CHECK (custom_caption_prompt_mode IN ('append', 'replace')),
     custom_image_prompt TEXT,
     custom_image_prompt_mode TEXT NOT NULL DEFAULT 'append' CHECK (custom_image_prompt_mode IN ('append', 'replace')),
-    first_comment_enabled BOOLEAN NOT NULL DEFAULT true,
-    first_comment_prompt TEXT,
     schedule JSONB NOT NULL DEFAULT '{}'::jsonb,
     publishing_mode TEXT NOT NULL DEFAULT 'review' CHECK (publishing_mode IN ('auto', 'review', 'hybrid')),
     hybrid_min_score NUMERIC NOT NULL DEFAULT 80,
@@ -145,37 +130,38 @@ CREATE TABLE IF NOT EXISTS public.pages (
     provider_chain_overrides JSONB NOT NULL DEFAULT '{}'::jsonb,
     daily_cap INTEGER NOT NULL DEFAULT 5,
     active BOOLEAN NOT NULL DEFAULT true,
-    connected_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
-    last_synced_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 CREATE INDEX IF NOT EXISTS idx_pages_active ON public.pages(active);
-CREATE INDEX IF NOT EXISTS idx_pages_account ON public.pages(fb_account_id);
-CREATE INDEX IF NOT EXISTS idx_pages_token_status ON public.pages(token_status);
 
 -- ----------------------------------------------------------------------------
--- 5. AI Providers
+-- 4. AI Providers
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.providers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL UNIQUE,
-    kind TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN (
+        'openai_compatible_chat',
+        'openai_compatible_images',
+        'gemini_native',
+        'cloudflare_workers_ai',
+        'huggingface_inference',
+        'pollinations',
+        'custom_http'
+    )),
     base_url TEXT,
-    model_name TEXT,
     config JSONB NOT NULL DEFAULT '{}'::jsonb,
     rpm_limit INTEGER NOT NULL DEFAULT 60,
     rpd_limit INTEGER NOT NULL DEFAULT 1000,
     units_per_day_limit INTEGER,
     concurrency_limit INTEGER NOT NULL DEFAULT 2,
-    priority INTEGER NOT NULL DEFAULT 1,
     active BOOLEAN NOT NULL DEFAULT true,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
 -- ----------------------------------------------------------------------------
--- 6. Provider Keys (Key Pool with Rotation and Masking)
+-- 5. Provider Keys (Key Pool with Rotation and Masking)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.provider_keys (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -187,13 +173,12 @@ CREATE TABLE IF NOT EXISTS public.provider_keys (
     cooldown_until TIMESTAMPTZ,
     usage_today INTEGER NOT NULL DEFAULT 0,
     error_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 CREATE INDEX IF NOT EXISTS idx_provider_keys_provider_status ON public.provider_keys(provider_id, status);
 
 -- ----------------------------------------------------------------------------
--- 7. Provider Chains
+-- 6. Provider Chains
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.provider_chains (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -223,7 +208,7 @@ CREATE TABLE IF NOT EXISTS public.provider_chains (
 CREATE INDEX IF NOT EXISTS idx_provider_chains_stage ON public.provider_chains(stage, page_id, profile_id);
 
 -- ----------------------------------------------------------------------------
--- 8. Daily Provider Usage
+-- 7. Daily Provider Usage
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.provider_usage_daily (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -241,7 +226,7 @@ CREATE TABLE IF NOT EXISTS public.provider_usage_daily (
 CREATE INDEX IF NOT EXISTS idx_usage_date ON public.provider_usage_daily(date, provider_id);
 
 -- ----------------------------------------------------------------------------
--- 9. Research Sources & Items (Factual / True Story)
+-- 8. Research Sources & Items (Factual / True Story)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.research_sources (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -270,7 +255,7 @@ CREATE INDEX IF NOT EXISTS idx_research_items_hash ON public.research_items(cont
 CREATE INDEX IF NOT EXISTS idx_research_items_created ON public.research_items(created_at DESC);
 
 -- ----------------------------------------------------------------------------
--- 10. Owner Topic Queue
+-- 9. Owner Topic Queue
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.topic_queue_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -286,7 +271,7 @@ CREATE TABLE IF NOT EXISTS public.topic_queue_items (
 CREATE INDEX IF NOT EXISTS idx_topic_queue_status ON public.topic_queue_items(status, sort_order ASC);
 
 -- ----------------------------------------------------------------------------
--- 11. Series & Episodes (Continuity Engine)
+-- 10. Series & Episodes (Continuity Engine)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.series (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -313,12 +298,11 @@ CREATE TABLE IF NOT EXISTS public.series_episodes (
 );
 
 -- ----------------------------------------------------------------------------
--- 12. Posts (Pipeline State Machine)
+-- 11. Posts (Pipeline State Machine)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.posts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     page_id UUID NOT NULL REFERENCES public.pages(id) ON DELETE CASCADE,
-    fb_account_id UUID REFERENCES public.facebook_accounts(id) ON DELETE SET NULL,
     profile_version INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN (
         'planned',
@@ -348,7 +332,6 @@ CREATE TABLE IF NOT EXISTS public.posts (
     headline TEXT,
     caption TEXT,
     caption_word_count INTEGER,
-    first_comment TEXT,
     hashtags JSONB NOT NULL DEFAULT '[]'::jsonb,
     source_line TEXT,
     disclosure_line TEXT,
@@ -367,7 +350,6 @@ CREATE TABLE IF NOT EXISTS public.posts (
     review_note TEXT,
     fb_post_id TEXT,
     fb_permalink TEXT,
-    analytics JSONB NOT NULL DEFAULT '{}'::jsonb,
     error TEXT,
     stage_attempts JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
@@ -376,10 +358,9 @@ CREATE TABLE IF NOT EXISTS public.posts (
 CREATE INDEX IF NOT EXISTS idx_posts_status_scheduled ON public.posts(status, scheduled_for ASC);
 CREATE INDEX IF NOT EXISTS idx_posts_page_scheduled ON public.posts(page_id, scheduled_for ASC);
 CREATE INDEX IF NOT EXISTS idx_posts_review_state ON public.posts(review_state);
-CREATE INDEX IF NOT EXISTS idx_posts_account ON public.posts(fb_account_id);
 
 -- ----------------------------------------------------------------------------
--- 13. Topic History (Dedup Window)
+-- 12. Topic History (Dedup Window)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.topic_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -394,7 +375,7 @@ CREATE INDEX IF NOT EXISTS idx_topic_history_page_date ON public.topic_history(p
 CREATE INDEX IF NOT EXISTS idx_topic_history_key ON public.topic_history(topic_key);
 
 -- ----------------------------------------------------------------------------
--- 14. Telemetry, Logs, Alerts, Audit & Settings
+-- 13. Telemetry, Logs & Alerts
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.job_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -422,17 +403,12 @@ CREATE INDEX IF NOT EXISTS idx_alerts_unresolved ON public.alerts(resolved, crea
 
 CREATE TABLE IF NOT EXISTS public.audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    action TEXT NOT NULL DEFAULT 'action',
-    entity TEXT NOT NULL DEFAULT 'system',
+    action TEXT NOT NULL,
+    entity TEXT NOT NULL,
     entity_id UUID,
-    level TEXT NOT NULL DEFAULT 'info' CHECK (level IN ('info', 'success', 'warning', 'error')),
-    category TEXT,
-    message TEXT,
-    page_id UUID REFERENCES public.pages(id) ON DELETE SET NULL,
     details JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
-CREATE INDEX IF NOT EXISTS idx_audit_log_created ON public.audit_log(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.settings (
     key TEXT PRIMARY KEY,
@@ -441,7 +417,7 @@ CREATE TABLE IF NOT EXISTS public.settings (
 );
 
 -- ----------------------------------------------------------------------------
--- 15. Atomic Queue Claiming RPC Function (FOR UPDATE SKIP LOCKED)
+-- 14. Atomic Queue Claiming RPC Function (FOR UPDATE SKIP LOCKED)
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.claim_next_post_job(
     p_target_status TEXT,
@@ -482,25 +458,10 @@ END;
 $$;
 
 -- ----------------------------------------------------------------------------
--- 16. Verification Helper: check_table_rls_status
--- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.check_table_rls_status()
-RETURNS TABLE (table_name text, rls_enabled boolean)
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = public, pg_catalog
-AS $$
-  SELECT tablename::text, rowsecurity::boolean
-  FROM pg_tables
-  WHERE schemaname = 'public';
-$$;
-
--- ----------------------------------------------------------------------------
--- 17. Row Level Security (RLS) - Single Owner Protection
+-- 15. Row Level Security (RLS) - Single Owner Protection
 -- ----------------------------------------------------------------------------
 ALTER TABLE public.content_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profile_versions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.facebook_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.provider_keys ENABLE ROW LEVEL SECURITY;
@@ -518,11 +479,12 @@ ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 
+-- Authenticated owner policy: single-owner full access
 DO $$
 DECLARE
     t text;
     tables text[] := ARRAY[
-        'content_profiles', 'profile_versions', 'facebook_accounts', 'pages', 'providers',
+        'content_profiles', 'profile_versions', 'pages', 'providers',
         'provider_keys', 'provider_chains', 'provider_usage_daily',
         'research_sources', 'research_items', 'topic_queue_items',
         'series', 'series_episodes', 'posts', 'topic_history',
@@ -536,122 +498,137 @@ BEGIN
 END
 $$;
 
--- ----------------------------------------------------------------------------
--- 18. Storage Bucket: post-images (Private)
--- ----------------------------------------------------------------------------
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-    'post-images',
-    'post-images',
-    false,
-    10485760, -- 10MB
-    ARRAY['image/jpeg', 'image/png', 'image/webp']
-)
-ON CONFLICT (id) DO UPDATE
-SET public = false,
-    file_size_limit = 10485760,
-    allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp'];
 
--- Storage RLS Policy for post-images
+
+-- ============================================================================
+-- Migration: 20261104000000_facebook_accounts_and_enhancements.sql
+-- ============================================================================
+
+-- ============================================================================
+-- Supabase Migration: 20261104000000_facebook_accounts_and_enhancements.sql
+-- Autonomous Multi-Page Facebook Content System (FB Auto 247)
+-- ============================================================================
+
+-- 1. Facebook Accounts Table
+CREATE TABLE IF NOT EXISTS public.facebook_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_name TEXT NOT NULL,
+    fb_user_id TEXT NOT NULL UNIQUE,
+    email TEXT,
+    user_access_token TEXT, -- AES-256-GCM encrypted
+    masked_token TEXT,
+    token_status TEXT NOT NULL DEFAULT 'valid' CHECK (token_status IN ('valid', 'expired', 'rate_limited')),
+    token_expires_at TIMESTAMPTZ,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX IF NOT EXISTS idx_facebook_accounts_status ON public.facebook_accounts(token_status);
+
+-- 2. Link Pages to Facebook Accounts
 DO $$
 BEGIN
-    DROP POLICY IF EXISTS "Authenticated users full access to post-images" ON storage.objects;
-    CREATE POLICY "Authenticated users full access to post-images"
-    ON storage.objects
-    FOR ALL
-    TO authenticated
-    USING (bucket_id = 'post-images')
-    WITH CHECK (bucket_id = 'post-images');
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'fb_account_id'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN fb_account_id UUID REFERENCES public.facebook_accounts(id) ON DELETE SET NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'first_comment_enabled'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN first_comment_enabled BOOLEAN NOT NULL DEFAULT true;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'first_comment_prompt'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN first_comment_prompt TEXT;
+    END IF;
 END
 $$;
 
--- ----------------------------------------------------------------------------
--- 19. Seed Data: Default Settings & Provider Presets
--- ----------------------------------------------------------------------------
-INSERT INTO public.settings (key, value, updated_at)
-VALUES
-    ('kill_switch', '{"paused": false, "reason": null}'::jsonb, now()),
-    ('retention', '{"published_image_hours": 24, "failed_image_days": 3, "research_items_days": 30, "logs_days": 90}'::jsonb, now()),
-    ('storage_limits', '{"warning_percent": 70, "safe_mode_percent": 90}'::jsonb, now()),
-    ('defaults', '{"timezone": "UTC", "jitter_minutes": 10, "min_gap_hours": 2, "max_posts_per_day_warn": 5}'::jsonb, now())
-ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
-
-INSERT INTO public.providers (id, name, kind, base_url, config, rpm_limit, rpd_limit, concurrency_limit, active)
-VALUES
-    (
-        '11111111-1111-1111-1111-111111111101',
-        'Google Gemini',
-        'gemini_native',
-        'https://generativelanguage.googleapis.com/v1beta',
-        '{"default_text_model": "gemini-2.5-flash", "search_grounding": true}'::jsonb,
-        15,
-        1500,
-        2,
-        false
-    ),
-    (
-        '11111111-1111-1111-1111-111111111102',
-        'OpenRouter',
-        'openai_compatible_chat',
-        'https://openrouter.ai/api/v1',
-        '{"default_text_model": "meta-llama/llama-3.3-70b-instruct:free", "site_url": "https://fb-auto.local", "site_name": "FB Auto 247"}'::jsonb,
-        20,
-        200,
-        2,
-        false
-    ),
-    (
-        '11111111-1111-1111-1111-111111111103',
-        'Groq',
-        'openai_compatible_chat',
-        'https://api.groq.com/openai/v1',
-        '{"default_text_model": "llama-3.3-70b-versatile"}'::jsonb,
-        30,
-        14400,
-        2,
-        false
-    ),
-    (
-        '11111111-1111-1111-1111-111111111104',
-        'Cloudflare Workers AI',
-        'cloudflare_workers_ai',
-        'https://api.cloudflare.com/client/v4',
-        '{"default_image_model": "@cf/black-forest-labs/flux-1-schnell", "neurons_per_day_limit": 10000}'::jsonb,
-        60,
-        1000,
-        2,
-        false
-    ),
-    (
-        '11111111-1111-1111-1111-111111111105',
-        'Pollinations AI',
-        'pollinations',
-        'https://gen.pollinations.ai',
-        '{"default_image_model": "flux", "nologo": true, "width": 1080, "height": 1350}'::jsonb,
-        30,
-        500,
-        2,
-        false
-    ),
-    (
-        '11111111-1111-1111-1111-111111111106',
-        'Hugging Face Inference',
-        'huggingface_inference',
-        'https://router.huggingface.co/v1',
-        '{"default_text_model": "deepseek-ai/DeepSeek-R1"}'::jsonb,
-        20,
-        500,
-        1,
-        false
-    )
-ON CONFLICT (name) DO NOTHING;
-
--- ----------------------------------------------------------------------------
--- Backward-compatible column and constraint upgrades for existing instances
--- ----------------------------------------------------------------------------
+-- 3. Link Posts to Facebook Accounts and Comments
 DO $$
 BEGIN
-    -- facebook_accounts upgrades
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'posts' AND column_name = 'fb_account_id'
+    ) THEN
+        ALTER TABLE public.posts ADD COLUMN fb_account_id UUID REFERENCES public.facebook_accounts(id) ON DELETE SET NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'posts' AND column_name = 'first_comment'
+    ) THEN
+        ALTER TABLE public.posts ADD COLUMN first_comment TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'posts' AND column_name = 'analytics'
+    ) THEN
+        ALTER TABLE public.posts ADD COLUMN analytics JSONB NOT NULL DEFAULT '{}'::jsonb;
+    END IF;
+END
+$$;
+
+-- 4. Audit Log Enhancements
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'audit_log' AND column_name = 'level'
+    ) THEN
+        ALTER TABLE public.audit_log ADD COLUMN level TEXT NOT NULL DEFAULT 'info' CHECK (level IN ('info', 'success', 'warning', 'error'));
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'audit_log' AND column_name = 'category'
+    ) THEN
+        ALTER TABLE public.audit_log ADD COLUMN category TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'audit_log' AND column_name = 'message'
+    ) THEN
+        ALTER TABLE public.audit_log ADD COLUMN message TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'audit_log' AND column_name = 'page_id'
+    ) THEN
+        ALTER TABLE public.audit_log ADD COLUMN page_id UUID REFERENCES public.pages(id) ON DELETE SET NULL;
+    END IF;
+END
+$$;
+
+-- 5. RLS for facebook_accounts
+ALTER TABLE public.facebook_accounts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all_access ON public.facebook_accounts;
+CREATE POLICY owner_all_access ON public.facebook_accounts FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+
+
+-- ============================================================================
+-- Migration: 20261107000000_automatic_page_discovery.sql
+-- ============================================================================
+
+-- ============================================================================
+-- Supabase Migration: 20261107000000_automatic_page_discovery.sql
+-- Automatic Page Discovery & Multi-Account Tree Enhancements
+-- ============================================================================
+
+-- 1. Extend facebook_accounts with last_synced_at, pages_count, and updated token_status constraint
+DO $$
+BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
         WHERE table_schema = 'public' AND table_name = 'facebook_accounts' AND column_name = 'last_synced_at'
@@ -666,11 +643,16 @@ BEGIN
         ALTER TABLE public.facebook_accounts ADD COLUMN pages_count INTEGER DEFAULT 0;
     END IF;
 
+    -- Update constraint on token_status to include 'revoked'
     ALTER TABLE public.facebook_accounts DROP CONSTRAINT IF EXISTS facebook_accounts_token_status_check;
     ALTER TABLE public.facebook_accounts ADD CONSTRAINT facebook_accounts_token_status_check
         CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited'));
+END
+$$;
 
-    -- pages upgrades
+-- 2. Extend pages with category, picture_url, tasks, fan_count, connected_at, last_synced_at, secondary_account_ids, and updated token_status constraint
+DO $$
+BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
         WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'category'
@@ -720,14 +702,24 @@ BEGIN
         ALTER TABLE public.pages ADD COLUMN secondary_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
     END IF;
 
+    -- Update constraint on token_status for pages
     ALTER TABLE public.pages DROP CONSTRAINT IF EXISTS pages_token_status_check;
     ALTER TABLE public.pages ADD CONSTRAINT pages_token_status_check
         CHECK (token_status IN ('valid', 'expired', 'revoked', 'rate_limited', 'cannot_publish', 'inaccessible'));
 END
 $$;
 
+CREATE INDEX IF NOT EXISTS idx_pages_fb_account_id ON public.pages(fb_account_id);
+CREATE INDEX IF NOT EXISTS idx_pages_token_status ON public.pages(token_status);
+
+
+
 -- ============================================================================
--- 20261108000000_page_scheduling_and_niche_detection.sql
+-- Migration: 20261108000000_page_scheduling_and_niche_detection.sql
+-- ============================================================================
+
+-- ============================================================================
+-- Supabase Migration: 20261108000000_page_scheduling_and_niche_detection.sql
 -- Per-Page Scheduling Controls, Page Setup Checklist & Niche Detection
 -- ============================================================================
 
@@ -790,4 +782,92 @@ SET
     schedule = '{"postsPerDay": 0, "mode": "fixed", "postingTimes": [], "timezone": "Asia/Kolkata", "daysOfWeek": [1,2,3,4,5,6,7], "jitterMinutes": 10, "minGapMinutes": 60, "leadTimeHours": 24}'::jsonb
 WHERE active = true OR schedule->>'postsPerDay' = '3' OR schedule->>'postsPerDay' IS NULL;
 
+
+
+-- ============================================================================
+-- Migration: 20261109000000_production_persistence_and_governance.sql
+-- ============================================================================
+
+-- ============================================================================
+-- Supabase Migration: 20261109000000_production_persistence_and_governance.sql
+-- Production Persistence, Schema Governance, Start/Stop & Concurrency Control
+-- ============================================================================
+
+DO $$
+BEGIN
+    -- 1. Add is_live, version, auto_posting_stopped_action to public.pages
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'is_live'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'version'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'auto_posting_stopped_action'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN auto_posting_stopped_action TEXT DEFAULT 'pause';
+    END IF;
+
+    -- 2. Add version and system flags to content_profiles
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'version'
+    ) THEN
+        ALTER TABLE public.content_profiles ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'is_system'
+    ) THEN
+        ALTER TABLE public.content_profiles ADD COLUMN is_system BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+
+    -- 3. Add version to settings
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'settings' AND column_name = 'version'
+    ) THEN
+        ALTER TABLE public.settings ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+    END IF;
+END
+$$;
+
+-- 4. Sync is_live with active on public.pages
+UPDATE public.pages SET is_live = active WHERE is_live IS DISTINCT FROM active;
+
+-- 5. Safe Trigger to keep active and is_live in sync on public.pages
+CREATE OR REPLACE FUNCTION public.sync_page_active_and_live()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.is_live IS DISTINCT FROM OLD.is_live THEN
+        NEW.active = NEW.is_live;
+    ELSIF NEW.active IS DISTINCT FROM OLD.active THEN
+        NEW.is_live = NEW.active;
+    END IF;
+    NEW.version = COALESCE(OLD.version, 0) + 1;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_page_active_and_live ON public.pages;
+CREATE TRIGGER trg_sync_page_active_and_live
+BEFORE UPDATE ON public.pages
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_page_active_and_live();
+
+-- 6. Essential Performance & Concurrency Indexes
+CREATE INDEX IF NOT EXISTS idx_pages_active_live ON public.pages (active, is_live);
+CREATE INDEX IF NOT EXISTS idx_posts_page_status_sched ON public.posts (page_id, status, scheduled_for);
+CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON public.audit_log (timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_provider_keys_active ON public.provider_keys (provider_id, is_active);
 

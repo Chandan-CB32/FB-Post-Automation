@@ -76,6 +76,23 @@ export async function runHeartbeat(): Promise<void> {
 }
 
 export async function runWorkerCycle(): Promise<{ executed: boolean; message: string }> {
+  // Read kill_switch dynamically from Supabase settings on every cycle (Single Source of Truth)
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { data: killRow } = await supabase
+        .from('settings')
+        .select('value')
+        .eq('key', 'kill_switch')
+        .maybeSingle();
+      if (killRow?.value?.paused !== undefined) {
+        workerState.isPaused = Boolean(killRow.value.paused);
+      }
+    } catch (e: any) {
+      console.warn('[Worker] Failed reading kill switch status from Supabase:', e?.message);
+    }
+  }
+
   if (workerState.isPaused) {
     console.log('[Worker] System is paused via kill switch. Skipping cycle.');
     return { executed: false, message: 'Paused' };

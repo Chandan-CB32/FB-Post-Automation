@@ -6,6 +6,7 @@ import {
 
 export interface PageScheduleConfig {
   active?: boolean;
+  is_live?: boolean;
   postsPerDay?: number;
   mode?: 'fixed' | 'interval' | 'auto_spread';
   postingTimes?: string[]; // e.g. ["09:00", "14:00", "20:00"]
@@ -43,7 +44,7 @@ export function calculateNextSlots(
   slotCount = 10
 ): Date[] {
   // Safe default & live gating: Inactive or unconfigured pages generate 0 slots
-  if (config.active === false || config.postsPerDay === 0) {
+  if (config.active === false || config.is_live === false || config.postsPerDay === 0) {
     return [];
   }
 

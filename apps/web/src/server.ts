@@ -485,6 +485,9 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     const sendJson = (data: any, statusCode = 200) => {
       res.writeHead(statusCode, {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
@@ -526,7 +529,12 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         return;
       }
       const html = generateLoginHtml();
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      });
       res.end(html);
       return;
     }
@@ -1455,16 +1463,30 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const checklist = evaluatePageChecklist(mergedPage);
           updates.checklist_status = checklist;
 
-          const updated = await store.updatePage(data.pageId, updates);
-          return sendJson({ success: true, page: updated, checklist });
+          const updated = await store.updatePage(data.pageId, updates, {
+            expectedUpdatedAt: data.expected_updated_at,
+            expectedVersion: data.expected_version,
+          });
+
+          const savedAt = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          return sendJson({
+            success: true,
+            verified: true,
+            savedAt,
+            page: updated,
+            checklist,
+          });
         } catch (e: any) {
+          if (e.message?.includes('Concurrency conflict')) {
+            return sendJson({ error: e.message, conflict: true }, 409);
+          }
           return sendJson({ error: e.message }, 500);
         }
       });
       return;
     }
 
-    // 3e. API: Toggle Page Live Status (Safe Onboarding Gated)
+    // 3e. API: Toggle Page Live Status (Safe Onboarding Gated & Stop Modes)
     if (url.pathname === '/api/pages/toggle-live' && req.method === 'POST') {
       let body = '';
       req.on('data', (c) => (body += c));
@@ -1492,21 +1514,35 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             );
           }
 
-          const updated = await store.updatePage(data.pageId, {
+          let cancelledCount = 0;
+          const updates: Partial<StoredPage> = {
             active: targetActive,
+            is_live: targetActive,
             checklist_status: checklist,
-          });
+          };
+
+          if (!targetActive) {
+            const stopAction = data.action === 'cancel_pending' ? 'cancel_pending' : 'pause';
+            updates.auto_posting_stopped_action = stopAction;
+            if (stopAction === 'cancel_pending') {
+              cancelledCount = await store.cancelPendingPagePosts(data.pageId);
+            }
+          }
+
+          const updated = await store.updatePage(data.pageId, updates);
 
           await store.addAuditLog({
             level: targetActive ? 'info' : 'warning',
             category: 'publish',
             message: targetActive
               ? `Page "${page.name}" went LIVE with autonomous posting schedule (${updated.schedule.postsPerDay} posts/day).`
-              : `Page "${page.name}" posting PAUSED by user.`,
+              : (updates.auto_posting_stopped_action === 'cancel_pending'
+                  ? `Page "${page.name}" posting STOPPED by user. Cancelled ${cancelledCount} scheduled/pending post(s).`
+                  : `Page "${page.name}" posting PAUSED by user (scheduled posts preserved).`),
             page_id: page.id,
           });
 
-          return sendJson({ success: true, page: updated, checklist });
+          return sendJson({ success: true, page: updated, checklist, cancelledPosts: cancelledCount });
         } catch (e: any) {
           return sendJson({ error: e.message }, 500);
         }
@@ -2293,7 +2329,12 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     if (req.method === 'GET' && url.pathname === '/page-details') {
       const pageId = url.searchParams.get('id') || url.searchParams.get('pageId') || '';
       const html = await generateStandalonePageDetailsHtml(pageId);
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      });
       res.end(html);
       return;
     }
@@ -2301,7 +2342,12 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     // 15. Web Dashboard HTML UI
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
       const html = await generateDashboardHtml();
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      });
       res.end(html);
       return;
     }
@@ -2310,6 +2356,62 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     if (url.pathname === '/api/health/storage') {
       const health = await store.getStorageHealth();
       return sendJson(health);
+    }
+
+    // 17. API: Database Schema Check (Table & Column Level Verification)
+    if (url.pathname === '/api/settings/schema-check' && req.method === 'GET') {
+      try {
+        const schema = await store.checkDatabaseSchema();
+        return sendJson(schema);
+      } catch (e: any) {
+        return sendJson({ error: e.message }, 500);
+      }
+    }
+
+    // 18. API: Go-Live System Readiness Audit (11 Multi-Point Checks)
+    if (url.pathname === '/api/settings/readiness' && req.method === 'GET') {
+      try {
+        const readiness = await store.getSystemReadiness();
+        return sendJson(readiness);
+      } catch (e: any) {
+        return sendJson({ error: e.message }, 500);
+      }
+    }
+
+    // 19. API: Settings Backup Export (Zero Secrets)
+    if (url.pathname === '/api/settings/backup' && req.method === 'GET') {
+      try {
+        const backup = await store.exportSettingsBackup();
+        return sendJson(backup);
+      } catch (e: any) {
+        return sendJson({ error: e.message }, 500);
+      }
+    }
+
+    // 20. API: Settings Backup Restore
+    if (url.pathname === '/api/settings/restore' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const result = await store.restoreSettingsBackup(payload);
+          return sendJson(result);
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 400);
+        }
+      });
+      return;
+    }
+
+    // 21. API: Import Starter Profiles (4 Master + Horror, Crime, Science)
+    if (url.pathname === '/api/profiles/import-starter' && req.method === 'POST') {
+      try {
+        const result = await store.importStarterProfiles();
+        return sendJson({ success: true, count: result.count, profiles: result.profiles });
+      } catch (e: any) {
+        return sendJson({ error: e.message }, 500);
+      }
     }
 
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -2677,6 +2779,22 @@ async function generateDashboardHtml(): Promise<string> {
       </div>
     </header>
 
+    <!-- Global Emergency Kill Switch Warning Banner -->
+    ${killSwitch ? `
+      <div id="globalKillSwitchBanner" style="background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fef3c7; padding: 14px 20px; border-radius: 8px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font-size: 24px;">⏸️</span>
+          <div>
+            <strong style="font-size: 14px; color: #fbbf24;">Global Kill Switch Active: Autonomous posting is PAUSED across ALL pages.</strong>
+            <div style="font-size: 12px; color: #fde68a; margin-top: 2px;">The background worker loop will skip idea generation and publishing cycles until resumed.</div>
+          </div>
+        </div>
+        <button class="btn btn-secondary" onclick="toggleKillSwitch()" style="padding: 6px 16px; font-size: 12px; font-weight: 700; background: #f59e0b; color: #000; border: none; cursor: pointer;">
+          ▶️ Resume Autonomous System
+        </button>
+      </div>
+    ` : ''}
+
     <!-- Prominent Warning Banner for Missing Supabase Tables -->
     <div id="databaseHealthBanner" style="${storageHealth && storageHealth.missingTables && storageHealth.missingTables.length > 0 ? 'display: block;' : 'display: none;'} margin-bottom: 24px; padding: 16px 20px; border-radius: 10px; background: #7f1d1d; border: 1px solid #dc2626; color: #fee2e2;">
       <div style="display: flex; align-items: flex-start; gap: 12px;">
@@ -2971,6 +3089,9 @@ async function generateDashboardHtml(): Promise<string> {
 
                             <!-- Right: Actions -->
                             <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                              ${p.active
+                                ? `<button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px; font-weight: 700; color: #f87171; border: 1px solid rgba(239,68,68,0.4);" onclick="promptStopAutoPosting('${p.id}', '${escapeHtml(p.name)}')" title="Pause autonomous posting for this Page">⏸️ Stop</button>`
+                                : `<button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; font-weight: 700;" onclick="startAutoPostingFromRow('${p.id}')" title="Start autonomous posting for this Page">🚀 Start</button>`}
                               <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; font-weight: 600;" onclick="openPageSettingsModal('${p.id}')" title="Configure posting cadence, schedule builder, and publishing modes">
                                 ⚙️ Settings & Schedule
                               </button>
@@ -3741,6 +3862,65 @@ async function generateDashboardHtml(): Promise<string> {
           <span style="color: #34d399; font-weight: 700;">Active (70% Warning / 90% Safe Mode)</span>
         </div>
       </div>
+
+      <!-- GO-LIVE SYSTEM READINESS AUDIT (11 MULTI-POINT CHECKS) -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid var(--card-border);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <h3 style="margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+              <span>🚀</span> Go-Live System Readiness Audit
+            </h3>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Comprehensive 11-point production audit: database schema, tokens, provider quotas, worker health, and public compliance.
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="runSystemReadinessAuditAction(this)" style="font-weight: 700; padding: 6px 16px;">
+            🩺 Run Readiness Audit
+          </button>
+        </div>
+        <div id="readinessAuditContainer" style="display: none; margin-top: 14px;"></div>
+      </div>
+
+      <!-- DATABASE SCHEMA CHECK TOOL -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid var(--card-border);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <h3 style="margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+              <span>🗄️</span> Database Schema & Migration Verification
+            </h3>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Validates real Supabase schema against expected 19 tables, indexes, and required columns. Blocks go-live if incomplete.
+            </div>
+          </div>
+          <button class="btn btn-secondary" onclick="runDatabaseSchemaCheckAction(this)" style="font-weight: 600; padding: 6px 14px;">
+            🔍 Check Schema Integrity
+          </button>
+        </div>
+        <div id="schemaCheckContainer" style="display: none; margin-top: 14px;"></div>
+      </div>
+
+      <!-- SETTINGS BACKUP & RESTORE -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid var(--card-border);">
+        <h3 style="margin: 0 0 8px 0; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+          <span>💾</span> Settings Backup & Disaster Recovery (Zero Secrets)
+        </h3>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+          Export and import entire system settings (page cadences, prompt overrides, content profiles, provider configurations). Secrets, tokens, and keys are strictly stripped for security.
+        </p>
+        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <button class="btn btn-secondary" onclick="downloadSettingsBackupAction()" style="padding: 8px 16px;">
+            📥 Download Settings Backup (JSON)
+          </button>
+          <label class="btn btn-secondary" style="padding: 8px 16px; cursor: pointer; margin: 0;">
+            📤 Restore from Backup JSON
+            <input type="file" id="restoreBackupFileInput" accept=".json" onchange="handleRestoreBackupFile(this)" style="display: none;">
+          </label>
+          <button class="btn btn-secondary" onclick="importStarterProfilesFromSettings(this)" style="padding: 8px 16px;">
+            📦 Import 7 Starter Profiles to Supabase
+          </button>
+        </div>
+        <div id="backupStatusMsg" style="margin-top: 10px; font-size: 12px; display: none;"></div>
+      </div>
     </div>
   </main>
 
@@ -4007,12 +4187,13 @@ async function generateDashboardHtml(): Promise<string> {
   <!-- MODAL: PAGE SETTINGS & SCHEDULING CONTROLS -->
   <div class="modal" id="pageSettingsModal">
     <div class="modal-content" style="max-width: 960px; width: 95%; max-height: 92vh; overflow-y: auto; padding: 26px;">
-      <!-- Modal Top Header -->
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid var(--card-border); padding-bottom: 14px;">
+      <!-- Modal Top Header & Big Auto-Posting Switch -->
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid var(--card-border); padding-bottom: 14px; flex-wrap: wrap; gap: 14px;">
         <div>
           <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
-            <h3 id="psmTitle" style="font-size: 20px; margin: 0; color: #f9fafb;">⚙️ Page Settings & Scheduling Controls</h3>
+            <h3 id="psmTitle" style="font-size: 20px; margin: 0; color: #f9fafb;">⚙️ Page Settings</h3>
             <span id="psmLiveBadge" class="badge" style="background: rgba(239,68,68,0.2); color: #f87171; font-size: 11px;">● POSTING DISABLED</span>
+            <span id="psmUnsavedBadge" style="display: none; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;">● Unsaved changes</span>
           </div>
           <div style="font-size: 12px; color: var(--text-muted); display: flex; gap: 14px; flex-wrap: wrap;">
             <span>Page: <strong id="psmPageName" style="color: #cbd5e1;">-</strong></span>
@@ -4020,13 +4201,24 @@ async function generateDashboardHtml(): Promise<string> {
             <span>Token: <span id="psmTokenStatus" class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; font-size: 10px;">VALID</span></span>
           </div>
         </div>
-        <button type="button" onclick="closePageSettingsModal()" style="background: none; border: none; color: var(--text-muted); font-size: 22px; cursor: pointer; padding: 0 4px;" aria-label="Close modal">✕</button>
+
+        <!-- Big Auto-Posting Switch -->
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="text-align: right;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Autonomous Posting</div>
+            <div id="psmSwitchLabel" style="font-size: 14px; font-weight: 800; color: #f87171;">OFF</div>
+          </div>
+          <button type="button" id="psmBigSwitchBtn" onclick="toggleAutoPostingFromSwitch()" class="btn btn-secondary" style="font-size: 13px; font-weight: 800; padding: 8px 16px;">
+            🚀 Turn Auto-Posting ON
+          </button>
+          <button type="button" onclick="closePageSettingsModal()" style="background: none; border: none; color: var(--text-muted); font-size: 22px; cursor: pointer; padding: 0 4px; margin-left: 10px;" aria-label="Close modal">✕</button>
+        </div>
       </div>
 
-      <!-- Setup Checklist Banner -->
+      <!-- Setup Checklist Progress Banner -->
       <div id="psmChecklistBanner" style="background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 14px 18px; margin-bottom: 20px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
-          <strong style="font-size: 13px; color: #f3f4f6;">📋 Page Setup Checklist</strong>
+          <strong style="font-size: 13px; color: #f3f4f6;">📋 Setup Checklist</strong>
           <span id="psmChecklistProgress" style="font-size: 12px; font-weight: 600; color: #f59e0b;">Step 1 of 5 Incomplete</span>
         </div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; font-size: 12px;">
@@ -4048,37 +4240,40 @@ async function generateDashboardHtml(): Promise<string> {
         </div>
       </div>
 
-      <!-- Settings Sections Container -->
       <form id="pageSettingsForm" onsubmit="handleSavePageSettings(event)">
         <input type="hidden" id="psmPageId" name="psmPageId">
+        <input type="hidden" id="psmPostsPerDay" name="psmPostsPerDay" value="0">
 
-        <!-- SECTION 1: CONTENT PROFILE -->
+        <!-- STEP 1 CARD: NICHE -->
         <div class="card" style="background: #0b0f19; border: 1px solid var(--card-border); padding: 18px; margin-bottom: 20px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
             <h4 style="font-size: 15px; margin: 0; color: #93c5fd; display: flex; align-items: center; gap: 8px;">
-              <span>🎭</span> 1. Content Profile & Niche Selection
+              <span id="psmCardCheck1">⭕</span> <span>Step 1: Choose Niche & Content Profile</span>
             </h4>
-            <div style="display: flex; gap: 8px;">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 4px 10px;" onclick="importStarterProfilesFromModal()">
+                📦 Import Starter Profiles
+              </button>
               <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 4px 10px;" onclick="analyzePageNicheActionFromModal()">
                 ✨ Detect Niche via AI
               </button>
               <a href="javascript:void(0)" onclick="openPagePromptStudioFromModal()" style="font-size: 11px; color: #60a5fa; text-decoration: none; display: flex; align-items: center;">
-                ✍️ Prompt Studio & Custom Voice →
+                ✍️ Edit Prompts & Voice →
               </a>
             </div>
           </div>
 
           <div class="form-group" style="margin-bottom: 12px;">
             <label for="psmProfileSelect" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Assigned Content Profile</label>
-            <select id="psmProfileSelect" class="form-control" style="font-size: 13px; padding: 8px 12px; width: 100%;" onchange="handleModalProfileChange(this.value)">
+            <select id="psmProfileSelect" class="form-control" style="font-size: 13px; padding: 8px 12px; width: 100%;" onchange="handleModalProfileChange(this.value); markFormModified();">
               ${renderNicheSelectOptions(seedProfiles)}
             </select>
             <small style="color: var(--text-muted); font-size: 11px; margin-top: 4px; display: block;">
-              Select a specialized niche profile. System generates topics, headlines, captions, and visual styling tuned specifically to this profile.
+              Select a specialized profile. The system tunes topic selection, headline styles, caption length, and visual generation specifically for this niche.
             </small>
           </div>
 
-          <!-- Niche Detection Suggestion Card (if analyzed) -->
+          <!-- Niche Recommendation Card -->
           <div id="psmNicheSuggestionBox" style="display: none; background: #0f172a; border: 1px solid #3b82f6; border-radius: 8px; padding: 14px; margin-top: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
               <div>
@@ -4104,41 +4299,33 @@ async function generateDashboardHtml(): Promise<string> {
           </div>
         </div>
 
-        <!-- SECTION 2: POSTING SCHEDULE & TIMING -->
+        <!-- STEP 2 CARD: SCHEDULE -->
         <div class="card" style="background: #0b0f19; border: 1px solid var(--card-border); padding: 18px; margin-bottom: 20px;">
-          <h4 style="font-size: 15px; margin: 0 0 14px 0; color: #93c5fd; display: flex; align-items: center; gap: 8px;">
-            <span>⏰</span> 2. Posting Cadence, Timing & Timezone
-          </h4>
-
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px;">
-            <!-- Posts Per Day -->
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="psmPostsPerDay" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Posts per Day (0 = Disabled, 1 - 10)</label>
-              <input type="number" id="psmPostsPerDay" name="psmPostsPerDay" class="form-control" min="0" max="10" value="0" style="font-size: 14px; font-weight: 700;" oninput="handleScheduleInputChange()">
-              <div id="psmHighCadenceWarning" style="display: none; color: #fbbf24; font-size: 11px; margin-top: 4px;">
-                ⚠️ Warning: Facebook algorithm may penalize reach for pages posting over 5 times per day.
-              </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px;">
+            <h4 style="font-size: 15px; margin: 0; color: #93c5fd; display: flex; align-items: center; gap: 8px;">
+              <span id="psmCardCheck2">⭕</span> <span>Step 2: Set Cadence & Posting Schedule</span>
+            </h4>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span style="font-size: 11px; color: var(--text-muted);">Quick-fill:</span>
+              <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 3px 8px;" onclick="applyQuickSchedule(5)">
+                ⭐ 5 posts/day (US Prime Time)
+              </button>
+              <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 3px 8px;" onclick="applyQuickSchedule(3)">
+                ⚡ 3 posts/day
+              </button>
             </div>
+          </div>
 
-            <!-- Posting Mode Selector -->
-            <div class="form-group" style="margin-bottom: 0;">
-              <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Timing Generation Mode</label>
-              <div style="display: flex; gap: 4px; margin-top: 4px;">
-                <button type="button" class="btn btn-primary psm-mode-btn" data-mode="fixed" onclick="setScheduleTimingMode('fixed', this)" style="flex: 1; font-size: 11px; padding: 6px 4px;">Fixed Times</button>
-                <button type="button" class="btn btn-secondary psm-mode-btn" data-mode="interval" onclick="setScheduleTimingMode('interval', this)" style="flex: 1; font-size: 11px; padding: 6px 4px;">Interval</button>
-                <button type="button" class="btn btn-secondary psm-mode-btn" data-mode="auto_spread" onclick="setScheduleTimingMode('auto_spread', this)" style="flex: 1; font-size: 11px; padding: 6px 4px;">Auto-Spread</button>
-              </div>
-            </div>
-
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 16px;">
             <!-- Audience Timezone -->
             <div class="form-group" style="margin-bottom: 0;">
               <label for="psmTimezone" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Audience Timezone</label>
-              <select id="psmTimezone" name="psmTimezone" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
+              <select id="psmTimezone" name="psmTimezone" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange(); markFormModified();">
+                <option value="America/New_York" selected>America/New_York (US Eastern Time - ET)</option>
+                <option value="America/Chicago">America/Chicago (US Central Time - CT)</option>
+                <option value="America/Denver">America/Denver (US Mountain Time - MT)</option>
+                <option value="America/Los_Angeles">America/Los_Angeles (US Pacific Time - PT)</option>
                 <option value="Asia/Kolkata">Asia/Kolkata (IST +5:30)</option>
-                <option value="America/New_York">America/New_York (ET)</option>
-                <option value="America/Chicago">America/Chicago (CT)</option>
-                <option value="America/Denver">America/Denver (MT)</option>
-                <option value="America/Los_Angeles">America/Los_Angeles (PT)</option>
                 <option value="Europe/London">Europe/London (GMT/BST)</option>
                 <option value="Europe/Paris">Europe/Paris (CET)</option>
                 <option value="Europe/Berlin">Europe/Berlin (CET)</option>
@@ -4148,94 +4335,40 @@ async function generateDashboardHtml(): Promise<string> {
                 <option value="Australia/Sydney">Australia/Sydney (AEST)</option>
                 <option value="UTC">UTC (Universal Time)</option>
               </select>
+              <small id="psmCurrentTzTime" style="color: #93c5fd; font-size: 11px; margin-top: 4px; display: block;"></small>
+            </div>
+
+            <!-- Cadence Derived Count -->
+            <div class="form-group" style="margin-bottom: 0;">
+              <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Calculated Cadence</label>
+              <div style="display: flex; align-items: center; gap: 10px; padding-top: 6px;">
+                <span id="psmCadenceBadge" class="badge" style="font-size: 14px; font-weight: 700; background: #1e3a8a; color: #93c5fd; padding: 6px 14px;">
+                  0 posts / day
+                </span>
+                <span style="font-size: 11px; color: var(--text-muted);">(Driven by number of posting times below)</span>
+              </div>
             </div>
           </div>
 
-          <!-- Mode-Specific Input: Fixed Times -->
-          <div id="psmTimingSectionFixed" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <span style="font-size: 12px; color: #e2e8f0; font-weight: 600;">Posting Times (Audience Timezone):</span>
-              <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 2px 8px;" onclick="addFixedTimePicker()">+ Add Time</button>
+          <!-- Time Chips Container -->
+          <div style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 14px; margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <span style="font-size: 12px; color: #e2e8f0; font-weight: 600;">Daily Posting Times (Audience Timezone):</span>
+              <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px;" onclick="addFixedTimePicker()">+ Add Time</button>
             </div>
             <div id="psmFixedTimesList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
-          </div>
-
-          <!-- Mode-Specific Input: Interval & Auto-Spread -->
-          <div id="psmTimingSectionInterval" style="display: none; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;">
-              <div class="form-group" style="margin-bottom: 0;">
-                <label for="psmWindowStart" style="font-size: 11px; color: var(--text-muted);">Window Start</label>
-                <input type="time" id="psmWindowStart" value="09:00" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
-              </div>
-              <div class="form-group" style="margin-bottom: 0;">
-                <label for="psmWindowEnd" style="font-size: 11px; color: var(--text-muted);">Window End</label>
-                <input type="time" id="psmWindowEnd" value="21:00" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
-              </div>
-              <div class="form-group" id="psmIntervalHoursGroup" style="margin-bottom: 0;">
-                <label for="psmIntervalHours" style="font-size: 11px; color: var(--text-muted);">Interval (Every N Hours)</label>
-                <input type="number" id="psmIntervalHours" value="3" min="1" max="12" class="form-control" style="font-size: 12px;" oninput="handleScheduleInputChange()">
-              </div>
+            <div id="psmHighCadenceWarning" style="display: none; color: #fbbf24; font-size: 11px; margin-top: 8px; padding: 6px 10px; background: rgba(251, 191, 36, 0.1); border-radius: 4px;">
+              ⚠️ Warning: Facebook algorithm may penalize organic reach for pages posting over 5 times per day.
             </div>
           </div>
 
-          <!-- Days of Week Checkboxes -->
-          <div class="form-group" style="margin-bottom: 16px;">
-            <label style="font-size: 12px; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; display: block;">Active Days of the Week</label>
-            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-              ${['Mon (1)', 'Tue (2)', 'Wed (3)', 'Thu (4)', 'Fri (5)', 'Sat (6)', 'Sun (7)'].map((d, i) => `
-                <label style="font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;">
-                  <input type="checkbox" class="psm-dow-checkbox" value="${i + 1}" checked onchange="handleScheduleInputChange()">
-                  <span>${d.split(' ')[0]}</span>
-                </label>
-              `).join('')}
-            </div>
-          </div>
-
-          <!-- Jitter, Min Gap & Lead Time -->
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 16px;">
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="psmJitter" style="font-size: 11px; color: var(--text-muted);">Time Jitter (± Minutes)</label>
-              <input type="number" id="psmJitter" value="10" min="0" max="60" class="form-control" style="font-size: 12px;" oninput="handleScheduleInputChange()">
-              <small style="color: var(--text-muted); font-size: 10px;">Natural time shift to avoid exact-minute robotic posting.</small>
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="psmMinGap" style="font-size: 11px; color: var(--text-muted);">Minimum Gap (Minutes)</label>
-              <input type="number" id="psmMinGap" value="60" min="30" max="720" class="form-control" style="font-size: 12px;" oninput="handleScheduleInputChange()">
-              <small style="color: var(--text-muted); font-size: 10px;">Guaranteed spacing between consecutive posts (min 30m).</small>
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="psmLeadTime" style="font-size: 11px; color: var(--text-muted);">Generation Lead Time</label>
-              <select id="psmLeadTime" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
-                <option value="24">24 hours ahead</option>
-                <option value="48" selected>48 hours ahead</option>
-                <option value="72">3 days ahead</option>
-                <option value="168">7 days ahead</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Vacation Pause Range -->
-          <div style="background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
-            <div style="font-size: 12px; font-weight: 600; color: #cbd5e1; margin-bottom: 8px;">🌴 Optional Vacation / Pause Date Range (Skip Posting)</div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-              <div>
-                <label for="psmVacationStart" style="font-size: 11px; color: var(--text-muted);">Pause Start Date</label>
-                <input type="date" id="psmVacationStart" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
-              </div>
-              <div>
-                <label for="psmVacationEnd" style="font-size: 11px; color: var(--text-muted);">Pause End Date</label>
-                <input type="date" id="psmVacationEnd" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange()">
-              </div>
-            </div>
-          </div>
-
-          <!-- LIVE 7-DAY SCHEDULE PREVIEW TABLE -->
-          <div style="background: #060913; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; margin-top: 14px;">
+          <!-- Live 7-Day Preview Table -->
+          <div style="background: #060913; border: 1px solid #1e293b; border-radius: 8px; padding: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 6px;">
               <strong style="font-size: 13px; color: #34d399;">📅 Live 7-Day Autonomous Slot Preview</strong>
               <span id="psmSlotSummaryBadge" style="font-size: 11px; color: var(--text-muted);">Recalculating live...</span>
             </div>
-            <div style="overflow-x: auto; max-height: 220px;">
+            <div style="overflow-x: auto; max-height: 200px;">
               <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
                 <thead>
                   <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-muted);">
@@ -4247,67 +4380,136 @@ async function generateDashboardHtml(): Promise<string> {
                   </tr>
                 </thead>
                 <tbody id="psmSchedulePreviewTableBody">
-                  <tr><td colspan="5" style="text-align: center; padding: 12px; color: var(--text-muted);">Configure schedule above to generate preview</td></tr>
+                  <tr><td colspan="5" style="text-align: center; padding: 12px; color: var(--text-muted);">Configure schedule times above to see preview slots</td></tr>
                 </tbody>
               </table>
             </div>
           </div>
         </div>
 
-        <!-- SECTION 3: PUBLISHING MODE & AI DISCLOSURES -->
+        <!-- STEP 3 CARD: PUBLISHING MODE -->
         <div class="card" style="background: #0b0f19; border: 1px solid var(--card-border); padding: 18px; margin-bottom: 20px;">
           <h4 style="font-size: 15px; margin: 0 0 14px 0; color: #93c5fd; display: flex; align-items: center; gap: 8px;">
-            <span>🛡️</span> 3. Publishing Mode & Content Governance
+            <span id="psmCardCheck3">⭕</span> <span>Step 3: Choose Publishing Mode</span>
           </h4>
 
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 16px;">
-            <!-- Publishing Mode -->
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="psmPublishingMode" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Publishing Mode</label>
-              <select id="psmPublishingMode" name="psmPublishingMode" class="form-control" style="font-size: 13px;" onchange="handlePublishingModeChange(this.value)">
-                <option value="review">Review (Human Approval Gate - Safest)</option>
-                <option value="hybrid">Hybrid (Auto if QA Score >= Threshold)</option>
-                <option value="auto">Auto (Full Autonomous Instant Publishing)</option>
-              </select>
+          <input type="hidden" id="psmPublishingMode" name="psmPublishingMode" value="review">
+
+          <!-- 3 Mode Selection Cards -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 14px;">
+            <!-- Mode 1: Review -->
+            <div class="psm-mode-card active" id="modeCardReview" onclick="selectPublishingMode('review')" style="cursor: pointer; padding: 14px; border-radius: 8px; border: 2px solid #3b82f6; background: rgba(59,130,246,0.1);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <strong style="color: #93c5fd; font-size: 14px;">📬 Review Each Post</strong>
+                <span class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; font-size: 10px;">RECOMMENDED</span>
+              </div>
+              <p style="font-size: 12px; color: #cbd5e1; line-height: 1.4; margin: 0;">
+                Worker generates caption, image & QA score into Review Inbox. Nothing is posted to Facebook until you approve it. Safest default.
+              </p>
             </div>
 
-            <!-- Hybrid Score Slider -->
-            <div class="form-group" id="psmHybridScoreGroup" style="margin-bottom: 0;">
-              <label for="psmHybridScore" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">
-                Hybrid QA Score Threshold: <span id="psmHybridScoreVal" style="color: #34d399; font-weight: 700;">80</span>/100
-              </label>
-              <input type="range" id="psmHybridScore" min="50" max="95" value="80" style="width: 100%; margin-top: 6px;" oninput="document.getElementById('psmHybridScoreVal').innerText = this.value">
-              <small style="color: var(--text-muted); font-size: 10px;">Scores below threshold are routed to Review Inbox.</small>
+            <!-- Mode 2: Fully Automatic -->
+            <div class="psm-mode-card" id="modeCardAuto" onclick="selectPublishingMode('auto')" style="cursor: pointer; padding: 14px; border-radius: 8px; border: 1px solid var(--card-border); background: rgba(255,255,255,0.02);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <strong style="color: #f3f4f6; font-size: 14px;">🚀 Fully Automatic</strong>
+                <span class="badge" style="background: rgba(59,130,246,0.2); color: #93c5fd; font-size: 10px;">HANDS-OFF</span>
+              </div>
+              <p style="font-size: 12px; color: #cbd5e1; line-height: 1.4; margin: 0;">
+                Worker generates and publishes directly to Facebook at scheduled times without manual approval.
+              </p>
             </div>
 
-            <!-- Daily Cap -->
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="psmDailyCap" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Hard Daily Cap</label>
-              <input type="number" id="psmDailyCap" value="3" min="1" max="20" class="form-control" style="font-size: 12px;">
-              <small style="color: var(--text-muted); font-size: 10px;">Safety ceiling for total posts per calendar day.</small>
-            </div>
-          </div>
-
-          <!-- AI Disclosure Toggle -->
-          <div style="background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
-            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; margin-bottom: 6px;">
-              <input type="checkbox" id="psmAiDisclosureToggle" onchange="document.getElementById('psmAiDisclosureBox').style.display = this.checked ? 'block' : 'none'">
-              <span style="font-weight: 600; color: #f3f4f6;">Append AI Disclosure Statement to Caption</span>
-            </label>
-            <div id="psmAiDisclosureBox" style="display: none; margin-top: 8px;">
-              <input type="text" id="psmAiDisclosureText" class="form-control" value="AI-assisted content created for Beyond the Known." style="font-size: 12px;" placeholder="Custom disclosure line">
-              <small style="color: var(--text-muted); font-size: 10px;">Ensures compliance with Meta content integrity standards.</small>
+            <!-- Mode 3: Hybrid -->
+            <div class="psm-mode-card" id="modeCardHybrid" onclick="selectPublishingMode('hybrid')" style="cursor: pointer; padding: 14px; border-radius: 8px; border: 1px solid var(--card-border); background: rgba(255,255,255,0.02);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <strong style="color: #f3f4f6; font-size: 14px;">⚖️ Hybrid Mode</strong>
+                <span class="badge" style="background: rgba(245,158,11,0.2); color: #fbbf24; font-size: 10px;">QUALITY GATE</span>
+              </div>
+              <p style="font-size: 12px; color: #cbd5e1; line-height: 1.4; margin: 0;">
+                High-confidence posts (QA score ≥ threshold) auto-post. Posts below threshold route to Review Inbox.
+              </p>
             </div>
           </div>
 
-          <!-- Source Attribution Line -->
-          <div style="background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px;">
-            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; margin: 0;">
-              <input type="checkbox" id="psmSourceLineToggle" checked>
-              <span style="font-weight: 600; color: #f3f4f6;">Include Verified Source Line (e.g. "Source: NASA / Nature")</span>
+          <!-- Hybrid Threshold Slider (Shown when hybrid selected) -->
+          <div id="psmHybridScoreGroup" style="display: none; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-top: 10px;">
+            <label for="psmHybridScore" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">
+              Hybrid QA Score Threshold: <span id="psmHybridScoreVal" style="color: #34d399; font-weight: 700;">80</span>/100
             </label>
+            <input type="range" id="psmHybridScore" min="50" max="95" value="80" style="width: 100%; margin-top: 6px;" oninput="document.getElementById('psmHybridScoreVal').innerText = this.value; markFormModified();">
+            <small style="color: var(--text-muted); font-size: 11px;">Scores below threshold are routed to your Review Inbox for human sign-off.</small>
           </div>
         </div>
+
+        <!-- COLLAPSED ADVANCED SECTION -->
+        <details style="background: rgba(255,255,255,0.015); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px 18px; margin-bottom: 20px;">
+          <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: #cbd5e1; user-select: none;">
+            ⚙️ Advanced Settings (Jitter, Min Gap, Lead Time, Vacation Pause, AI Disclosures, Daily Cap)
+          </summary>
+          <div style="margin-top: 16px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 14px;">
+              <div>
+                <label for="psmJitter" style="font-size: 11px; color: var(--text-muted);">Time Jitter (± Minutes)</label>
+                <input type="number" id="psmJitter" value="10" min="0" max="60" class="form-control" style="font-size: 12px;" oninput="handleScheduleInputChange(); markFormModified();">
+                <small style="color: var(--text-muted); font-size: 10px;">Natural time shift to avoid exact-minute robotic posting.</small>
+              </div>
+              <div>
+                <label for="psmMinGap" style="font-size: 11px; color: var(--text-muted);">Minimum Gap (Minutes)</label>
+                <input type="number" id="psmMinGap" value="60" min="30" max="720" class="form-control" style="font-size: 12px;" oninput="handleScheduleInputChange(); markFormModified();">
+                <small style="color: var(--text-muted); font-size: 10px;">Guaranteed spacing between consecutive posts.</small>
+              </div>
+              <div>
+                <label for="psmLeadTime" style="font-size: 11px; color: var(--text-muted);">Generation Lead Time</label>
+                <select id="psmLeadTime" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange(); markFormModified();">
+                  <option value="24">24 hours ahead</option>
+                  <option value="48" selected>48 hours ahead</option>
+                  <option value="72">3 days ahead</option>
+                  <option value="168">7 days ahead</option>
+                </select>
+              </div>
+              <div>
+                <label for="psmDailyCap" style="font-size: 11px; color: var(--text-muted);">Hard Daily Cap</label>
+                <input type="number" id="psmDailyCap" value="3" min="1" max="20" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
+                <small style="color: var(--text-muted); font-size: 10px;">Safety ceiling for maximum posts per calendar day.</small>
+              </div>
+            </div>
+
+            <!-- Vacation Pause Range -->
+            <div style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 14px;">
+              <div style="font-size: 12px; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">🌴 Optional Vacation / Pause Date Range (Skip Posting)</div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                <div>
+                  <label for="psmVacationStart" style="font-size: 11px; color: var(--text-muted);">Pause Start Date</label>
+                  <input type="date" id="psmVacationStart" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange(); markFormModified();">
+                </div>
+                <div>
+                  <label for="psmVacationEnd" style="font-size: 11px; color: var(--text-muted);">Pause End Date</label>
+                  <input type="date" id="psmVacationEnd" class="form-control" style="font-size: 12px;" onchange="handleScheduleInputChange(); markFormModified();">
+                </div>
+              </div>
+            </div>
+
+            <!-- AI Disclosure Toggle -->
+            <div style="background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; margin-bottom: 6px;">
+                <input type="checkbox" id="psmAiDisclosureToggle" onchange="document.getElementById('psmAiDisclosureBox').style.display = this.checked ? 'block' : 'none'; markFormModified();">
+                <span style="font-weight: 600; color: #f3f4f6;">Append AI Disclosure Statement to Caption</span>
+              </label>
+              <div id="psmAiDisclosureBox" style="display: none; margin-top: 8px;">
+                <input type="text" id="psmAiDisclosureText" class="form-control" value="AI-assisted content created for Beyond the Known." style="font-size: 12px;" oninput="markFormModified()">
+                <small style="color: var(--text-muted); font-size: 10px;">Ensures compliance with Meta content integrity standards.</small>
+              </div>
+            </div>
+
+            <!-- Source Line Toggle -->
+            <div style="background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px;">
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; margin: 0;">
+                <input type="checkbox" id="psmSourceLineToggle" checked onchange="markFormModified()">
+                <span style="font-weight: 600; color: #f3f4f6;">Include Verified Source Line (e.g. "Source: NASA / Nature")</span>
+              </label>
+            </div>
+          </div>
+        </details>
 
         <!-- Footer Actions -->
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--card-border); padding-top: 18px;">
@@ -4315,8 +4517,8 @@ async function generateDashboardHtml(): Promise<string> {
             <button type="button" class="btn btn-secondary" style="font-size: 13px;" onclick="runTestRunFromModal()">
               ⚡ Run Test Run Now
             </button>
-            <button type="button" id="psmToggleLiveBtn" class="btn btn-secondary" style="font-size: 13px; font-weight: 700;" onclick="toggleLiveFromModal()">
-              🚀 Take Page Live
+            <button type="button" id="psmRevertBtn" class="btn btn-secondary" style="font-size: 13px;" onclick="revertModalChanges()" disabled>
+              ↩️ Revert Changes
             </button>
           </div>
           <div style="display: flex; gap: 10px; align-items: center;">
@@ -4327,6 +4529,40 @@ async function generateDashboardHtml(): Promise<string> {
           </div>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- MODAL: STOP / PAUSE AUTO-POSTING CONFIRMATION -->
+  <div class="modal" id="stopAutoPostingModal">
+    <div class="modal-content" style="max-width: 520px; padding: 26px;">
+      <h3 style="font-size: 18px; margin-top: 0; color: #f87171;">⏸️ Pause Auto-Posting for <span id="stopModalPageName">Page</span></h3>
+      <p style="font-size: 13px; color: #d1d5db; line-height: 1.5; margin-bottom: 20px;">
+        Choose how you want to handle scheduled posts when pausing autonomous generation:
+      </p>
+      <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
+        <label style="display: flex; gap: 12px; padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 8px; cursor: pointer;">
+          <input type="radio" name="stopActionChoice" value="pause" checked style="margin-top: 3px;">
+          <div>
+            <strong style="color: #f3f4f6; font-size: 13px;">Pause new posts only (Recommended)</strong>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Stops future post planning. Any posts already planned or scheduled will remain in queue.
+            </div>
+          </div>
+        </label>
+        <label style="display: flex; gap: 12px; padding: 14px; background: rgba(239,68,68,0.05); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; cursor: pointer;">
+          <input type="radio" name="stopActionChoice" value="cancel_pending" style="margin-top: 3px;">
+          <div>
+            <strong style="color: #fca5a5; font-size: 13px;">Stop everything & cancel scheduled posts</strong>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Cancels all pending/scheduled draft posts in database. Nothing will be published to Facebook.
+            </div>
+          </div>
+        </label>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn btn-secondary" onclick="closeStopAutoPostingModal()">Cancel</button>
+        <button type="button" class="btn btn-danger" onclick="confirmStopAutoPosting()">Confirm & Pause Posting</button>
+      </div>
     </div>
   </div>
 
