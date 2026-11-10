@@ -296,4 +296,354 @@ describe('Production Critical Bugs & Fixes Suite (fbauto247.vercel.app)', () => 
     expect(toggleData.success).toBe(false);
     expect(toggleData.missingSteps.length).toBeGreaterThan(0);
   });
+
+  // --------------------------------------------------------------------------
+  // Prompt 10 Suite 1: Foreign Key Safety & Placeholder Normalization
+  // --------------------------------------------------------------------------
+  it('Prompt 10.1: Custom niche stores profile_id = null and persists custom_niche without foreign key violation', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+    });
+
+    // Save custom niche with placeholder __custom__
+    const res = await fetch(`${baseUrl}/api/pages`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        id: page.id,
+        profile_id: '__custom__',
+        custom_niche_name: 'Rare Deep Sea Bioluminescence',
+        custom_caption_prompt: 'Cinematic deep sea exploration narrative.',
+      }),
+    });
+
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.page.profile_id).toBeNull();
+    expect(data.page.custom_niche).toBe('Rare Deep Sea Bioluminescence');
+    expect(data.page.custom_caption_prompt_mode).toBe('replace');
+
+    // Verify stored page in DB
+    const persisted = await store.getPageById(page.id);
+    expect(persisted?.profile_id).toBeNull();
+    expect(persisted?.custom_niche).toBe('Rare Deep Sea Bioluminescence');
+  });
+
+  it('Prompt 10.1: Rejects non-existent profile_id with field-level error instead of raw SQL error', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+    });
+
+    const res = await fetch(`${baseUrl}/api/pages`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        id: page.id,
+        profile_id: 'non-existent-fake-profile-uuid',
+      }),
+    });
+
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toContain('Selected profile no longer exists');
+    expect(data.field).toBe('profile_id');
+  });
+
+  it('Prompt 10.1: Audits and rejects non-existent fb_account_id with field-level error', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+    });
+
+    await expect(
+      store.updatePage(page.id, {
+        fb_account_id: 'non-existent-account-uuid',
+      })
+    ).rejects.toThrow('Selected Facebook account no longer exists');
+  });
+
+  // --------------------------------------------------------------------------
+  // Prompt 10 Suite 2: False Concurrency Conflict Elimination
+  // --------------------------------------------------------------------------
+  it('Prompt 10.2: Operational updates do not bump settings_version and prevent false concurrency conflicts', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+      profile_id: 'science_space',
+    });
+
+    const initialSettingsVersion = page.settings_version || 1;
+
+    // Simulate operational background writes: token check, last synced, fan count, checklist recalculation
+    await store.updatePage(
+      page.id,
+      {
+        token_status: 'valid',
+        last_synced_at: new Date().toISOString(),
+        fan_count: 5200,
+        checklist_status: { profileChosen: true },
+      },
+      { isOperational: true }
+    );
+
+    const reloaded = await store.getPageById(page.id);
+    expect(reloaded?.settings_version).toBe(initialSettingsVersion);
+
+    // User saving Page Settings now with initial expected version MUST succeed without conflict
+    const res = await fetch(`${baseUrl}/api/pages/update-settings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        pageId: page.id,
+        publishing_mode: 'auto',
+        expected_settings_version: initialSettingsVersion,
+      }),
+    });
+
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.page.settings_version).toBe(initialSettingsVersion + 1);
+  });
+
+  it('Prompt 10.2: Returns 409 on true settings conflict and supports 3-way force resolution', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+      profile_id: 'science_space',
+    });
+
+    // Update settings once to bump version
+    await store.updatePage(page.id, { publishing_mode: 'hybrid' });
+
+    // Try saving with stale expected version
+    const res = await fetch(`${baseUrl}/api/pages/update-settings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        pageId: page.id,
+        publishing_mode: 'auto',
+        expected_settings_version: 1, // Stale version
+      }),
+    });
+
+    const data = await res.json();
+    expect(res.status).toBe(409);
+    expect(data.conflict).toBe(true);
+    expect(data.currentRecord).toBeDefined();
+
+    // 3-way Keep Mine: Force save bypasses conflict
+    const forceRes = await fetch(`${baseUrl}/api/pages/update-settings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        pageId: page.id,
+        publishing_mode: 'auto',
+        force: true,
+      }),
+    });
+
+    const forceData = await forceRes.json();
+    expect(forceRes.status).toBe(200);
+    expect(forceData.success).toBe(true);
+    expect(forceData.page.publishing_mode).toBe('auto');
+  });
+
+  // --------------------------------------------------------------------------
+  // Prompt 10 Suite 3: Checklist Single-Source & Incomplete Count Consistency
+  // --------------------------------------------------------------------------
+  it('Prompt 10.3: Checklist status incomplete steps strictly match missing items count', () => {
+    const blankPage = {
+      id: 'page-blank',
+      name: 'Test Page',
+      active: false,
+      profile_id: null,
+      custom_niche: '',
+      publishing_mode: 'review',
+      mode_chosen: false,
+      schedule: null,
+      last_test_run_at: null,
+      test_run_verified: false,
+    };
+
+    const status = evaluatePageChecklist(blankPage);
+    expect(status.profileChosen).toBe(false);
+    expect(status.scheduleSet).toBe(false);
+    expect(status.modeChosen).toBe(false);
+    expect(status.testRunDone).toBe(false);
+    expect(status.missingSteps.length).toBe(4); // All 4 steps missing
+
+    // Custom niche satisfies Step 1
+    const nichePage = { ...blankPage, custom_niche: 'Space Archaeology' };
+    const nicheStatus = evaluatePageChecklist(nichePage);
+    expect(nicheStatus.profileChosen).toBe(true);
+    expect(nicheStatus.missingSteps.length).toBe(3);
+  });
+
+  // --------------------------------------------------------------------------
+  // Prompt 10 Suite 4: Verified Test Run Execution & Invalidation
+  // --------------------------------------------------------------------------
+  it('Prompt 10.4: Test run verifies pipeline and invalidates verified state when prompt or niche changes', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+      profile_id: 'science_space',
+    });
+
+    // Execute test run
+    const testRes = await fetch(`${baseUrl}/api/test-run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({ pageId: page.id }),
+    });
+
+    const testData = await testRes.json();
+    expect(testRes.status).toBe(200);
+    expect(testData.success).toBe(true);
+    expect(testData.qaScore).toBeGreaterThanOrEqual(70);
+
+    const verifiedPage = await store.getPageById(page.id);
+    expect(verifiedPage?.test_run_verified).toBe(true);
+    expect(verifiedPage?.test_run_report).toBeDefined();
+
+    // Now edit custom caption prompt: MUST invalidate test run
+    await store.updatePage(page.id, {
+      custom_caption_prompt: 'Updated new voice instructions.',
+    });
+
+    const invalidated = await store.getPageById(page.id);
+    expect(invalidated?.test_run_verified).toBe(false);
+    expect(invalidated?.last_test_run_at).toBeNull();
+  });
+
+  // --------------------------------------------------------------------------
+  // Prompt 10 Suite 5: Prompt Studio Validation & Starter Profiles Catalog
+  // --------------------------------------------------------------------------
+  it('Prompt 10.5: Validates minWords <= targetWords <= maxWords with field error', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+      profile_id: 'science_space',
+    });
+
+    const badWordsRes = await fetch(`${baseUrl}/api/pages`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        id: page.id,
+        overrides: {
+          'caption.min': 500,
+          'caption.target': 400, // Invalid: target < min
+          'caption.max': 600,
+        },
+      }),
+    });
+
+    const badWordsData = await badWordsRes.json();
+    expect(badWordsRes.status).toBe(400);
+    expect(badWordsData.field).toBe('words');
+  });
+
+  it('Prompt 10.5: Validates first comment text required when enabled, and headline panel hex color', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+      profile_id: 'science_space',
+    });
+
+    // 1. Missing first comment prompt when enabled
+    const res1 = await fetch(`${baseUrl}/api/pages`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        id: page.id,
+        first_comment_enabled: true,
+        first_comment_prompt: '   ',
+      }),
+    });
+    const data1 = await res1.json();
+    expect(res1.status).toBe(400);
+    expect(data1.field).toBe('first_comment_prompt');
+
+    // 2. Invalid headline color
+    const res2 = await fetch(`${baseUrl}/api/pages`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        id: page.id,
+        overrides: {
+          'image.headlinePanel.backgroundColor': 'not-a-hex-color',
+        },
+      }),
+    });
+    const data2 = await res2.json();
+    expect(res2.status).toBe(400);
+    expect(data2.field).toBe('headline_color');
+  });
+
+  it('Prompt 10.5: Starter profiles import inserts 27 profiles and reports importedCount & skippedCount', async () => {
+    const res = await fetch(`${baseUrl}/api/profiles/import-starter`, {
+      method: 'POST',
+      headers: {
+        Cookie: authCookie,
+      },
+    });
+
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.count).toBe(27);
+    expect(data.importedCount).toBe(27);
+    expect(data.skippedCount).toBe(0);
+
+    // Second import: all 27 should be skipped/already present
+    const res2 = await fetch(`${baseUrl}/api/profiles/import-starter`, {
+      method: 'POST',
+      headers: {
+        Cookie: authCookie,
+      },
+    });
+    const data2 = await res2.json();
+    expect(res2.status).toBe(200);
+    expect(data2.skippedCount).toBe(27);
+    expect(data2.importedCount).toBe(0);
+  });
 });

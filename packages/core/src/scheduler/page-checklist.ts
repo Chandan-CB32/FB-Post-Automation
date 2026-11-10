@@ -8,12 +8,14 @@ import { PageSchedule, validatePageSchedule } from './slot-planner.js';
 export interface PageChecklistStatus {
   profileChosen: boolean;
   profileName?: string;
+  hasCustomNiche?: boolean;
   scheduleSet: boolean;
   scheduleSummary?: string;
   modeChosen: boolean;
   publishingMode: string;
   testRunDone: boolean;
   lastTestRunAt?: string;
+  testRunReport?: any;
   wentLive: boolean;
   isReadyToGoLive: boolean;
   missingSteps: string[];
@@ -25,10 +27,14 @@ export interface PageOnboardingInput {
   active: boolean;
   profile_id?: string | null;
   profile_name?: string | null;
+  custom_niche?: string | null;
   custom_niche_text?: string | null;
   publishing_mode: 'auto' | 'review' | 'hybrid' | string;
+  mode_chosen?: boolean | null;
   schedule?: Partial<PageSchedule> | null;
   last_test_run_at?: string | null;
+  test_run_verified?: boolean | null;
+  test_run_report?: any | null;
 }
 
 /**
@@ -52,16 +58,21 @@ export const SAFE_DEFAULT_SCHEDULE: PageSchedule = {
 export function evaluatePageChecklist(page: PageOnboardingInput): PageChecklistStatus {
   const missingSteps: string[] = [];
 
-  // Step 1: Content Profile
-  const profileChosen = Boolean(
-    (page.profile_id &&
-      page.profile_id.trim() &&
-      page.profile_id !== 'default-niche' &&
-      page.profile_id !== '__custom__') ||
-    (page.profile_id === '__custom__' && page.custom_niche_text && page.custom_niche_text.trim().length > 0)
+  // Step 1: Content Profile (Real Profile ID or Saved Custom Niche)
+  const hasProfileId = Boolean(
+    page.profile_id &&
+    page.profile_id.trim() &&
+    page.profile_id !== 'default-niche' &&
+    page.profile_id !== '__custom__' &&
+    page.profile_id !== 'custom'
   );
+  const hasCustomNiche = Boolean(
+    (page.custom_niche && page.custom_niche.trim().length > 0) ||
+    (page.custom_niche_text && page.custom_niche_text.trim().length > 0)
+  );
+  const profileChosen = hasProfileId || hasCustomNiche;
   if (!profileChosen) {
-    missingSteps.push('Select a Content Profile or run Automatic Niche Detection');
+    missingSteps.push('Select a Content Profile or configure a Custom Niche');
   }
 
   // Step 2: Schedule
@@ -80,16 +91,20 @@ export function evaluatePageChecklist(page: PageOnboardingInput): PageChecklistS
 
   // Step 3: Publishing Mode
   const modeChosen = Boolean(
-    page.publishing_mode === 'auto' || page.publishing_mode === 'review' || page.publishing_mode === 'hybrid'
+    page.mode_chosen !== false &&
+    (page.publishing_mode === 'auto' || page.publishing_mode === 'review' || page.publishing_mode === 'hybrid')
   );
   if (!modeChosen) {
-    missingSteps.push('Choose a publishing mode (Review, Hybrid, or Auto)');
+    missingSteps.push('Confirm and select publishing mode (Review, Hybrid, or Auto)');
   }
 
-  // Step 4: Test Run
-  const testRunDone = Boolean(page.last_test_run_at);
+  // Step 4: Test Run (Marked verified ONLY when real pipeline pass is verified)
+  const testRunDone = Boolean(
+    page.last_test_run_at &&
+    page.test_run_verified !== false
+  );
   if (!testRunDone) {
-    missingSteps.push('Run at least one Test Run to verify prompt & image generation');
+    missingSteps.push('Execute a verified Test Run through the pipeline');
   }
 
   // Step 5: Went Live
@@ -99,12 +114,14 @@ export function evaluatePageChecklist(page: PageOnboardingInput): PageChecklistS
   return {
     profileChosen,
     profileName: page.profile_name || undefined,
+    hasCustomNiche,
     scheduleSet,
     scheduleSummary,
     modeChosen,
     publishingMode: page.publishing_mode || 'review',
     testRunDone,
     lastTestRunAt: page.last_test_run_at || undefined,
+    testRunReport: page.test_run_report || undefined,
     wentLive,
     isReadyToGoLive,
     missingSteps,

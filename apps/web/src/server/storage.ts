@@ -17,6 +17,7 @@ import {
   isProductionEnv,
   SAFE_DEFAULT_SCHEDULE,
   getSeedProfiles,
+  getAllNicheProfiles,
   type PageSchedule,
   type TokenInspectionResult,
   type PageDiscoveryResult,
@@ -130,7 +131,16 @@ export interface StoredPage {
   custom_caption_prompt_mode?: 'append' | 'replace';
   custom_image_prompt?: string;
   custom_image_prompt_mode?: 'append' | 'replace';
+  custom_niche?: string;
   custom_niche_text?: string;
+  mode_chosen?: boolean;
+  settings_version?: number;
+  schedule_version?: number;
+  prompts_version?: number;
+  profile_version?: number;
+  settings_updated_at?: string;
+  test_run_verified?: boolean;
+  test_run_report?: any;
   first_comment_enabled?: boolean;
   first_comment_prompt?: string;
   overrides?: Record<string, any>;
@@ -706,6 +716,16 @@ export class SystemStore {
       custom_caption_prompt_mode: row.custom_caption_prompt_mode || 'append',
       custom_image_prompt: row.custom_image_prompt || '',
       custom_image_prompt_mode: row.custom_image_prompt_mode || 'append',
+      custom_niche: row.custom_niche || row.custom_niche_text || '',
+      custom_niche_text: row.custom_niche_text || row.custom_niche || '',
+      mode_chosen: Boolean(row.mode_chosen),
+      settings_version: Number(row.settings_version || row.version || 1),
+      schedule_version: Number(row.schedule_version || 1),
+      prompts_version: Number(row.prompts_version || 1),
+      profile_version: Number(row.profile_version || 1),
+      settings_updated_at: row.settings_updated_at || row.updated_at,
+      test_run_verified: Boolean(row.test_run_verified),
+      test_run_report: row.test_run_report || null,
       first_comment_enabled: row.first_comment_enabled !== false,
       first_comment_prompt: row.first_comment_prompt || '',
       overrides: row.overrides || {},
@@ -759,6 +779,16 @@ export class SystemStore {
       custom_caption_prompt_mode: data.custom_caption_prompt_mode || 'append',
       custom_image_prompt: data.custom_image_prompt || '',
       custom_image_prompt_mode: data.custom_image_prompt_mode || 'append',
+      custom_niche: data.custom_niche || data.custom_niche_text || '',
+      custom_niche_text: data.custom_niche_text || data.custom_niche || '',
+      mode_chosen: Boolean(data.mode_chosen),
+      settings_version: Number(data.settings_version || data.version || 1),
+      schedule_version: Number(data.schedule_version || 1),
+      prompts_version: Number(data.prompts_version || 1),
+      profile_version: Number(data.profile_version || 1),
+      settings_updated_at: data.settings_updated_at || data.updated_at,
+      test_run_verified: Boolean(data.test_run_verified),
+      test_run_report: data.test_run_report || null,
       first_comment_enabled: data.first_comment_enabled !== false,
       first_comment_prompt: data.first_comment_prompt || '',
       overrides: data.overrides || {},
@@ -796,6 +826,9 @@ export class SystemStore {
     custom_caption_prompt_mode?: 'append' | 'replace';
     custom_image_prompt?: string;
     custom_image_prompt_mode?: 'append' | 'replace';
+    custom_niche?: string;
+    custom_niche_text?: string;
+    mode_chosen?: boolean;
     first_comment_enabled?: boolean;
     first_comment_prompt?: string;
     overrides?: Record<string, any>;
@@ -807,15 +840,39 @@ export class SystemStore {
     const safeActive = input.active !== undefined ? input.active : false;
     const safeSchedule = input.schedule || SAFE_DEFAULT_SCHEDULE;
     const safeMode = input.publishing_mode || 'review';
-    const safeProfileId = input.profile_id && input.profile_id.length > 5 ? input.profile_id : null;
+
+    // Normalize profile_id: placeholders or empty string -> null
+    let safeProfileId: string | null = null;
+    if (
+      input.profile_id &&
+      input.profile_id !== '__custom__' &&
+      input.profile_id !== 'custom' &&
+      input.profile_id !== 'default-niche' &&
+      input.profile_id.trim().length > 0
+    ) {
+      safeProfileId = input.profile_id.trim();
+    }
+
+    // Normalize fb_account_id
+    let safeAccountId: string | null = null;
+    if (
+      input.fb_account_id &&
+      input.fb_account_id !== '__none__' &&
+      input.fb_account_id !== 'none' &&
+      input.fb_account_id.trim().length > 0
+    ) {
+      safeAccountId = input.fb_account_id.trim();
+    }
+
+    const customNicheVal = (input.custom_niche ?? input.custom_niche_text ?? '').trim();
+    const now = new Date().toISOString();
 
     if (isTestEnv() && !this.client) {
       const id = crypto.randomUUID();
       const encryptedToken = encryptPageToken(input.fb_page_token);
-      const now = new Date().toISOString();
       const page: StoredPage = {
         id,
-        fb_account_id: input.fb_account_id || null,
+        fb_account_id: safeAccountId,
         name: input.name,
         fb_page_id: input.fb_page_id,
         fb_page_token: encryptedToken,
@@ -826,10 +883,22 @@ export class SystemStore {
         fan_count: typeof input.fan_count === 'number' ? input.fan_count : 0,
         secondary_account_ids: input.secondary_account_ids || [],
         profile_id: safeProfileId,
+        custom_niche: customNicheVal,
+        custom_niche_text: customNicheVal,
         publishing_mode: safeMode,
+        mode_chosen: Boolean(input.mode_chosen),
         hybrid_min_score: Number(input.hybrid_min_score) || 80,
         daily_cap: input.daily_cap !== undefined ? Number(input.daily_cap) : 3,
         active: safeActive,
+        is_live: safeActive,
+        version: 1,
+        settings_version: 1,
+        schedule_version: 1,
+        prompts_version: 1,
+        profile_version: 1,
+        settings_updated_at: now,
+        test_run_verified: false,
+        test_run_report: null,
         schedule: safeSchedule,
         niche_analysis: input.niche_analysis || null,
         ai_disclosure_enabled: Boolean(input.ai_disclosure_enabled),
@@ -842,7 +911,7 @@ export class SystemStore {
         custom_image_prompt: input.custom_image_prompt || '',
         custom_image_prompt_mode: input.custom_image_prompt_mode || 'append',
         first_comment_enabled: input.first_comment_enabled !== false,
-        first_comment_prompt: input.first_comment_prompt || '',
+        first_comment_prompt: input.first_comment_prompt !== undefined ? input.first_comment_prompt : 'What do you think? Share your thoughts in the comments below!',
         overrides: input.overrides || {},
         connected_at: input.connected_at || now,
         last_synced_at: input.last_synced_at || now,
@@ -856,7 +925,7 @@ export class SystemStore {
     const encryptedToken = encryptPageToken(input.fb_page_token);
 
     let payload: Record<string, any> = {
-      fb_account_id: input.fb_account_id || null,
+      fb_account_id: safeAccountId,
       name: input.name,
       fb_page_id: input.fb_page_id,
       fb_page_token: encryptedToken,
@@ -867,10 +936,22 @@ export class SystemStore {
       fan_count: typeof input.fan_count === 'number' ? input.fan_count : 0,
       secondary_account_ids: input.secondary_account_ids || [],
       profile_id: safeProfileId,
+      custom_niche: customNicheVal,
+      custom_niche_text: customNicheVal,
       publishing_mode: safeMode,
+      mode_chosen: Boolean(input.mode_chosen),
       hybrid_min_score: input.hybrid_min_score ?? 80,
       daily_cap: input.daily_cap !== undefined ? Number(input.daily_cap) : 3,
       active: safeActive,
+      is_live: safeActive,
+      version: 1,
+      settings_version: 1,
+      schedule_version: 1,
+      prompts_version: 1,
+      profile_version: 1,
+      settings_updated_at: now,
+      test_run_verified: false,
+      test_run_report: null,
       schedule: safeSchedule,
       niche_analysis: input.niche_analysis || null,
       ai_disclosure_enabled: Boolean(input.ai_disclosure_enabled),
@@ -883,12 +964,12 @@ export class SystemStore {
       custom_image_prompt: input.custom_image_prompt || '',
       custom_image_prompt_mode: input.custom_image_prompt_mode || 'append',
       first_comment_enabled: input.first_comment_enabled !== false,
-      first_comment_prompt: input.first_comment_prompt || '',
+      first_comment_prompt: input.first_comment_prompt !== undefined ? input.first_comment_prompt : 'What do you think? Share your thoughts in the comments below!',
       overrides: input.overrides || {},
-      connected_at: input.connected_at || new Date().toISOString(),
-      last_synced_at: input.last_synced_at || new Date().toISOString(),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      connected_at: input.connected_at || now,
+      last_synced_at: input.last_synced_at || now,
+      created_at: now,
+      updated_at: now,
     };
 
     let { data, error } = await this.getClient().from('pages').insert(payload).select().single();
@@ -900,6 +981,16 @@ export class SystemStore {
       delete payload.secondary_account_ids;
       delete payload.connected_at;
       delete payload.last_synced_at;
+      delete payload.custom_niche;
+      delete payload.custom_niche_text;
+      delete payload.settings_version;
+      delete payload.schedule_version;
+      delete payload.prompts_version;
+      delete payload.profile_version;
+      delete payload.settings_updated_at;
+      delete payload.mode_chosen;
+      delete payload.test_run_verified;
+      delete payload.test_run_report;
       if (payload.token_status === 'cannot_publish' || payload.token_status === 'inaccessible') {
         payload.token_status = 'revoked';
       }
@@ -915,91 +1006,307 @@ export class SystemStore {
     return {
       ...payload,
       id: data.id,
-      profile_id: input.profile_id || 'default-niche',
+      profile_id: safeProfileId,
     } as StoredPage;
   }
 
   public async updatePage(
     id: string,
     updates: Partial<StoredPage>,
-    options?: { expectedUpdatedAt?: string; expectedVersion?: number }
+    options?: {
+      expectedUpdatedAt?: string;
+      expectedVersion?: number;
+      expectedSettingsVersion?: number;
+      expectedAreaVersion?: { area: 'schedule' | 'prompts' | 'profile' | 'settings'; version: number };
+      force?: boolean;
+      isOperational?: boolean;
+    }
   ): Promise<StoredPage> {
+    const operationalKeys = new Set([
+      'token_status',
+      'last_synced_at',
+      'connected_at',
+      'tasks',
+      'fan_count',
+      'picture_url',
+      'category',
+      'checklist_status',
+      'test_run_report',
+      'test_run_verified',
+      'last_test_run_at',
+      'secondary_account_ids',
+      'fb_page_token',
+    ]);
+    const updateKeys = Object.keys(updates);
+    const isOperationalOnly = Boolean(
+      options?.isOperational ||
+      (updateKeys.length > 0 && updateKeys.every((k) => operationalKeys.has(k)))
+    );
+
+    // 1. Profile foreign key normalization and validation
+    if (updates.profile_id !== undefined) {
+      if (
+        updates.profile_id === '' ||
+        updates.profile_id === '__custom__' ||
+        updates.profile_id === 'custom' ||
+        updates.profile_id === 'default-niche' ||
+        (typeof updates.profile_id === 'string' && updates.profile_id.trim() === '')
+      ) {
+        updates.profile_id = null;
+      } else if (updates.profile_id !== null) {
+        let profileExists = false;
+        if (isTestEnv() && !this.client) {
+          profileExists =
+            this.memoryContentProfiles.has(updates.profile_id) ||
+            Array.from(this.memoryContentProfiles.values()).some(
+              (p) =>
+                p.id === updates.profile_id ||
+                p.name === updates.profile_id ||
+                p.customVariables?.niche === updates.profile_id ||
+                (p as any).niche === updates.profile_id
+            );
+          if (!profileExists) {
+            const seed = getAllNicheProfiles().find(
+              (p) =>
+                p.id === updates.profile_id ||
+                p.name === updates.profile_id ||
+                p.customVariables?.niche === updates.profile_id ||
+                (p as any).niche === updates.profile_id
+            );
+            if (seed) profileExists = true;
+          }
+        } else {
+          const { data: pRow } = await this.getClient()
+            .from('content_profiles')
+            .select('id')
+            .eq('id', updates.profile_id)
+            .maybeSingle();
+          profileExists = Boolean(pRow);
+        }
+        if (!profileExists) {
+          const err = new Error('Selected profile no longer exists. Please choose a valid profile or switch to Custom niche.');
+          (err as any).field = 'profile_id';
+          (err as any).statusCode = 400;
+          throw err;
+        }
+      }
+    }
+
+    // 2. Facebook Account foreign key normalization and validation
+    if (updates.fb_account_id !== undefined) {
+      if (
+        updates.fb_account_id === '' ||
+        updates.fb_account_id === 'none' ||
+        updates.fb_account_id === '__none__' ||
+        (typeof updates.fb_account_id === 'string' && updates.fb_account_id.trim() === '')
+      ) {
+        updates.fb_account_id = null;
+      } else if (updates.fb_account_id !== null) {
+        let accountExists = false;
+        if (isTestEnv() && !this.client) {
+          accountExists = this.memoryAccounts.has(updates.fb_account_id);
+        } else {
+          const { data: aRow } = await this.getClient()
+            .from('facebook_accounts')
+            .select('id')
+            .eq('id', updates.fb_account_id)
+            .maybeSingle();
+          accountExists = Boolean(aRow);
+        }
+        if (!accountExists) {
+          const err = new Error('Selected Facebook account no longer exists.');
+          (err as any).field = 'fb_account_id';
+          (err as any).statusCode = 400;
+          throw err;
+        }
+      }
+    }
+
+    // 3. Custom niche synchronization
+    if (updates.custom_niche !== undefined || updates.custom_niche_text !== undefined) {
+      const customNicheVal = (updates.custom_niche ?? updates.custom_niche_text ?? '').trim();
+      updates.custom_niche = customNicheVal;
+      updates.custom_niche_text = customNicheVal;
+    }
+
+    // 4. Invalidate test run when prompts, profile, niche, or word/headline overrides change
+    const promptOrProfileChanged =
+      updates.profile_id !== undefined ||
+      updates.custom_niche !== undefined ||
+      updates.custom_niche_text !== undefined ||
+      updates.custom_caption_prompt !== undefined ||
+      updates.custom_caption_prompt_mode !== undefined ||
+      updates.custom_image_prompt !== undefined ||
+      updates.custom_image_prompt_mode !== undefined ||
+      updates.first_comment_enabled !== undefined ||
+      updates.first_comment_prompt !== undefined ||
+      updates.overrides !== undefined;
+
+    if (promptOrProfileChanged && updates.test_run_verified === undefined && !isOperationalOnly) {
+      updates.test_run_verified = false;
+      updates.last_test_run_at = null;
+      updates.test_run_report = null;
+    }
+
     if (isTestEnv() && !this.client) {
       const existing = this.memoryPages.get(id);
       if (!existing) throw new Error(`Page ${id} not found.`);
-      if (options?.expectedUpdatedAt && existing.updated_at && existing.updated_at !== options.expectedUpdatedAt) {
-        throw new Error(
-          `Concurrency conflict: page was modified elsewhere (current: ${existing.updated_at}, expected: ${options.expectedUpdatedAt}). Please reload.`
-        );
+
+      // Optimistic concurrency check ONLY on non-operational user updates
+      if (!isOperationalOnly && !options?.force) {
+        if (options?.expectedSettingsVersion && existing.settings_version && existing.settings_version !== options.expectedSettingsVersion) {
+          const conflictErr = new Error(
+            `Concurrency conflict: page settings modified elsewhere (current v${existing.settings_version}, expected v${options.expectedSettingsVersion}). Please resolve.`
+          );
+          (conflictErr as any).conflict = true;
+          (conflictErr as any).currentRecord = existing;
+          (conflictErr as any).statusCode = 409;
+          throw conflictErr;
+        }
+        if (options?.expectedAreaVersion) {
+          const areaKey = `${options.expectedAreaVersion.area}_version` as keyof StoredPage;
+          const currentAreaVer = (existing as any)[areaKey];
+          if (currentAreaVer && currentAreaVer !== options.expectedAreaVersion.version) {
+            const conflictErr = new Error(
+              `Concurrency conflict: ${options.expectedAreaVersion.area} was modified elsewhere (current v${currentAreaVer}, expected v${options.expectedAreaVersion.version}).`
+            );
+            (conflictErr as any).conflict = true;
+            (conflictErr as any).currentRecord = existing;
+            (conflictErr as any).statusCode = 409;
+            throw conflictErr;
+          }
+        }
+        if (options?.expectedUpdatedAt && existing.settings_updated_at && existing.settings_updated_at !== options.expectedUpdatedAt) {
+          const conflictErr = new Error(
+            `Concurrency conflict: page was modified elsewhere (current: ${existing.settings_updated_at}, expected: ${options.expectedUpdatedAt}). Please reload.`
+          );
+          (conflictErr as any).conflict = true;
+          (conflictErr as any).currentRecord = existing;
+          (conflictErr as any).statusCode = 409;
+          throw conflictErr;
+        }
       }
-      if (options?.expectedVersion && existing.version && existing.version !== options.expectedVersion) {
-        throw new Error(
-          `Concurrency conflict: page version mismatch (current v${existing.version}, expected v${options.expectedVersion}). Please reload.`
-        );
-      }
+
       let fb_page_token = existing.fb_page_token;
       if (updates.fb_page_token) {
         fb_page_token = encryptPageToken(updates.fb_page_token);
       }
       const activeVal = updates.active !== undefined ? updates.active : (updates.is_live !== undefined ? updates.is_live : existing.active);
       const isLiveVal = updates.is_live !== undefined ? updates.is_live : (updates.active !== undefined ? updates.active : (existing.is_live ?? activeVal));
+
+      const nowIso = new Date().toISOString();
       const updated: StoredPage = {
         ...existing,
         ...updates,
         active: activeVal,
         is_live: isLiveVal,
-        version: (existing.version || 1) + 1,
         fb_page_token,
-        updated_at: new Date().toISOString(),
+        updated_at: nowIso,
       };
+
+      if (!isOperationalOnly) {
+        updated.settings_version = (existing.settings_version || existing.version || 1) + 1;
+        updated.version = (existing.version || 1) + 1;
+        updated.settings_updated_at = nowIso;
+        if (updates.schedule !== undefined || updates.daily_cap !== undefined) {
+          updated.schedule_version = (existing.schedule_version || 1) + 1;
+        }
+        if (
+          updates.custom_caption_prompt !== undefined ||
+          updates.custom_caption_prompt_mode !== undefined ||
+          updates.custom_image_prompt !== undefined ||
+          updates.custom_image_prompt_mode !== undefined ||
+          updates.first_comment_enabled !== undefined ||
+          updates.first_comment_prompt !== undefined ||
+          updates.overrides !== undefined
+        ) {
+          updated.prompts_version = (existing.prompts_version || 1) + 1;
+        }
+        if (updates.profile_id !== undefined || updates.custom_niche !== undefined || updates.custom_niche_text !== undefined) {
+          updated.profile_version = (existing.profile_version || 1) + 1;
+        }
+      }
+
       this.memoryPages.set(id, updated);
       return updated;
     }
 
     // Optimistic concurrency check in Supabase
     let existingRow: any = null;
-    let hasVersionCol = true;
-    const { data: rowWithVersion, error: checkErrWithVersion } = await this.getClient()
+    const { data: rowFetched, error: checkErr } = await this.getClient()
       .from('pages')
-      .select('id, updated_at, version')
+      .select('*')
       .eq('id', id)
       .maybeSingle();
 
-    if (checkErrWithVersion) {
-      hasVersionCol = false;
-      const { data: rowBasic, error: checkErrBasic } = await this.getClient()
-        .from('pages')
-        .select('id, updated_at')
-        .eq('id', id)
-        .maybeSingle();
-      if (checkErrBasic) {
-        throw new Error(`Database error querying page ${id}: ${checkErrBasic.message}`);
-      }
-      existingRow = rowBasic;
-    } else {
-      existingRow = rowWithVersion;
+    if (checkErr) {
+      throw new Error(`Database error querying page ${id}: ${checkErr.message}`);
     }
+    existingRow = rowFetched;
 
     if (!existingRow) {
       throw new Error(`Page ${id} not found in database.`);
     }
 
-    if (options?.expectedUpdatedAt && existingRow.updated_at && existingRow.updated_at !== options.expectedUpdatedAt) {
-      throw new Error(
-        `Concurrency conflict: page was modified elsewhere at ${existingRow.updated_at}. Please reload to see the latest settings.`
-      );
-    }
-    if (options?.expectedVersion && existingRow.version && existingRow.version !== options.expectedVersion) {
-      throw new Error(
-        `Concurrency conflict: page version mismatch (current v${existingRow.version}, expected v${options.expectedVersion}). Please reload.`
-      );
+    if (!isOperationalOnly && !options?.force) {
+      if (options?.expectedSettingsVersion && existingRow.settings_version && existingRow.settings_version !== options.expectedSettingsVersion) {
+        const conflictErr = new Error(
+          `Concurrency conflict: page settings modified elsewhere (current v${existingRow.settings_version}, expected v${options.expectedSettingsVersion}). Please resolve.`
+        );
+        (conflictErr as any).conflict = true;
+        (conflictErr as any).currentRecord = existingRow;
+        (conflictErr as any).statusCode = 409;
+        throw conflictErr;
+      }
+      if (options?.expectedAreaVersion) {
+        const areaCol = `${options.expectedAreaVersion.area}_version`;
+        const currentAreaVer = existingRow[areaCol];
+        if (currentAreaVer && currentAreaVer !== options.expectedAreaVersion.version) {
+          const conflictErr = new Error(
+            `Concurrency conflict: ${options.expectedAreaVersion.area} was modified elsewhere (current v${currentAreaVer}, expected v${options.expectedAreaVersion.version}).`
+          );
+          (conflictErr as any).conflict = true;
+          (conflictErr as any).currentRecord = existingRow;
+          (conflictErr as any).statusCode = 409;
+          throw conflictErr;
+        }
+      }
+      if (options?.expectedUpdatedAt && existingRow.settings_updated_at && existingRow.settings_updated_at !== options.expectedUpdatedAt) {
+        const conflictErr = new Error(
+          `Concurrency conflict: page was modified elsewhere at ${existingRow.settings_updated_at}. Please reload to see the latest settings.`
+        );
+        (conflictErr as any).conflict = true;
+        (conflictErr as any).currentRecord = existingRow;
+        (conflictErr as any).statusCode = 409;
+        throw conflictErr;
+      }
     }
 
+    const nowIso = new Date().toISOString();
     const updatePayload: Record<string, any> = {
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
     };
-    if (hasVersionCol && existingRow.version !== undefined) {
-      updatePayload.version = (existingRow.version || 1) + 1;
+
+    if (!isOperationalOnly) {
+      updatePayload.settings_version = (existingRow.settings_version || existingRow.version || 1) + 1;
+      updatePayload.settings_updated_at = nowIso;
+      if (updates.schedule !== undefined || updates.daily_cap !== undefined) {
+        updatePayload.schedule_version = (existingRow.schedule_version || 1) + 1;
+      }
+      if (
+        updates.custom_caption_prompt !== undefined ||
+        updates.custom_caption_prompt_mode !== undefined ||
+        updates.custom_image_prompt !== undefined ||
+        updates.custom_image_prompt_mode !== undefined ||
+        updates.first_comment_enabled !== undefined ||
+        updates.first_comment_prompt !== undefined ||
+        updates.overrides !== undefined
+      ) {
+        updatePayload.prompts_version = (existingRow.prompts_version || 1) + 1;
+      }
+      if (updates.profile_id !== undefined || updates.custom_niche !== undefined || updates.custom_niche_text !== undefined) {
+        updatePayload.profile_version = (existingRow.profile_version || 1) + 1;
+      }
     }
 
     if (updates.name) updatePayload.name = updates.name;
@@ -1012,7 +1319,10 @@ export class SystemStore {
     if (updates.token_status !== undefined) updatePayload.token_status = updates.token_status;
     if (updates.secondary_account_ids !== undefined) updatePayload.secondary_account_ids = updates.secondary_account_ids;
     if (updates.profile_id !== undefined) updatePayload.profile_id = updates.profile_id;
+    if (updates.custom_niche !== undefined) updatePayload.custom_niche = updates.custom_niche;
+    if (updates.custom_niche_text !== undefined) updatePayload.custom_niche_text = updates.custom_niche_text;
     if (updates.publishing_mode) updatePayload.publishing_mode = updates.publishing_mode;
+    if (updates.mode_chosen !== undefined) updatePayload.mode_chosen = updates.mode_chosen;
     if (updates.hybrid_min_score !== undefined) updatePayload.hybrid_min_score = updates.hybrid_min_score;
     if (updates.daily_cap !== undefined) updatePayload.daily_cap = updates.daily_cap;
 
@@ -1028,9 +1338,6 @@ export class SystemStore {
     if (updates.auto_posting_stopped_action) {
       updatePayload.auto_posting_stopped_action = updates.auto_posting_stopped_action;
     }
-    if (updates.custom_niche_text !== undefined) {
-      updatePayload.custom_niche_text = updates.custom_niche_text;
-    }
 
     if (updates.schedule) updatePayload.schedule = updates.schedule;
     if (updates.niche_analysis !== undefined) updatePayload.niche_analysis = updates.niche_analysis;
@@ -1039,6 +1346,8 @@ export class SystemStore {
     if (updates.source_attribution_enabled !== undefined) updatePayload.source_attribution_enabled = updates.source_attribution_enabled;
     if (updates.last_test_run_at !== undefined) updatePayload.last_test_run_at = updates.last_test_run_at;
     if (updates.checklist_status !== undefined) updatePayload.checklist_status = updates.checklist_status;
+    if (updates.test_run_verified !== undefined) updatePayload.test_run_verified = updates.test_run_verified;
+    if (updates.test_run_report !== undefined) updatePayload.test_run_report = updates.test_run_report;
     if (updates.custom_caption_prompt !== undefined) updatePayload.custom_caption_prompt = updates.custom_caption_prompt;
     if (updates.custom_caption_prompt_mode) updatePayload.custom_caption_prompt_mode = updates.custom_caption_prompt_mode;
     if (updates.custom_image_prompt !== undefined) updatePayload.custom_image_prompt = updates.custom_image_prompt;
@@ -1071,7 +1380,16 @@ export class SystemStore {
       delete updatePayload.is_live;
       delete updatePayload.version;
       delete updatePayload.auto_posting_stopped_action;
+      delete updatePayload.custom_niche;
       delete updatePayload.custom_niche_text;
+      delete updatePayload.mode_chosen;
+      delete updatePayload.settings_version;
+      delete updatePayload.schedule_version;
+      delete updatePayload.prompts_version;
+      delete updatePayload.profile_version;
+      delete updatePayload.settings_updated_at;
+      delete updatePayload.test_run_verified;
+      delete updatePayload.test_run_report;
       if (updatePayload.token_status === 'cannot_publish' || updatePayload.token_status === 'inaccessible') {
         updatePayload.token_status = 'revoked';
       }
@@ -1986,6 +2304,21 @@ export class SystemStore {
     raw_key: string;
     label?: string;
   }): Promise<StoredProviderKey> {
+    if (!input.provider_id || input.provider_id === '__none__' || input.provider_id === 'none') {
+      const err = new Error('A valid Provider ID is required.');
+      (err as any).field = 'provider_id';
+      (err as any).statusCode = 400;
+      throw err;
+    }
+
+    const provider = await this.getProviderById(input.provider_id);
+    if (!provider) {
+      const err = new Error('Selected provider does not exist.');
+      (err as any).field = 'provider_id';
+      (err as any).statusCode = 400;
+      throw err;
+    }
+
     const trimmed = input.raw_key ? input.raw_key.trim() : '';
     if (!trimmed) {
       throw new Error('API key cannot be empty.');
@@ -2411,9 +2744,17 @@ export class SystemStore {
   }
 
   // --- Starter Profiles Catalog Importer ---
-  public async importStarterProfiles(): Promise<{ count: number; profiles: any[] }> {
-    const starters = getSeedProfiles();
+  public async importStarterProfiles(): Promise<{
+    success: boolean;
+    count: number;
+    importedCount: number;
+    skippedCount: number;
+    profiles: any[];
+  }> {
+    const starters = getAllNicheProfiles();
     const imported: any[] = [];
+    let importedCount = 0;
+    let skippedCount = 0;
 
     for (const p of starters) {
       const payload = {
@@ -2438,8 +2779,11 @@ export class SystemStore {
       if (isTestEnv() && !this.client) {
         const existing = Array.from(this.memoryContentProfiles.values()).find((cp) => cp.name === p.name);
         if (existing) {
+          skippedCount++;
+          imported.push(existing);
           continue;
         }
+        importedCount++;
         const id = p.id || crypto.randomUUID();
         const obj = { id, ...payload };
         this.memoryContentProfiles.set(id, obj as any);
@@ -2455,6 +2799,7 @@ export class SystemStore {
         .maybeSingle();
 
       if (existing) {
+        skippedCount++;
         let { data: updated, error: updErr } = await this.getClient()
           .from('content_profiles')
           .update(payload)
@@ -2474,6 +2819,7 @@ export class SystemStore {
         }
         if (updated) imported.push(updated);
       } else {
+        importedCount++;
         let { data: created, error: insErr } = await this.getClient()
           .from('content_profiles')
           .insert(payload)
@@ -2493,7 +2839,13 @@ export class SystemStore {
       }
     }
 
-    return { count: imported.length, profiles: imported };
+    return {
+      success: true,
+      count: imported.length,
+      importedCount,
+      skippedCount,
+      profiles: imported,
+    };
   }
 
   // --- Database Schema Check Tool ---

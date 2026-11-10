@@ -157,10 +157,10 @@ describe('Production Persistence, Governance & Audit Verification', () => {
     expect(published.length).toBe(1);
   });
 
-  it('imports 7 starter profiles into store without duplicates', async () => {
+  it('imports starter profiles into store without duplicates', async () => {
     const res = await store.importStarterProfiles();
-    expect(res.count).toBe(7);
-    expect(res.profiles.length).toBe(7);
+    expect(res.count).toBe(27);
+    expect(res.profiles.length).toBe(27);
 
     const names = res.profiles.map((p) => p.name);
     expect(names).toContain('Historical Photos');
@@ -173,7 +173,8 @@ describe('Production Persistence, Governance & Audit Verification', () => {
 
     // Re-importing should not duplicate
     const secondRun = await store.importStarterProfiles();
-    expect(secondRun.count).toBe(0);
+    expect(secondRun.importedCount).toBe(0);
+    expect(secondRun.skippedCount).toBe(27);
   });
 
   it('exports settings backup strictly stripping tokens and secrets, and restores cleanly', async () => {
@@ -250,6 +251,6 @@ describe('Production Persistence, Governance & Audit Verification', () => {
     expect(importRes.status).toBe(200);
     const importData = await importRes.json();
     expect(importData.success).toBe(true);
-    expect(importData.count).toBe(7);
+    expect(importData.count).toBe(27);
   });
 });

@@ -766,19 +766,21 @@
         break;
       }
     }
-    if (!found && page.profile_id) {
+    if (!found || !page.profile_id || page.profile_id === '__custom__' || page.profile_id === 'custom') {
       selectElem.value = '__custom__';
       toggleCustomNicheField('__custom__', 'studioCustomNicheBox');
       const customNameInput = document.getElementById('editCustomNicheName');
-      if (customNameInput) customNameInput.value = page.profile_id;
+      if (customNameInput) customNameInput.value = page.custom_niche || page.custom_niche_text || '';
+      handleStudioProfileChange('__custom__');
     } else {
       toggleCustomNicheField(selectElem.value, 'studioCustomNicheBox');
+      handleStudioProfileChange(selectElem.value);
     }
 
     document.getElementById('editCaptionPrompt').value = page.custom_caption_prompt || '';
-    document.getElementById('editCaptionMode').value = page.custom_caption_prompt_mode || 'append';
+    document.getElementById('editCaptionMode').value = page.custom_caption_prompt_mode || (page.profile_id ? 'append' : 'replace');
     document.getElementById('editImagePrompt').value = page.custom_image_prompt || '';
-    document.getElementById('editImageMode').value = page.custom_image_prompt_mode || 'append';
+    document.getElementById('editImageMode').value = page.custom_image_prompt_mode || (page.profile_id ? 'append' : 'replace');
     document.getElementById('editFirstCommentEnabled').checked = page.first_comment_enabled !== false;
     document.getElementById('editFirstCommentPrompt').value = page.first_comment_prompt || '';
 
@@ -789,16 +791,105 @@
     document.getElementById('editAspectRatio').value = overrides['image.aspectRatio'] || '4:5';
     document.getElementById('editPanelEnabled').checked = overrides['image.headlinePanel.enabled'] !== false;
     document.getElementById('editPanelHeight').value = overrides['image.headlinePanel.heightPercent'] || 25;
-    document.getElementById('editPanelColor').value = overrides['image.headlinePanel.backgroundColor'] || '#050b14';
+    const bgColor = overrides['image.headlinePanel.backgroundColor'] || '#050b14';
+    document.getElementById('editPanelColor').value = bgColor;
+    const hexInput = document.getElementById('editPanelColorHex');
+    if (hexInput) hexInput.value = bgColor;
+
+    validateStudioWordLimits();
+    validateStudioFirstComment();
+
     const inspectBox = document.getElementById('effectiveInspectBox');
     if (inspectBox) inspectBox.style.display = 'none';
   }
 
-  async function savePagePromptsAction() {
+  function handleStudioProfileChange(profileVal) {
+    const isCustom = profileVal === '__custom__' || profileVal === 'custom' || !profileVal;
+    const notice = document.getElementById('customNicheReplaceNotice');
+    if (notice) {
+      notice.style.display = isCustom ? 'block' : 'none';
+    }
+    if (isCustom) {
+      const capMode = document.getElementById('editCaptionMode');
+      const imgMode = document.getElementById('editImageMode');
+      if (capMode) capMode.value = 'replace';
+      if (imgMode) imgMode.value = 'replace';
+    }
+  }
+
+  function validateStudioWordLimits() {
+    const minVal = parseInt(document.getElementById('editMinWords').value, 10);
+    const targetVal = parseInt(document.getElementById('editTargetWords').value, 10);
+    const maxVal = parseInt(document.getElementById('editMaxWords').value, 10);
+    const errBox = document.getElementById('editWordsError');
+    if (!errBox) return true;
+
+    if (!isNaN(minVal) && !isNaN(targetVal) && !isNaN(maxVal)) {
+      if (minVal > targetVal || targetVal > maxVal) {
+        errBox.style.display = 'block';
+        errBox.innerText = '⚠️ Min words (' + minVal + ') cannot exceed target (' + targetVal + '), and target cannot exceed max (' + maxVal + ').';
+        return false;
+      }
+    }
+    errBox.style.display = 'none';
+    return true;
+  }
+
+  function validateStudioFirstComment() {
+    const enabled = document.getElementById('editFirstCommentEnabled') ? document.getElementById('editFirstCommentEnabled').checked : false;
+    const prompt = document.getElementById('editFirstCommentPrompt') ? document.getElementById('editFirstCommentPrompt').value.trim() : '';
+    const errBox = document.getElementById('editFirstCommentError');
+    if (!errBox) return true;
+
+    if (enabled && !prompt) {
+      errBox.style.display = 'block';
+      errBox.innerText = '⚠️ First comment text is required when auto-post is enabled.';
+      return false;
+    }
+    errBox.style.display = 'none';
+    return true;
+  }
+
+  function toggleFirstCommentValidation() {
+    validateStudioFirstComment();
+  }
+
+  function syncHeadlineColorPicker(val) {
+    const hexInput = document.getElementById('editPanelColorHex');
+    if (hexInput) hexInput.value = val;
+    const err = document.getElementById('editHeadlineColorError');
+    if (err) err.style.display = 'none';
+  }
+
+  function syncHeadlineColorText(val) {
+    const err = document.getElementById('editHeadlineColorError');
+    const colorPicker = document.getElementById('editPanelColor');
+    const hexRegex = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
+    if (hexRegex.test(val.trim())) {
+      if (colorPicker) colorPicker.value = val.trim();
+      if (err) err.style.display = 'none';
+    } else {
+      if (err) {
+        err.style.display = 'block';
+        err.innerText = 'Invalid hex color (e.g. #050b14 or #000000)';
+      }
+    }
+  }
+
+  async function savePagePromptsAction(forceSave) {
     const pageId = document.getElementById('studioPageSelect') ? document.getElementById('studioPageSelect').value : null;
     const page = pagesData.find(function (p) { return p.id === pageId; });
     if (!page) {
       showToast('Please select a Facebook Page first.', 'warning');
+      return;
+    }
+
+    if (!validateStudioWordLimits()) {
+      showToast('Please fix word limits: Min <= Target <= Max', 'error');
+      return;
+    }
+    if (!validateStudioFirstComment()) {
+      showToast('Please provide a first comment text before saving.', 'error');
       return;
     }
 
@@ -811,10 +902,10 @@
         saveBtn.innerText = 'Saving...';
       }
 
-      const profile_id = document.getElementById('editProfileSelect').value;
+      const rawProfileId = document.getElementById('editProfileSelect').value;
       const custom_niche_name = document.getElementById('editCustomNicheName') ? document.getElementById('editCustomNicheName').value.trim() : '';
 
-      if (profile_id === '__custom__' && !custom_niche_name) {
+      if ((rawProfileId === '__custom__' || rawProfileId === 'custom') && !custom_niche_name) {
         showToast('Please enter a name for your custom niche!', 'warning');
         return;
       }
@@ -826,6 +917,8 @@
       const first_comment_enabled = document.getElementById('editFirstCommentEnabled').checked;
       const first_comment_prompt = document.getElementById('editFirstCommentPrompt').value;
 
+      const panelColorVal = (document.getElementById('editPanelColorHex') ? document.getElementById('editPanelColorHex').value.trim() : '') || document.getElementById('editPanelColor').value || '#050b14';
+
       const overrides = Object.assign({}, page.overrides || {}, {
         'caption.min': parseInt(document.getElementById('editMinWords').value, 10),
         'caption.target': parseInt(document.getElementById('editTargetWords').value, 10),
@@ -833,28 +926,43 @@
         'image.aspectRatio': document.getElementById('editAspectRatio').value,
         'image.headlinePanel.enabled': document.getElementById('editPanelEnabled').checked,
         'image.headlinePanel.heightPercent': parseInt(document.getElementById('editPanelHeight').value, 10),
-        'image.headlinePanel.backgroundColor': document.getElementById('editPanelColor').value || '#000000',
+        'image.headlinePanel.backgroundColor': panelColorVal,
       });
+
+      const payload = {
+        id: pageId,
+        pageId: pageId,
+        profile_id: rawProfileId === '__custom__' || rawProfileId === 'custom' ? null : rawProfileId,
+        custom_niche: custom_niche_name,
+        custom_niche_name: custom_niche_name,
+        custom_niche_text: custom_niche_name,
+        custom_caption_prompt: custom_caption_prompt,
+        custom_caption_prompt_mode: custom_caption_prompt_mode,
+        custom_image_prompt: custom_image_prompt,
+        custom_image_prompt_mode: custom_image_prompt_mode,
+        first_comment_enabled: first_comment_enabled,
+        first_comment_prompt: first_comment_prompt,
+        overrides: overrides,
+        expected_settings_version: page.settings_version || page.version || 1,
+        expected_updated_at: page.settings_updated_at || page.updated_at,
+        force: Boolean(forceSave),
+      };
 
       const res = await fetch('/api/pages', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: pageId,
-          profile_id: profile_id,
-          custom_niche_name: custom_niche_name,
-          custom_niche_text: custom_niche_name,
-          custom_caption_prompt: custom_caption_prompt,
-          custom_caption_prompt_mode: custom_caption_prompt_mode,
-          custom_image_prompt: custom_image_prompt,
-          custom_image_prompt_mode: custom_image_prompt_mode,
-          first_comment_enabled: first_comment_enabled,
-          first_comment_prompt: first_comment_prompt,
-          overrides: overrides,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
+
+      if (res.status === 409 || data.conflict) {
+        openConcurrencyConflictModal(pageId, data, payload, function () {
+          savePagePromptsAction(true);
+        });
+        return;
+      }
+
       if (res.ok && data.success) {
         showToast('✅ Custom prompts and settings for this Page successfully saved!', 'success');
         const idx = pagesData.findIndex(function (p) { return p.id === pageId; });
@@ -915,33 +1023,72 @@
     const simSelect = document.getElementById('simPageSelect');
     const pageId = simSelect ? simSelect.value : '';
     if (!pageId) {
-      alert('Please add a Facebook Page first in the Pages & Accounts tab before running simulations.');
+      showToast('Please select a Facebook Page first before running test run.', 'warning');
       return;
     }
-    const res = await fetch('/api/test-run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pageId: pageId }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) {
-      alert('Notice: ' + (data.error || 'Failed to run simulation.'));
-      return;
+    const runBtn = document.querySelector('button[onclick="runSimulationForSelectedPage()"]');
+    const origText = runBtn ? runBtn.innerText : '⚡ Execute Simulation Cycle';
+    if (runBtn) {
+      runBtn.disabled = true;
+      runBtn.innerText = '⚡ Running Pipeline Stages...';
     }
-    const simBox = document.getElementById('simResult');
-    const simOut = document.getElementById('simOutput');
-    if (simBox) simBox.style.display = 'block';
-    if (simOut) {
-      simOut.innerHTML =
-        '<strong>Target Page:</strong> ' + escapeHtml(data.pageName) + ' (Base: ' + escapeHtml(data.baseProfile) + ')<br>' +
-        '<strong>Selected Topic:</strong> ' + escapeHtml(data.topic?.title || '') + ' (' + escapeHtml(data.topic?.category || '') + ')<br><br>' +
-        '<strong>Generated Long-Form Caption:</strong><br>' +
-        '<div style="background: #111827; padding: 12px; border-radius: 6px; margin: 8px 0; white-space: pre-wrap; font-size: 13px; line-height: 1.6;">' + escapeHtml(data.caption) + '</div><br>' +
-        '<strong>Caption Word Count:</strong> ' + (data.wordCount || 0) + ' words<br>' +
-        '<strong>QA Composite Score:</strong> <span style="color: #34d399; font-weight: bold;">' + (data.qaScore || 0) + '/100 (Passes ' + escapeHtml(String(data.publishingMode || '').toUpperCase()) + ' Mode)</span><br>' +
-        '<strong>Key Visual Scene:</strong> ' + escapeHtml(data.keySceneExtracted || '') + '<br>' +
-        '<strong>Sharp Composed Format:</strong> ' + escapeHtml(data.imageDimensions || '') + '<br>' +
-        '<strong>Token Accounting:</strong> ' + (data.tokensUsed || 0) + ' tokens used (' + escapeHtml(data.estimatedCost || '$0.00') + ')';
+
+    try {
+      const res = await fetch('/api/test-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: pageId }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        showToast('❌ Test Run Failed: ' + (data.error || 'Pipeline stage failed'), 'error');
+        const page = pagesData.find(function (p) { return p.id === pageId; });
+        if (page && data.test_run_report) {
+          page.test_run_report = data.test_run_report;
+          page.test_run_verified = false;
+          if (data.checklist) page.checklist_status = data.checklist;
+          if (typeof updateModalChecklistDisplay === 'function' && currentSettingsPageId === pageId) {
+            updateModalChecklistDisplay(page);
+          }
+        }
+        return;
+      }
+
+      showToast('🎉 Test Run Passed! All 4 pipeline stages verified.', 'success');
+      const page = pagesData.find(function (p) { return p.id === pageId; });
+      if (page) {
+        page.last_test_run_at = data.testedAt;
+        page.test_run_verified = true;
+        page.test_run_report = data;
+        if (data.checklist) page.checklist_status = data.checklist;
+        if (typeof updateModalChecklistDisplay === 'function' && currentSettingsPageId === pageId) {
+          updateModalChecklistDisplay(page);
+        }
+      }
+
+      const simBox = document.getElementById('simResult');
+      const simOut = document.getElementById('simOutput');
+      if (simBox) simBox.style.display = 'block';
+      if (simOut) {
+        simOut.innerHTML =
+          '<strong>Target Page:</strong> ' + escapeHtml(data.pageName) + ' (Base: ' + escapeHtml(data.baseProfile) + ')<br>' +
+          '<strong>Selected Topic:</strong> ' + escapeHtml(data.topic?.title || '') + ' (' + escapeHtml(data.topic?.category || '') + ')<br><br>' +
+          '<strong>Generated Long-Form Caption:</strong><br>' +
+          '<div style="background: #111827; padding: 12px; border-radius: 6px; margin: 8px 0; white-space: pre-wrap; font-size: 13px; line-height: 1.6;">' + escapeHtml(data.caption) + '</div><br>' +
+          '<strong>Caption Word Count:</strong> ' + (data.wordCount || 0) + ' words<br>' +
+          '<strong>QA Composite Score:</strong> <span style="color: #34d399; font-weight: bold;">' + (data.qaScore || 0) + '/100 (Passes ' + escapeHtml(String(data.publishingMode || '').toUpperCase()) + ' Mode)</span><br>' +
+          '<strong>Key Visual Scene:</strong> ' + escapeHtml(data.keySceneExtracted || '') + '<br>' +
+          '<strong>Sharp Composed Format:</strong> ' + escapeHtml(data.imageDimensions || '') + '<br>' +
+          '<strong>Token Accounting:</strong> ' + (data.tokensUsed || 0) + ' tokens used (' + escapeHtml(data.estimatedCost || '$0.00') + ') • Latency: ' + (data.latencyMs || 0) + 'ms';
+      }
+    } catch (e) {
+      showToast('Network error during test run: ' + e.message, 'error');
+    } finally {
+      if (runBtn) {
+        runBtn.disabled = false;
+        runBtn.innerText = origText;
+      }
     }
   }
 
@@ -2126,42 +2273,51 @@
 
   function updateModalChecklistDisplay(page) {
     var sched = page.schedule || {};
-    var customText = page.custom_niche_text || (document.getElementById('psmCustomNicheText') ? document.getElementById('psmCustomNicheText').value.trim() : '');
+    var customText = page.custom_niche || page.custom_niche_text || (document.getElementById('psmCustomNicheText') ? document.getElementById('psmCustomNicheText').value.trim() : '');
     var profileChosen = Boolean(
-      (page.profile_id && page.profile_id !== 'default-niche' && page.profile_id !== '__custom__') ||
-      (page.profile_id === '__custom__' && customText.length > 0)
+      (page.profile_id && page.profile_id !== 'default-niche' && page.profile_id !== '__custom__' && page.profile_id !== 'custom') ||
+      (customText && customText.length > 0)
     );
-    var scheduleSet = Boolean(sched.postsPerDay && sched.postsPerDay > 0);
-    var modeChosen = Boolean(page.publishing_mode);
-    var testDone = Boolean(page.last_test_run_at);
+    var scheduleSet = Boolean(sched.postsPerDay && sched.postsPerDay > 0 && sched.postingTimes && sched.postingTimes.length > 0);
+    var modeChosen = Boolean(page.mode_chosen !== false && page.publishing_mode);
+    var testDone = Boolean(page.test_run_verified && page.last_test_run_at);
     var isLive = Boolean(page.active || page.is_live);
 
-    function setStep(id, done, label) {
+    function setStep(id, done, htmlLabel) {
       var el = document.getElementById(id);
       if (!el) return;
       el.querySelector('.psm-step-icon').innerText = done ? '✅' : '⭕';
       var st = el.querySelector('.psm-step-status');
-      st.innerText = label;
+      st.innerHTML = htmlLabel;
       st.style.color = done ? '#34d399' : '#f87171';
     }
 
-    setStep('psmStepProfile', profileChosen, profileChosen ? 'Chosen' : 'Not Chosen');
+    var profileLabel = profileChosen ? (customText ? 'Custom Niche' : 'Chosen') : 'Not Chosen';
+    var testLabel = testDone
+      ? 'Verified • <a href="javascript:void(0)" onclick="viewTestRunReport(\'' + page.id + '\')" style="color: #60a5fa; text-decoration: underline; font-size: 11px;">View report</a>'
+      : (page.test_run_report && page.test_run_report.error
+        ? 'Failed • <a href="javascript:void(0)" onclick="viewTestRunReport(\'' + page.id + '\')" style="color: #f87171; text-decoration: underline; font-size: 11px;">View error</a>'
+        : 'Needed');
+
+    setStep('psmStepProfile', profileChosen, profileLabel);
     setStep('psmStepSchedule', scheduleSet, scheduleSet ? (sched.postsPerDay + ' posts/day') : '0 posts/day');
     setStep('psmStepMode', modeChosen, (page.publishing_mode || 'review').toUpperCase());
-    setStep('psmStepTest', testDone, testDone ? 'Verified' : 'Needed');
+    setStep('psmStepTest', testDone, testLabel);
     setStep('psmStepLive', isLive, isLive ? 'Live' : 'Paused');
 
-    var totalDone = (profileChosen ? 1 : 0) + (scheduleSet ? 1 : 0) + (modeChosen ? 1 : 0) + (testDone ? 1 : 0);
+    var missingCount = (profileChosen ? 0 : 1) + (scheduleSet ? 0 : 1) + (modeChosen ? 0 : 1) + (testDone ? 0 : 1);
+    var totalDone = 4 - missingCount;
+
     var progressElem = document.getElementById('psmChecklistProgress');
     if (progressElem) {
       if (isLive) {
         progressElem.innerText = 'All Steps Complete • Page Active';
         progressElem.style.color = '#34d399';
-      } else if (totalDone === 4) {
+      } else if (missingCount === 0) {
         progressElem.innerText = 'Ready to Go Live! Click "Turn Auto-Posting ON"';
         progressElem.style.color = '#34d399';
       } else {
-        progressElem.innerText = (4 - totalDone) + ' Step(s) Incomplete before Live';
+        progressElem.innerText = missingCount + ' Step(s) Incomplete before Live';
         progressElem.style.color = '#f59e0b';
       }
     }
@@ -2169,7 +2325,7 @@
     var bigBtn = document.getElementById('psmBigSwitchBtn');
     if (bigBtn) {
       if (!isLive) {
-        var canActivate = (totalDone === 4);
+        var canActivate = (missingCount === 0);
         bigBtn.disabled = !canActivate;
         if (!canActivate) {
           bigBtn.title = 'Complete all 4 checklist steps and verify before taking page live.';
@@ -2462,8 +2618,8 @@
     }
   }
 
-  async function handleSavePageSettings(e) {
-    if (e) e.preventDefault();
+  async function handleSavePageSettings(e, forceSave) {
+    if (e && e.preventDefault) e.preventDefault();
     if (!currentSettingsPageId) return;
 
     var saveBtn = document.getElementById('psmSaveBtn');
@@ -2476,13 +2632,21 @@
       }
 
       var sched = getSchedulePayloadFromModal();
+      var rawProfileVal = document.getElementById('psmProfileSelect').value;
       var customNicheText = document.getElementById('psmCustomNicheText') ? document.getElementById('psmCustomNicheText').value.trim() : '';
+
+      var isCustom = rawProfileVal === '__custom__' || rawProfileVal === 'custom' || !rawProfileVal;
+      var profile_id = isCustom ? null : rawProfileVal;
 
       var payload = {
         pageId: currentSettingsPageId,
-        profile_id: document.getElementById('psmProfileSelect').value,
+        id: currentSettingsPageId,
+        profile_id: profile_id,
+        custom_niche: customNicheText,
         custom_niche_text: customNicheText,
+        custom_niche_name: customNicheText,
         publishing_mode: document.getElementById('psmPublishingMode').value,
+        mode_chosen: true,
         hybrid_min_score: Number(document.getElementById('psmHybridScore').value) || 80,
         daily_cap: Number(document.getElementById('psmDailyCap').value) || 3,
         schedule: sched,
@@ -2491,6 +2655,8 @@
         source_attribution_enabled: document.getElementById('psmSourceLineToggle').checked,
         expected_updated_at: currentExpectedUpdatedAt,
         expected_version: currentExpectedVersion,
+        expected_settings_version: currentExpectedVersion,
+        force: Boolean(forceSave),
       };
 
       var res = await fetch('/api/pages/update-settings', {
@@ -2500,8 +2666,10 @@
       });
       var data = await res.json();
 
-      if (res.status === 409) {
-        showToast('⚠️ Concurrency Conflict: Settings were modified elsewhere. Please refresh to see latest.', 'error');
+      if (res.status === 409 || data.conflict) {
+        openConcurrencyConflictModal(currentSettingsPageId, data, payload, function () {
+          handleSavePageSettings(null, true);
+        });
         return;
       }
 
@@ -2514,8 +2682,8 @@
       var idx = pagesData.findIndex(function (p) { return p.id === currentSettingsPageId; });
       if (idx !== -1 && data.page) {
         pagesData[idx] = data.page;
-        currentExpectedUpdatedAt = data.page.updated_at;
-        currentExpectedVersion = data.page.version;
+        currentExpectedUpdatedAt = data.page.settings_updated_at || data.page.updated_at;
+        currentExpectedVersion = data.page.settings_version || data.page.version;
       }
 
       currentModalOriginalSnapshot = getModalSnapshot();
@@ -2538,6 +2706,184 @@
         saveBtn.innerText = origText;
       }
     }
+  }
+
+  // --- Concurrency Conflict 3-Way Dialog ---
+  let activeConflictPageId = null;
+  let activeConflictData = null;
+  let activePendingPayload = null;
+  let activeConflictRetryCallback = null;
+
+  function openConcurrencyConflictModal(pageId, conflictData, pendingPayload, retryCallback) {
+    activeConflictPageId = pageId;
+    activeConflictData = conflictData;
+    activePendingPayload = pendingPayload;
+    activeConflictRetryCallback = retryCallback;
+
+    const modal = document.getElementById('concurrencyConflictModal');
+    if (!modal) {
+      alert('Concurrency conflict: Settings were modified elsewhere. Please reload to see latest.');
+      return;
+    }
+
+    const summaryText = document.getElementById('conflictSummaryText');
+    const changedAt = (conflictData.currentRecord && (conflictData.currentRecord.settings_updated_at || conflictData.currentRecord.updated_at)) || 'recently';
+    if (summaryText) {
+      summaryText.innerHTML = '⚠️ Another session or background process modified this page at <strong>' + escapeHtml(new Date(changedAt).toLocaleTimeString()) + '</strong>. Choose how you want to proceed. Your typed edits will not be lost.';
+    }
+
+    const fieldsList = document.getElementById('conflictFieldsList');
+    if (fieldsList) {
+      const changed = conflictData.changedFields && conflictData.changedFields.length > 0
+        ? conflictData.changedFields
+        : ['settings_version', 'publishing_mode', 'schedule'];
+      fieldsList.innerHTML = '<div style="color: #94a3b8; margin-bottom: 4px;">Modified Fields in Database:</div>' +
+        changed.map(function(f) { return '<div style="padding: 2px 0;">• ' + escapeHtml(f) + '</div>'; }).join('');
+    }
+
+    modal.style.display = 'flex';
+  }
+
+  function closeConcurrencyConflictModal() {
+    const modal = document.getElementById('concurrencyConflictModal');
+    if (modal) modal.style.display = 'none';
+    activeConflictPageId = null;
+    activeConflictData = null;
+    activePendingPayload = null;
+    activeConflictRetryCallback = null;
+  }
+
+  async function resolveConflictKeepMine() {
+    if (typeof activeConflictRetryCallback === 'function') {
+      const cb = activeConflictRetryCallback;
+      closeConcurrencyConflictModal();
+      await cb();
+    }
+  }
+
+  function resolveConflictUseLatest() {
+    if (activeConflictData && activeConflictData.currentRecord) {
+      const record = activeConflictData.currentRecord;
+      const idx = pagesData.findIndex(function (p) { return p.id === record.id; });
+      if (idx !== -1) pagesData[idx] = record;
+      populateModalFromPage(record);
+      currentExpectedUpdatedAt = record.settings_updated_at || record.updated_at;
+      currentExpectedVersion = record.settings_version || record.version;
+      currentModalOriginalSnapshot = getModalSnapshot();
+      updateModalChecklistDisplay(record);
+      showToast('Loaded latest settings from database.', 'info');
+    }
+    closeConcurrencyConflictModal();
+  }
+
+  async function resolveConflictMerge() {
+    if (!activeConflictPageId || !activePendingPayload || !activeConflictData) {
+      closeConcurrencyConflictModal();
+      return;
+    }
+    const merged = Object.assign({}, activeConflictData.currentRecord || {}, activePendingPayload, { force: true });
+    closeConcurrencyConflictModal();
+
+    try {
+      showToast('Merging and saving settings...', 'info');
+      const res = await fetch('/api/pages/update-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(merged),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('✅ Merged settings successfully saved!', 'success');
+        const idx = pagesData.findIndex(function (p) { return p.id === activeConflictPageId; });
+        if (idx !== -1 && data.page) pagesData[idx] = data.page;
+        if (data.page) updateModalChecklistDisplay(data.page);
+      } else {
+        showToast('Failed to save merged settings: ' + (data.error || 'Unknown error'), 'error');
+      }
+    } catch (e) {
+      showToast('Network error while merging: ' + e.message, 'error');
+    }
+  }
+
+  // --- Test Run Report Modal ---
+  function viewTestRunReport(pageId) {
+    const page = pagesData.find(function (p) { return p.id === pageId; });
+    if (!page || !page.test_run_report) {
+      showToast('No test run report available yet. Run a Test Run first.', 'warning');
+      return;
+    }
+
+    const report = page.test_run_report;
+    const modal = document.getElementById('testRunReportModal');
+    if (!modal) return;
+
+    document.getElementById('trrPageName').innerText = page.name || 'Facebook Page';
+    document.getElementById('trrTestedAt').innerText = report.testedAt ? new Date(report.testedAt).toLocaleString() : 'Recent';
+
+    const badge = document.getElementById('trrStatusBadge');
+    if (badge) {
+      if (report.success) {
+        badge.innerText = 'VERIFIED';
+        badge.style.background = 'rgba(16,185,129,0.2)';
+        badge.style.color = '#34d399';
+      } else {
+        badge.innerText = 'FAILED';
+        badge.style.background = 'rgba(239,68,68,0.2)';
+        badge.style.color = '#f87171';
+      }
+    }
+
+    const stagesList = document.getElementById('trrStagesContainer');
+    if (stagesList) {
+      stagesList.innerHTML = (report.stages || []).map(function (s) {
+        const isPassed = s.status === 'completed' || s.status === 'passed';
+        const color = isPassed ? '#34d399' : '#f87171';
+        const icon = isPassed ? '✅' : '❌';
+        return '<div style="background: #020617; border: 1px solid ' + (isPassed ? '#1e293b' : '#7f1d1d') + '; border-radius: 6px; padding: 10px;">' +
+          '<div style="font-size: 11px; color: #94a3b8; margin-bottom: 2px;">' + icon + ' ' + escapeHtml(s.name) + '</div>' +
+          '<div style="font-size: 13px; font-weight: 700; color: ' + color + ';">' + escapeHtml(s.status.toUpperCase()) + (s.score ? (' (' + s.score + ')') : '') + '</div>' +
+          '<div style="font-size: 11px; color: #64748b;">' + (s.durationMs || 0) + 'ms</div>' +
+          (s.error ? ('<div style="font-size: 11px; color: #fca5a5; margin-top: 4px;">' + escapeHtml(s.error) + '</div>') : '') +
+          '</div>';
+      }).join('');
+    }
+
+    const topicEl = document.getElementById('trrTopicTitle');
+    if (topicEl) {
+      topicEl.innerText = (report.topic && report.topic.title) || page.name + ' Highlight';
+    }
+
+    const captionEl = document.getElementById('trrCaptionText');
+    if (captionEl) {
+      captionEl.innerText = report.caption || '(No caption generated)';
+    }
+
+    const wordBadge = document.getElementById('trrWordBadge');
+    if (wordBadge) {
+      wordBadge.innerText = (report.wordCount || 0) + ' words';
+    }
+
+    const imagePromptEl = document.getElementById('trrImagePrompt');
+    if (imagePromptEl) {
+      imagePromptEl.innerText = report.imagePrompt || '(Standard atmospheric visual framing)';
+    }
+
+    const headlineEl = document.getElementById('trrHeadlineText');
+    if (headlineEl) {
+      headlineEl.innerText = (report.headlinePanel && report.headlinePanel.headlineText) || 'Headline Overlay';
+    }
+
+    const aspectDimEl = document.getElementById('trrAspectDim');
+    if (aspectDimEl) {
+      aspectDimEl.innerText = report.imageDimensions || '1080x1350 (4:5 Portrait)';
+    }
+
+    modal.style.display = 'flex';
+  }
+
+  function closeTestRunReportModal() {
+    const modal = document.getElementById('testRunReportModal');
+    if (modal) modal.style.display = 'none';
   }
 
   async function toggleAutoPostingFromSwitch() {
@@ -2817,21 +3163,28 @@
       var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
       var data = await res.json();
       if (res.ok && data.success) {
-        var count = data.importedCount !== undefined ? data.importedCount : (data.count || (data.profiles ? data.profiles.length : 0));
-        showToast('📦 Imported ' + count + ' starter profiles!', 'success');
+        var imp = data.importedCount !== undefined ? data.importedCount : (data.count || 0);
+        var skip = data.skippedCount !== undefined ? data.skippedCount : 0;
+        showToast('📦 Imported ' + imp + ' new, ' + skip + ' skipped (already up to date).', 'success');
         var profSelect = document.getElementById('psmProfileSelect');
-        if (profSelect && data.profiles) {
-          profSelect.innerHTML = '';
-          data.profiles.forEach(function (prof) {
-            var opt = document.createElement('option');
-            opt.value = prof.id;
-            opt.innerText = prof.name + ' (' + (prof.niche || prof.type || 'profile') + ')';
-            profSelect.appendChild(opt);
+        var studioSelect = document.getElementById('editProfileSelect');
+        if (data.profiles) {
+          [profSelect, studioSelect].forEach(function (sel) {
+            if (!sel) return;
+            var currentVal = sel.value;
+            sel.innerHTML = '';
+            data.profiles.forEach(function (prof) {
+              var opt = document.createElement('option');
+              opt.value = prof.id;
+              opt.innerText = prof.name + ' (' + (prof.niche || prof.type || 'profile') + ')';
+              sel.appendChild(opt);
+            });
+            var customOpt = document.createElement('option');
+            customOpt.value = '__custom__';
+            customOpt.innerText = '✍️ Custom / Type Your Own Niche...';
+            sel.appendChild(customOpt);
+            if (currentVal) sel.value = currentVal;
           });
-          var customOpt = document.createElement('option');
-          customOpt.value = '__custom__';
-          customOpt.innerText = '✍️ Custom / Type Your Own Profile...';
-          profSelect.appendChild(customOpt);
         }
       } else {
         showToast('Notice: ' + (data.error || 'Failed to import starter profiles'), 'error');
@@ -2852,8 +3205,9 @@
       var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
       var data = await res.json();
       if (res.ok && data.success) {
-        var count = data.importedCount !== undefined ? data.importedCount : (data.count || (data.profiles ? data.profiles.length : 0));
-        showToast('📦 Imported ' + count + ' starter profiles to Supabase!', 'success');
+        var imp = data.importedCount !== undefined ? data.importedCount : (data.count || 0);
+        var skip = data.skippedCount !== undefined ? data.skippedCount : 0;
+        showToast('📦 Imported ' + imp + ' new, ' + skip + ' skipped (already up to date).', 'success');
         fetchPagesTab();
       } else {
         showToast('Notice: ' + (data.error || 'Failed to import starter profiles'), 'error');
@@ -3061,6 +3415,19 @@
   window.downloadSettingsBackupAction = downloadSettingsBackupAction;
   window.handleRestoreBackupFile = handleRestoreBackupFile;
   window.openPagePromptStudioFromModal = openPagePromptStudioFromModal;
+  window.handleStudioProfileChange = handleStudioProfileChange;
+  window.validateStudioWordLimits = validateStudioWordLimits;
+  window.validateStudioFirstComment = validateStudioFirstComment;
+  window.toggleFirstCommentValidation = toggleFirstCommentValidation;
+  window.syncHeadlineColorPicker = syncHeadlineColorPicker;
+  window.syncHeadlineColorText = syncHeadlineColorText;
+  window.openConcurrencyConflictModal = openConcurrencyConflictModal;
+  window.closeConcurrencyConflictModal = closeConcurrencyConflictModal;
+  window.resolveConflictKeepMine = resolveConflictKeepMine;
+  window.resolveConflictUseLatest = resolveConflictUseLatest;
+  window.resolveConflictMerge = resolveConflictMerge;
+  window.viewTestRunReport = viewTestRunReport;
+  window.closeTestRunReportModal = closeTestRunReportModal;
 
   function copyExpectedRedirectUri() {
     const el = document.getElementById('expectedRedirectUriText');
