@@ -36,6 +36,68 @@ if (!isTestEnv()) {
 }
 
 
+// Verified physical database columns in Supabase
+export const VERIFIED_PAGE_COLUMNS = new Set([
+  'id',
+  'fb_account_id',
+  'name',
+  'fb_page_id',
+  'fb_page_token',
+  'token_status',
+  'profile_id',
+  'overrides',
+  'custom_caption_prompt',
+  'custom_caption_prompt_mode',
+  'custom_image_prompt',
+  'custom_image_prompt_mode',
+  'first_comment_enabled',
+  'first_comment_prompt',
+  'schedule',
+  'publishing_mode',
+  'hybrid_min_score',
+  'auto_approve_after_hours',
+  'notifications',
+  'provider_chain_overrides',
+  'daily_cap',
+  'active',
+  'created_at',
+  'updated_at',
+  'category',
+  'picture_url',
+  'tasks',
+  'fan_count',
+  'connected_at',
+  'last_synced_at',
+  'secondary_account_ids',
+  'niche_analysis',
+  'ai_disclosure_enabled',
+  'ai_disclosure_text',
+  'source_attribution_enabled',
+  'last_test_run_at',
+  'checklist_status',
+]);
+
+export const VERIFIED_CONTENT_PROFILES_COLUMNS = new Set([
+  'id',
+  'name',
+  'description',
+  'type',
+  'language',
+  'audience',
+  'master_prompt',
+  'templates',
+  'caption_settings',
+  'hashtag_settings',
+  'disclosure_settings',
+  'image_settings',
+  'topic_settings',
+  'research_source_ids',
+  'custom_variables',
+  'version',
+  'created_at',
+  'updated_at',
+]);
+
 export interface StoredProvider {
   id: string;
   name: string;
@@ -684,6 +746,67 @@ export class SystemStore {
     return result;
   }
 
+  private mapRowToStoredPage(row: any): StoredPage {
+    const ov = (row.overrides && typeof row.overrides === 'object') ? row.overrides : {};
+    const sched = (row.schedule && typeof row.schedule === 'object') ? row.schedule : SAFE_DEFAULT_SCHEDULE;
+    const isLive = Boolean(row.active ?? sched.is_live ?? false);
+
+    return {
+      id: row.id,
+      fb_account_id: row.fb_account_id,
+      name: row.name,
+      fb_page_id: row.fb_page_id,
+      fb_page_token: row.fb_page_token,
+      token_status: row.token_status || 'valid',
+      category: row.category || undefined,
+      picture_url: row.picture_url || undefined,
+      tasks: Array.isArray(row.tasks) ? row.tasks : [],
+      fan_count: typeof row.fan_count === 'number' ? row.fan_count : (row.fan_count ? Number(row.fan_count) : 0),
+      secondary_account_ids: Array.isArray(row.secondary_account_ids) ? row.secondary_account_ids : [],
+      profile_id: row.profile_id || null,
+      publishing_mode: row.publishing_mode || 'review',
+      hybrid_min_score: Number(row.hybrid_min_score) || 80,
+      daily_cap: row.daily_cap !== undefined ? Number(row.daily_cap) : 3,
+      active: isLive,
+      is_live: isLive,
+      version: Number(row.version || ov.version || 1),
+      auto_posting_stopped_action: row.auto_posting_stopped_action || 'pause',
+      schedule: row.schedule || SAFE_DEFAULT_SCHEDULE,
+      niche_analysis: row.niche_analysis || null,
+      ai_disclosure_enabled: Boolean(row.ai_disclosure_enabled),
+      ai_disclosure_text: row.ai_disclosure_text || '',
+      source_attribution_enabled: Boolean(row.source_attribution_enabled),
+      last_test_run_at: row.last_test_run_at || null,
+      checklist_status: row.checklist_status || null,
+      custom_caption_prompt: row.custom_caption_prompt || '',
+      custom_caption_prompt_mode: row.custom_caption_prompt_mode || 'append',
+      custom_image_prompt: row.custom_image_prompt || '',
+      custom_image_prompt_mode: row.custom_image_prompt_mode || 'append',
+      custom_niche: row.custom_niche || row.custom_niche_text || ov.custom_niche || ov.custom_niche_text || '',
+      custom_niche_text: row.custom_niche_text || row.custom_niche || ov.custom_niche_text || ov.custom_niche || '',
+      mode_chosen: Boolean(row.mode_chosen ?? ov.mode_chosen ?? false),
+      settings_version: Number(row.settings_version || ov.settings_version || row.version || 1),
+      schedule_version: Number(row.schedule_version || ov.schedule_version || 1),
+      prompts_version: Number(row.prompts_version || ov.prompts_version || 1),
+      profile_version: Number(row.profile_version || ov.profile_version || 1),
+      settings_updated_at: row.settings_updated_at || ov.settings_updated_at || row.updated_at,
+      test_run_verified: Boolean(row.test_run_verified ?? ov.test_run_verified ?? false),
+      test_run_report: row.test_run_report ?? ov.test_run_report ?? null,
+      qa_pass_threshold: row.qa_pass_threshold !== undefined && row.qa_pass_threshold !== null ? Number(row.qa_pass_threshold) : (ov.qa_pass_threshold !== undefined ? Number(ov.qa_pass_threshold) : 80),
+      max_sentences_per_paragraph: row.max_sentences_per_paragraph !== undefined && row.max_sentences_per_paragraph !== null ? Number(row.max_sentences_per_paragraph) : (ov.max_sentences_per_paragraph !== undefined ? Number(ov.max_sentences_per_paragraph) : 3),
+      min_words: row.min_words !== undefined && row.min_words !== null ? Number(row.min_words) : (ov.min_words !== undefined ? Number(ov.min_words) : undefined),
+      target_words: row.target_words !== undefined && row.target_words !== null ? Number(row.target_words) : (ov.target_words !== undefined ? Number(ov.target_words) : undefined),
+      max_words: row.max_words !== undefined && row.max_words !== null ? Number(row.max_words) : (ov.max_words !== undefined ? Number(ov.max_words) : undefined),
+      first_comment_enabled: row.first_comment_enabled !== false,
+      first_comment_prompt: row.first_comment_prompt || '',
+      overrides: ov,
+      connected_at: row.connected_at || row.created_at,
+      last_synced_at: row.last_synced_at || row.updated_at,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  }
+
   // --- Pages CRUD ---
   public async getPages(): Promise<StoredPage[]> {
     if (isTestEnv() && !this.client) {
@@ -702,60 +825,7 @@ export class SystemStore {
       return [];
     }
 
-    return (data || []).map((row) => ({
-      id: row.id,
-      fb_account_id: row.fb_account_id,
-      name: row.name,
-      fb_page_id: row.fb_page_id,
-      fb_page_token: row.fb_page_token,
-      token_status: row.token_status || 'valid',
-      category: row.category || undefined,
-      picture_url: row.picture_url || undefined,
-      tasks: Array.isArray(row.tasks) ? row.tasks : [],
-      fan_count: typeof row.fan_count === 'number' ? row.fan_count : (row.fan_count ? Number(row.fan_count) : 0),
-      secondary_account_ids: Array.isArray(row.secondary_account_ids) ? row.secondary_account_ids : [],
-      profile_id: row.profile_id || null,
-      publishing_mode: row.publishing_mode || 'review',
-      hybrid_min_score: Number(row.hybrid_min_score) || 80,
-      daily_cap: row.daily_cap !== undefined ? Number(row.daily_cap) : 3,
-      active: Boolean(row.active),
-      is_live: Boolean(row.is_live !== undefined ? row.is_live : row.active),
-      version: Number(row.version || 1),
-      auto_posting_stopped_action: row.auto_posting_stopped_action || 'pause',
-      schedule: row.schedule || SAFE_DEFAULT_SCHEDULE,
-      niche_analysis: row.niche_analysis || null,
-      ai_disclosure_enabled: Boolean(row.ai_disclosure_enabled),
-      ai_disclosure_text: row.ai_disclosure_text || '',
-      source_attribution_enabled: Boolean(row.source_attribution_enabled),
-      last_test_run_at: row.last_test_run_at || null,
-      checklist_status: row.checklist_status || null,
-      custom_caption_prompt: row.custom_caption_prompt || '',
-      custom_caption_prompt_mode: row.custom_caption_prompt_mode || 'append',
-      custom_image_prompt: row.custom_image_prompt || '',
-      custom_image_prompt_mode: row.custom_image_prompt_mode || 'append',
-      custom_niche: row.custom_niche || row.custom_niche_text || '',
-      custom_niche_text: row.custom_niche_text || row.custom_niche || '',
-      mode_chosen: Boolean(row.mode_chosen),
-      settings_version: Number(row.settings_version || row.version || 1),
-      schedule_version: Number(row.schedule_version || 1),
-      prompts_version: Number(row.prompts_version || 1),
-      profile_version: Number(row.profile_version || 1),
-      settings_updated_at: row.settings_updated_at || row.updated_at,
-      test_run_verified: Boolean(row.test_run_verified),
-      test_run_report: row.test_run_report || null,
-      qa_pass_threshold: row.qa_pass_threshold !== undefined && row.qa_pass_threshold !== null ? Number(row.qa_pass_threshold) : 80,
-      max_sentences_per_paragraph: row.max_sentences_per_paragraph !== undefined && row.max_sentences_per_paragraph !== null ? Number(row.max_sentences_per_paragraph) : 3,
-      min_words: row.min_words !== undefined && row.min_words !== null ? Number(row.min_words) : undefined,
-      target_words: row.target_words !== undefined && row.target_words !== null ? Number(row.target_words) : undefined,
-      max_words: row.max_words !== undefined && row.max_words !== null ? Number(row.max_words) : undefined,
-      first_comment_enabled: row.first_comment_enabled !== false,
-      first_comment_prompt: row.first_comment_prompt || '',
-      overrides: row.overrides || {},
-      connected_at: row.connected_at || row.created_at,
-      last_synced_at: row.last_synced_at || row.updated_at,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }));
+    return (data || []).map((row) => this.mapRowToStoredPage(row));
   }
 
   public async getPageById(id: string): Promise<StoredPage | undefined> {
@@ -770,60 +840,7 @@ export class SystemStore {
       .maybeSingle();
 
     if (error || !data) return undefined;
-    return {
-      id: data.id,
-      fb_account_id: data.fb_account_id,
-      name: data.name,
-      fb_page_id: data.fb_page_id,
-      fb_page_token: data.fb_page_token,
-      token_status: data.token_status || 'valid',
-      category: data.category || undefined,
-      picture_url: data.picture_url || undefined,
-      tasks: Array.isArray(data.tasks) ? data.tasks : [],
-      fan_count: typeof data.fan_count === 'number' ? data.fan_count : (data.fan_count ? Number(data.fan_count) : 0),
-      secondary_account_ids: Array.isArray(data.secondary_account_ids) ? data.secondary_account_ids : [],
-      profile_id: data.profile_id || null,
-      publishing_mode: data.publishing_mode || 'review',
-      hybrid_min_score: Number(data.hybrid_min_score) || 80,
-      daily_cap: data.daily_cap !== undefined ? Number(data.daily_cap) : 3,
-      active: Boolean(data.active),
-      is_live: Boolean(data.is_live !== undefined ? data.is_live : data.active),
-      version: Number(data.version || 1),
-      auto_posting_stopped_action: data.auto_posting_stopped_action || 'pause',
-      schedule: data.schedule || SAFE_DEFAULT_SCHEDULE,
-      niche_analysis: data.niche_analysis || null,
-      ai_disclosure_enabled: Boolean(data.ai_disclosure_enabled),
-      ai_disclosure_text: data.ai_disclosure_text || '',
-      source_attribution_enabled: Boolean(data.source_attribution_enabled),
-      last_test_run_at: data.last_test_run_at || null,
-      checklist_status: data.checklist_status || null,
-      custom_caption_prompt: data.custom_caption_prompt || '',
-      custom_caption_prompt_mode: data.custom_caption_prompt_mode || 'append',
-      custom_image_prompt: data.custom_image_prompt || '',
-      custom_image_prompt_mode: data.custom_image_prompt_mode || 'append',
-      custom_niche: data.custom_niche || data.custom_niche_text || '',
-      custom_niche_text: data.custom_niche_text || data.custom_niche || '',
-      mode_chosen: Boolean(data.mode_chosen),
-      settings_version: Number(data.settings_version || data.version || 1),
-      schedule_version: Number(data.schedule_version || 1),
-      prompts_version: Number(data.prompts_version || 1),
-      profile_version: Number(data.profile_version || 1),
-      settings_updated_at: data.settings_updated_at || data.updated_at,
-      test_run_verified: Boolean(data.test_run_verified),
-      test_run_report: data.test_run_report || null,
-      qa_pass_threshold: data.qa_pass_threshold !== undefined && data.qa_pass_threshold !== null ? Number(data.qa_pass_threshold) : 80,
-      max_sentences_per_paragraph: data.max_sentences_per_paragraph !== undefined && data.max_sentences_per_paragraph !== null ? Number(data.max_sentences_per_paragraph) : 3,
-      min_words: data.min_words !== undefined && data.min_words !== null ? Number(data.min_words) : undefined,
-      target_words: data.target_words !== undefined && data.target_words !== null ? Number(data.target_words) : undefined,
-      max_words: data.max_words !== undefined && data.max_words !== null ? Number(data.max_words) : undefined,
-      first_comment_enabled: data.first_comment_enabled !== false,
-      first_comment_prompt: data.first_comment_prompt || '',
-      overrides: data.overrides || {},
-      connected_at: data.connected_at || data.created_at,
-      last_synced_at: data.last_synced_at || data.updated_at,
-      created_at: data.created_at,
-      updated_at: data.updated_at,
-    };
+    return this.mapRowToStoredPage(data);
   }
 
   public async createPage(input: {
@@ -961,7 +978,29 @@ export class SystemStore {
 
     const encryptedToken = encryptPageToken(input.fb_page_token);
 
-    let payload: Record<string, any> = {
+    const overridesObj: Record<string, any> = {
+      ...(input.overrides || {}),
+      ...(input.qa_pass_threshold !== undefined ? { qa_pass_threshold: input.qa_pass_threshold } : {}),
+      ...(input.max_sentences_per_paragraph !== undefined ? { max_sentences_per_paragraph: input.max_sentences_per_paragraph } : {}),
+      ...(input.min_words !== undefined ? { min_words: input.min_words } : {}),
+      ...(input.target_words !== undefined ? { target_words: input.target_words } : {}),
+      ...(input.max_words !== undefined ? { max_words: input.max_words } : {}),
+      ...(customNicheVal ? { custom_niche: customNicheVal, custom_niche_text: customNicheVal } : {}),
+      mode_chosen: Boolean(input.mode_chosen),
+      settings_version: 1,
+      schedule_version: 1,
+      prompts_version: 1,
+      profile_version: 1,
+      test_run_verified: false,
+      test_run_report: null,
+    };
+
+    const fullSchedule = {
+      ...safeSchedule,
+      is_live: safeActive,
+    };
+
+    let rawPayload: Record<string, any> = {
       fb_account_id: safeAccountId,
       name: input.name,
       fb_page_id: input.fb_page_id,
@@ -973,23 +1012,11 @@ export class SystemStore {
       fan_count: typeof input.fan_count === 'number' ? input.fan_count : 0,
       secondary_account_ids: input.secondary_account_ids || [],
       profile_id: safeProfileId,
-      custom_niche: customNicheVal,
-      custom_niche_text: customNicheVal,
       publishing_mode: safeMode,
-      mode_chosen: Boolean(input.mode_chosen),
       hybrid_min_score: input.hybrid_min_score ?? 80,
       daily_cap: input.daily_cap !== undefined ? Number(input.daily_cap) : 3,
       active: safeActive,
-      is_live: safeActive,
-      version: 1,
-      settings_version: 1,
-      schedule_version: 1,
-      prompts_version: 1,
-      profile_version: 1,
-      settings_updated_at: now,
-      test_run_verified: false,
-      test_run_report: null,
-      schedule: safeSchedule,
+      schedule: fullSchedule,
       niche_analysis: input.niche_analysis || null,
       ai_disclosure_enabled: Boolean(input.ai_disclosure_enabled),
       ai_disclosure_text: input.ai_disclosure_text || '',
@@ -1000,19 +1027,22 @@ export class SystemStore {
       custom_caption_prompt_mode: input.custom_caption_prompt_mode || 'append',
       custom_image_prompt: input.custom_image_prompt || '',
       custom_image_prompt_mode: input.custom_image_prompt_mode || 'append',
-      qa_pass_threshold: input.qa_pass_threshold !== undefined ? input.qa_pass_threshold : 80,
-      max_sentences_per_paragraph: input.max_sentences_per_paragraph !== undefined ? input.max_sentences_per_paragraph : 3,
-      min_words: input.min_words !== undefined ? input.min_words : null,
-      target_words: input.target_words !== undefined ? input.target_words : null,
-      max_words: input.max_words !== undefined ? input.max_words : null,
       first_comment_enabled: input.first_comment_enabled !== false,
       first_comment_prompt: input.first_comment_prompt !== undefined ? input.first_comment_prompt : 'What do you think? Share your thoughts in the comments below!',
-      overrides: input.overrides || {},
+      overrides: overridesObj,
       connected_at: input.connected_at || now,
       last_synced_at: input.last_synced_at || now,
       created_at: now,
       updated_at: now,
     };
+
+    // Filter to ONLY verified physical columns in Supabase
+    let payload: Record<string, any> = {};
+    for (const [k, v] of Object.entries(rawPayload)) {
+      if (VERIFIED_PAGE_COLUMNS.has(k)) {
+        payload[k] = v;
+      }
+    }
 
     let { data, error } = await this.getClient().from('pages').insert(payload).select().single();
     if (error && (error.message?.includes('schema cache') || error.message?.includes('column') || error.message?.includes('check constraint'))) {
@@ -1023,16 +1053,8 @@ export class SystemStore {
       delete payload.secondary_account_ids;
       delete payload.connected_at;
       delete payload.last_synced_at;
-      delete payload.custom_niche;
-      delete payload.custom_niche_text;
-      delete payload.settings_version;
-      delete payload.schedule_version;
-      delete payload.prompts_version;
-      delete payload.profile_version;
-      delete payload.settings_updated_at;
-      delete payload.mode_chosen;
-      delete payload.test_run_verified;
-      delete payload.test_run_report;
+      delete payload.niche_analysis;
+      delete payload.checklist_status;
       if (payload.token_status === 'cannot_publish' || payload.token_status === 'inaccessible') {
         payload.token_status = 'revoked';
       }
@@ -1045,11 +1067,13 @@ export class SystemStore {
       throw new Error(`Failed to create Facebook Page in Supabase: ${error.message}`);
     }
 
-    return {
+    return this.mapRowToStoredPage({
       ...payload,
+      ...rawPayload,
+      overrides: overridesObj,
       id: data.id,
       profile_id: safeProfileId,
-    } as StoredPage;
+    });
   }
 
   public async updatePage(
@@ -1078,6 +1102,8 @@ export class SystemStore {
       'last_test_run_at',
       'secondary_account_ids',
       'fb_page_token',
+      'fb_account_id',
+      'name',
     ]);
     const updateKeys = Object.keys(updates);
     const isOperationalOnly = Boolean(
@@ -1401,9 +1427,28 @@ export class SystemStore {
     if (updates.custom_caption_prompt_mode) updatePayload.custom_caption_prompt_mode = updates.custom_caption_prompt_mode;
     if (updates.custom_image_prompt !== undefined) updatePayload.custom_image_prompt = updates.custom_image_prompt;
     if (updates.custom_image_prompt_mode) updatePayload.custom_image_prompt_mode = updates.custom_image_prompt_mode;
-    if (updates.first_comment_enabled !== undefined) updatePayload.first_comment_enabled = updates.first_comment_enabled;
-    if (updates.first_comment_prompt !== undefined) updatePayload.first_comment_prompt = updates.first_comment_prompt;
-    if (updates.overrides) updatePayload.overrides = updates.overrides;
+    const existingOverrides = (existingRow.overrides && typeof existingRow.overrides === 'object') ? existingRow.overrides : {};
+    const updatedOverrides = {
+      ...existingOverrides,
+      ...(updates.overrides || {}),
+      ...((updates as any).qa_pass_threshold !== undefined ? { qa_pass_threshold: (updates as any).qa_pass_threshold } : {}),
+      ...((updates as any).max_sentences_per_paragraph !== undefined ? { max_sentences_per_paragraph: (updates as any).max_sentences_per_paragraph } : {}),
+      ...((updates as any).min_words !== undefined ? { min_words: (updates as any).min_words } : {}),
+      ...((updates as any).target_words !== undefined ? { target_words: (updates as any).target_words } : {}),
+      ...((updates as any).max_words !== undefined ? { max_words: (updates as any).max_words } : {}),
+      ...(updates.custom_niche !== undefined ? { custom_niche: updates.custom_niche } : {}),
+      ...(updates.custom_niche_text !== undefined ? { custom_niche_text: updates.custom_niche_text } : {}),
+      ...(updates.mode_chosen !== undefined ? { mode_chosen: updates.mode_chosen } : {}),
+      ...(updates.test_run_verified !== undefined ? { test_run_verified: updates.test_run_verified } : {}),
+      ...(updates.test_run_report !== undefined ? { test_run_report: updates.test_run_report } : {}),
+      settings_version: updatePayload.settings_version || existingOverrides.settings_version || existingRow.settings_version || existingRow.version || 1,
+      schedule_version: updatePayload.schedule_version || existingOverrides.schedule_version || existingRow.schedule_version || 1,
+      prompts_version: updatePayload.prompts_version || existingOverrides.prompts_version || existingRow.prompts_version || 1,
+      profile_version: updatePayload.profile_version || existingOverrides.profile_version || existingRow.profile_version || 1,
+      settings_updated_at: updatePayload.settings_updated_at || nowIso,
+    };
+    updatePayload.overrides = updatedOverrides;
+
     if (updates.connected_at !== undefined) updatePayload.connected_at = updates.connected_at;
     if (updates.last_synced_at !== undefined) updatePayload.last_synced_at = updates.last_synced_at;
 
@@ -1411,45 +1456,37 @@ export class SystemStore {
       updatePayload.fb_page_token = encryptPageToken(updates.fb_page_token);
     }
 
+    // Filter to ONLY verified physical columns in Supabase
+    let filteredPayload: Record<string, any> = {};
+    for (const [k, v] of Object.entries(updatePayload)) {
+      if (VERIFIED_PAGE_COLUMNS.has(k)) {
+        filteredPayload[k] = v;
+      }
+    }
+
     let { data, error } = await this.getClient()
       .from('pages')
-      .update(updatePayload)
+      .update(filteredPayload)
       .eq('id', id)
       .select()
       .single();
 
     if (error && (error.message?.includes('schema cache') || error.message?.includes('column') || error.message?.includes('check constraint'))) {
-      delete updatePayload.category;
-      delete updatePayload.picture_url;
-      delete updatePayload.tasks;
-      delete updatePayload.fan_count;
-      delete updatePayload.secondary_account_ids;
-      delete updatePayload.connected_at;
-      delete updatePayload.last_synced_at;
-      delete updatePayload.is_live;
-      delete updatePayload.version;
-      delete updatePayload.auto_posting_stopped_action;
-      delete updatePayload.custom_niche;
-      delete updatePayload.custom_niche_text;
-      delete updatePayload.mode_chosen;
-      delete updatePayload.settings_version;
-      delete updatePayload.schedule_version;
-      delete updatePayload.prompts_version;
-      delete updatePayload.profile_version;
-      delete updatePayload.settings_updated_at;
-      delete updatePayload.test_run_verified;
-      delete updatePayload.test_run_report;
-      delete updatePayload.qa_pass_threshold;
-      delete updatePayload.max_sentences_per_paragraph;
-      delete updatePayload.min_words;
-      delete updatePayload.target_words;
-      delete updatePayload.max_words;
-      if (updatePayload.token_status === 'cannot_publish' || updatePayload.token_status === 'inaccessible') {
-        updatePayload.token_status = 'revoked';
+      delete filteredPayload.category;
+      delete filteredPayload.picture_url;
+      delete filteredPayload.tasks;
+      delete filteredPayload.fan_count;
+      delete filteredPayload.secondary_account_ids;
+      delete filteredPayload.connected_at;
+      delete filteredPayload.last_synced_at;
+      delete filteredPayload.niche_analysis;
+      delete filteredPayload.checklist_status;
+      if (filteredPayload.token_status === 'cannot_publish' || filteredPayload.token_status === 'inaccessible') {
+        filteredPayload.token_status = 'revoked';
       }
       const retry = await this.getClient()
         .from('pages')
-        .update(updatePayload)
+        .update(filteredPayload)
         .eq('id', id)
         .select()
         .single();
@@ -1482,7 +1519,7 @@ export class SystemStore {
       throw new Error(`Write-verification failed: active status did not persist to database.`);
     }
 
-    return verifiedRow as StoredPage;
+    return this.mapRowToStoredPage(verifiedRow);
   }
 
   public async deletePage(id: string): Promise<boolean> {
@@ -1503,7 +1540,29 @@ export class SystemStore {
       return Array.from(this.memoryContentProfiles.values());
     }
     const { data, error } = await this.getClient().from('content_profiles').select('*').order('created_at', { ascending: false });
-    if (error || !data) return [];
+    if (error || !data || data.length === 0) {
+      const starters = getAllNicheProfiles();
+      return starters.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        type: p.type,
+        language: p.language,
+        audience: p.audience,
+        masterPrompt: p.masterPrompt,
+        templates: p.templates || {},
+        captionSettings: p.captionSettings || {},
+        hashtagSettings: p.hashtagSettings || {},
+        disclosureSettings: (p as any).disclosureSettings || {},
+        imageSettings: p.imageSettings || {},
+        topicSettings: p.topicSettings || {},
+        researchSourceIds: (p as any).researchSourceIds || [],
+        customVariables: p.customVariables || {},
+        version: 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
+    }
     return data.map((r: any) => ({
       id: r.id,
       name: r.name,
@@ -1617,7 +1676,7 @@ export class SystemStore {
           tasks: tasks.length > 0 ? tasks : existing.tasks,
           fan_count: typeof input.fan_count === 'number' ? input.fan_count : existing.fan_count,
           last_synced_at: new Date().toISOString(),
-        });
+        }, { isOperational: true, force: true });
         return Object.assign(updated, { isNew: false });
       }
 
@@ -1677,7 +1736,7 @@ export class SystemStore {
         tasks: tasks.length > 0 ? tasks : existing.tasks,
         fan_count: typeof input.fan_count === 'number' ? input.fan_count : existing.fan_count,
         last_synced_at: new Date().toISOString(),
-      });
+      }, { isOperational: true, force: true });
       return Object.assign(updated, { isNew: false });
     }
 
@@ -2836,11 +2895,26 @@ export class SystemStore {
 
     for (const p of starters) {
       const slug = generateProfileSlug(p.name, (p as any).customVariables?.niche || (p as any).niche);
+      let safeType = p.type || 'factual';
+      if (!['factual', 'fiction', 'true_story', 'evergreen'].includes(safeType)) {
+        if (['journalistic', 'historical', 'mystery', 'documentary'].includes(safeType)) {
+          safeType = 'true_story';
+        } else {
+          safeType = 'factual';
+        }
+      }
+
+      const customVars = {
+        ...(p.customVariables || {}),
+        slug,
+        is_system: true,
+      };
+
       const payload: Record<string, any> = {
         name: p.name,
         slug,
         description: p.description || '',
-        type: p.type || 'factual',
+        type: safeType,
         language: p.language || 'en',
         audience: p.audience || 'General audience',
         master_prompt: p.masterPrompt || '',
@@ -2851,7 +2925,7 @@ export class SystemStore {
         image_settings: p.imageSettings || {},
         topic_settings: p.topicSettings || {},
         research_source_ids: (p as any).researchSourceIds || [],
-        custom_variables: p.customVariables || {},
+        custom_variables: customVars,
         is_system: true,
         is_customized: false,
         version: 1,
@@ -2883,7 +2957,7 @@ export class SystemStore {
         continue;
       }
 
-      // Check if already in Supabase by name or stable slug
+      // Check if already in Supabase by name
       let existing: any = null;
       const { data: byName } = await this.getClient()
         .from('content_profiles')
@@ -2891,15 +2965,14 @@ export class SystemStore {
         .eq('name', p.name)
         .maybeSingle();
 
-      if (byName) {
-        existing = byName;
-      } else {
-        const { data: bySlug } = await this.getClient()
-          .from('content_profiles')
-          .select('*')
-          .eq('slug', slug)
-          .maybeSingle();
-        existing = bySlug;
+      existing = byName;
+
+      // Filter payload to only physical database columns in Supabase
+      const dbPayload: Record<string, any> = {};
+      for (const [k, v] of Object.entries(payload)) {
+        if (VERIFIED_CONTENT_PROFILES_COLUMNS.has(k)) {
+          dbPayload[k] = v;
+        }
       }
 
       if (existing) {
@@ -2908,43 +2981,34 @@ export class SystemStore {
           (existing.version && existing.version > 1) ||
           existing.is_system === false
         );
-        const isIdentical = (existing.slug === slug || !existing.slug) && existing.name === p.name && existing.master_prompt === payload.master_prompt;
+        const isIdentical = existing.name === p.name && existing.master_prompt === payload.master_prompt;
 
         if (isCustomized || isIdentical) {
           skippedCount++;
           imported.push(existing);
         } else {
           updatedCount++;
-          const updatePayload: Record<string, any> = {
-            ...payload,
-            slug: existing.slug || slug,
-          };
           let { data: updated, error: updErr } = await this.getClient()
             .from('content_profiles')
-            .update(updatePayload)
+            .update(dbPayload)
             .eq('id', existing.id)
             .select()
             .single();
 
-          if (updErr && (updErr.message.includes('column') || updErr.message.includes('schema cache'))) {
-            delete updatePayload.is_system;
-            delete updatePayload.is_customized;
-            delete updatePayload.version;
-            delete updatePayload.slug;
-            const retry = await this.getClient()
-              .from('content_profiles')
-              .update(updatePayload)
-              .eq('id', existing.id)
-              .select()
-              .single();
-            updated = retry.data;
+          if (updErr) {
+            console.warn('[SystemStore] Update profile error:', updErr.message);
           }
           imported.push(updated || existing);
         }
       } else {
         importedCount++;
+        const profileId = p.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p.id)
+          ? p.id
+          : crypto.randomUUID();
+
         const insertPayload: Record<string, any> = {
-          ...payload,
+          id: profileId,
+          ...dbPayload,
         };
         let { data: created, error: insErr } = await this.getClient()
           .from('content_profiles')
@@ -2952,17 +3016,8 @@ export class SystemStore {
           .select()
           .single();
 
-        if (insErr && (insErr.message.includes('column') || insErr.message.includes('schema cache'))) {
-          delete insertPayload.is_system;
-          delete insertPayload.is_customized;
-          delete insertPayload.version;
-          delete insertPayload.slug;
-          const retry = await this.getClient()
-            .from('content_profiles')
-            .insert(insertPayload)
-            .select()
-            .single();
-          created = retry.data;
+        if (insErr) {
+          console.warn('[SystemStore] Insert profile error:', insErr.message);
         }
         if (created) imported.push(created);
       }

@@ -1894,7 +1894,7 @@
         body: JSON.stringify({ accountId }),
       });
       const data = await res.json();
-      if (!res.ok || data.error) {
+      if (!res.ok || data.error || data.success === false) {
         alert('Sync error: ' + (data.error || 'Failed to sync account pages'));
       } else {
         let msg = '🎉 Synced ' + (data.accountName || 'Account') + ' successfully!\n\n' +
@@ -1930,8 +1930,10 @@
         method: 'POST',
       });
       const data = await res.json();
-      if (!res.ok || data.error) {
-        alert('Sync all error: ' + (data.error || 'Failed to sync pages across accounts'));
+      const hasError = !res.ok || data.error || data.success === false || (Array.isArray(data.errors) && data.errors.length > 0 && (!data.accountsSynced || data.accountsSynced === 0));
+      if (hasError) {
+        const errorMsg = data.error || (Array.isArray(data.errors) ? data.errors.join('\n') : 'Failed to sync pages across accounts');
+        alert('Sync all error:\n\n' + errorMsg);
       } else {
         alert(
           '🎉 Full Facebook Sync Completed!\n\n' +
@@ -3793,17 +3795,21 @@
           }
           banner.innerHTML = msg;
         } else if (params.get('error')) {
-          banner.style.display = 'block';
+          banner.style.display = 'flex';
+          banner.style.justifyContent = 'space-between';
+          banner.style.alignItems = 'center';
           banner.style.background = '#7f1d1d';
           banner.style.border = '1px solid #dc2626';
           banner.style.color = '#fecaca';
-          banner.innerHTML = '⚠️ <strong>Facebook Connection Notice:</strong> ' + escapeHtml(params.get('error'));
+          banner.innerHTML = '<div>⚠️ <strong>Facebook Connection Notice:</strong> ' + escapeHtml(params.get('error')) + '</div><button onclick="this.parentElement.style.display=\'none\';" style="background:none;border:none;color:#fecaca;cursor:pointer;font-size:18px;font-weight:bold;padding:0 8px;" title="Dismiss">&times;</button>';
         } else if (params.get('warning')) {
-          banner.style.display = 'block';
+          banner.style.display = 'flex';
+          banner.style.justifyContent = 'space-between';
+          banner.style.alignItems = 'center';
           banner.style.background = '#78350f';
           banner.style.border = '1px solid #d97706';
           banner.style.color = '#fde68a';
-          banner.innerHTML = '⚠️ <strong>Notice:</strong> ' + escapeHtml(params.get('warning'));
+          banner.innerHTML = '<div>⚠️ <strong>Notice:</strong> ' + escapeHtml(params.get('warning')) + '</div><button onclick="this.parentElement.style.display=\'none\';" style="background:none;border:none;color:#fde68a;cursor:pointer;font-size:18px;font-weight:bold;padding:0 8px;" title="Dismiss">&times;</button>';
         }
       }
 

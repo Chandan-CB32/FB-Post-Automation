@@ -787,6 +787,9 @@ export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
 </html>`;
 }
 
+// In-memory single-use guard for Facebook OAuth authorization codes
+const processedOAuthCodes = new Set<string>();
+
 export async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
@@ -1096,6 +1099,16 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         return;
       }
 
+      // Single-use code deduplication: if code was already exchanged, redirect cleanly
+      if (processedOAuthCodes.has(code)) {
+        res.writeHead(302, {
+          'Set-Cookie': clearCookies,
+          Location: `${safeReturnTo}?connected=true&reloaded=true`,
+        });
+        res.end();
+        return;
+      }
+
       const appId = process.env.FACEBOOK_APP_ID;
       const appSecret = process.env.FACEBOOK_APP_SECRET;
       const hostUrl = process.env.APP_URL || `http://${req.headers.host || 'localhost'}`;
@@ -1132,6 +1145,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         );
         longLivedToken = longRes.accessToken;
         expiresIn = longRes.expiresIn;
+        processedOAuthCodes.add(code);
+        if (processedOAuthCodes.size > 500) processedOAuthCodes.clear();
       } catch (tokenErr: any) {
         const safeMsg = sanitizeFacebookErrorMessage(tokenErr.message || 'Unknown token error');
         res.writeHead(302, {
@@ -1460,6 +1475,14 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     if (url.pathname === '/api/facebook/sync-all' && req.method === 'POST') {
       try {
         const result = await store.syncAllPages();
+        if (!result.success && result.accountsSynced === 0) {
+          return sendJson({
+            ...result,
+            error: (result.errors && result.errors.length > 0)
+              ? result.errors.join('; ')
+              : 'Failed to sync Facebook accounts.',
+          }, 400);
+        }
         return sendJson(result);
       } catch (e: any) {
         return sendJson({ error: e.message }, 500);
@@ -3076,7 +3099,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     }
 
     // 21. API: Import Starter Profiles (27 Viral Niches Catalog)
-    if (url.pathname === '/api/profiles/import-starter' && req.method === 'POST') {
+    if ((url.pathname === '/api/profiles/import-starter' || url.pathname === '/api/profiles/import-starters') && req.method === 'POST') {
       try {
         const result = await store.importStarterProfiles();
         return sendJson({
@@ -3084,6 +3107,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           count: result.count,
           importedCount: result.importedCount,
           skippedCount: result.skippedCount,
+          updatedCount: result.updatedCount,
           profiles: result.profiles,
         });
       } catch (e: any) {

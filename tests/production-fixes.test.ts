@@ -178,8 +178,8 @@ describe('Production Critical Bugs & Fixes Suite (fbauto247.vercel.app)', () => 
     expect(data.success).toBe(true);
     expect(Array.isArray(data.slots)).toBe(true);
     expect(Array.isArray(data.preview)).toBe(true); // Backwards-compatible
-    expect(data.count).toBe(28); // 4 posts/day * 7 days
-    expect(data.slots.length).toBe(28);
+    expect(data.count).toBeGreaterThanOrEqual(24); // 4 posts/day over 7 days minus past slots for today
+    expect(data.slots.length).toBe(data.count);
 
     // Each slot must contain audience time and local IST time
     const firstSlot = data.slots[0];
