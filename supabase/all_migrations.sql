@@ -955,7 +955,57 @@ BEGIN
         ALTER TABLE public.pages ADD COLUMN test_run_report JSONB DEFAULT NULL;
     END IF;
 
-    -- 2. Ensure version and system flags exist on public.content_profiles
+    -- QA configuration and editorial word limits on public.pages
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'qa_pass_threshold'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN qa_pass_threshold INTEGER DEFAULT 80;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'max_sentences_per_paragraph'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN max_sentences_per_paragraph INTEGER DEFAULT 3;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'min_words'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN min_words INTEGER DEFAULT NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'target_words'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN target_words INTEGER DEFAULT NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'max_words'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN max_words INTEGER DEFAULT NULL;
+    END IF;
+
+    -- 2. Ensure version, slug, customization and system flags exist on public.content_profiles
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'slug'
+    ) THEN
+        ALTER TABLE public.content_profiles ADD COLUMN slug TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'is_customized'
+    ) THEN
+        ALTER TABLE public.content_profiles ADD COLUMN is_customized BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
         WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'version'
@@ -1007,4 +1057,26 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON public.audit_log (created
 CREATE INDEX IF NOT EXISTS idx_provider_keys_active ON public.provider_keys (provider_id, is_active);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_content_profiles_name ON public.content_profiles (name);
 CREATE INDEX IF NOT EXISTS idx_pages_settings_version ON public.pages (settings_version);
+
+-- 6. Content Profiles Slug Backfill & Unique Index
+UPDATE public.content_profiles 
+SET slug = lower(trim(regexp_replace(regexp_replace(name, '&', '', 'g'), '[^a-zA-Z0-9]+', '-', 'g'), '-'))
+WHERE slug IS NULL OR slug = '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_content_profiles_slug ON public.content_profiles (slug);
+
+-- 7. Resilient Foreign Key & Orphan Cleanup
+-- Clean up orphaned profile references (stale profile IDs)
+UPDATE public.pages 
+SET profile_id = NULL 
+WHERE profile_id IS NOT NULL 
+  AND profile_id NOT IN (SELECT id FROM public.content_profiles);
+
+-- Recreate foreign key with ON DELETE SET NULL to ensure deleting a profile never cascades or errors
+ALTER TABLE public.pages DROP CONSTRAINT IF EXISTS pages_profile_id_fkey;
+ALTER TABLE public.pages 
+ADD CONSTRAINT pages_profile_id_fkey 
+FOREIGN KEY (profile_id) REFERENCES public.content_profiles(id) ON DELETE SET NULL;
+
+
 

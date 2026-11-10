@@ -2142,7 +2142,7 @@
     }
   }
 
-  function openPageSettingsModal(pageId) {
+  async function openPageSettingsModal(pageId) {
     currentSettingsPageId = pageId;
     var page = pagesData.find(function (p) { return p.id === pageId; });
     if (!page) {
@@ -2158,6 +2158,40 @@
     document.getElementById('psmPageName').innerText = page.name;
     document.getElementById('psmPageFbId').innerText = page.fb_page_id;
     document.getElementById('psmTokenStatus').innerText = (page.token_status || 'valid').toUpperCase();
+
+    // Freshly fetch profiles from database to guarantee no stale profile IDs
+    try {
+      var pRes = await fetch('/api/profiles');
+      if (pRes.ok) {
+        var freshProfiles = await pRes.json();
+        var profSelect = document.getElementById('psmProfileSelect');
+        var alertNotice = document.getElementById('psmAlertNotice');
+        if (profSelect && Array.isArray(freshProfiles)) {
+          var optHtml = '<option value="__custom__">Custom / Type Your Own Niche...</option>';
+          freshProfiles.forEach(function (pr) {
+            optHtml += '<option value="' + pr.id + '">' + escapeHtml(pr.name) + (pr.category ? ' (' + escapeHtml(pr.category) + ')' : '') + '</option>';
+          });
+          profSelect.innerHTML = optHtml;
+
+          if (page.profile_id && page.profile_id !== '__custom__' && page.profile_id !== 'custom') {
+            var exists = freshProfiles.some(function (pr) { return pr.id === page.profile_id; });
+            if (!exists) {
+              if (alertNotice) {
+                document.getElementById('psmAlertNoticeText').innerText = 'The previously assigned profile (ID: ' + page.profile_id + ') no longer exists in the database. Selection has been safely reset to Custom Niche.';
+                alertNotice.style.display = 'block';
+              }
+              page.profile_id = null;
+            } else if (alertNotice) {
+              alertNotice.style.display = 'none';
+            }
+          } else if (alertNotice) {
+            alertNotice.style.display = 'none';
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not refresh profiles list on modal open:', e);
+    }
 
     // Populate Modal Inputs
     populateModalFromPage(page);
@@ -2177,6 +2211,31 @@
 
     var modal = document.getElementById('pageSettingsModal');
     if (modal) modal.classList.add('active');
+  }
+
+  async function reloadProfilesAndResetToCustom() {
+    try {
+      var pRes = await fetch('/api/profiles');
+      if (pRes.ok) {
+        var freshProfiles = await pRes.json();
+        var profSelect = document.getElementById('psmProfileSelect');
+        if (profSelect && Array.isArray(freshProfiles)) {
+          var optHtml = '<option value="__custom__" selected>Custom / Type Your Own Niche...</option>';
+          freshProfiles.forEach(function (pr) {
+            optHtml += '<option value="' + pr.id + '">' + escapeHtml(pr.name) + (pr.category ? ' (' + escapeHtml(pr.category) + ')' : '') + '</option>';
+          });
+          profSelect.innerHTML = optHtml;
+          profSelect.value = '__custom__';
+        }
+      }
+      handleModalProfileChange('__custom__');
+      var alertBox = document.getElementById('psmAlertNotice');
+      if (alertBox) alertBox.style.display = 'none';
+      markFormModified();
+      showToast('Profiles reloaded and selection reset to Custom Niche.', 'success');
+    } catch (err) {
+      showToast('Error reloading profiles: ' + err.message, 'error');
+    }
   }
 
   function closePageSettingsModal() {
@@ -2241,8 +2300,8 @@
       });
     }
 
-    // Step 3: Publishing mode
-    selectPublishingMode(page.publishing_mode || 'review');
+    // Step 3: Publishing mode (initial populate without confirmation dialog)
+    selectPublishingMode(page.publishing_mode || 'review', true);
     var hybridScore = document.getElementById('psmHybridScore');
     if (hybridScore) {
       hybridScore.value = page.hybrid_min_score || 80;
@@ -2256,6 +2315,18 @@
     document.getElementById('psmDailyCap').value = page.daily_cap || 3;
     document.getElementById('psmVacationStart').value = sched.vacationStart || '';
     document.getElementById('psmVacationEnd').value = sched.vacationEnd || '';
+
+    // QA and Structure Inputs
+    var qaScoreInp = document.getElementById('psmQaPassThreshold');
+    if (qaScoreInp) qaScoreInp.value = page.qa_pass_threshold !== undefined && page.qa_pass_threshold !== null ? page.qa_pass_threshold : 80;
+    var maxSentInp = document.getElementById('psmMaxSentencesPerParagraph');
+    if (maxSentInp) maxSentInp.value = page.max_sentences_per_paragraph !== undefined && page.max_sentences_per_paragraph !== null ? page.max_sentences_per_paragraph : 3;
+    var minWordsInp = document.getElementById('psmMinWords');
+    if (minWordsInp) minWordsInp.value = page.min_words !== undefined && page.min_words !== null ? page.min_words : '';
+    var targetWordsInp = document.getElementById('psmTargetWords');
+    if (targetWordsInp) targetWordsInp.value = page.target_words !== undefined && page.target_words !== null ? page.target_words : '';
+    var maxWordsInp = document.getElementById('psmMaxWords');
+    if (maxWordsInp) maxWordsInp.value = page.max_words !== undefined && page.max_words !== null ? page.max_words : '';
 
     var aiToggle = document.getElementById('psmAiDisclosureToggle');
     if (aiToggle) {
@@ -2458,7 +2529,28 @@
     showToast('Applied ' + count + ' posts/day quick schedule!', 'info');
   }
 
-  function selectPublishingMode(mode) {
+  var pendingPublishingMode = null;
+
+  function selectPublishingMode(mode, isInitial) {
+    var modeInp = document.getElementById('psmPublishingMode');
+    var currentMode = modeInp ? modeInp.value : 'review';
+
+    if (!isInitial && (mode === 'auto' || mode === 'hybrid') && mode !== currentMode) {
+      pendingPublishingMode = mode;
+      var confirmModal = document.getElementById('modeConfirmationModal');
+      var nameEl = document.getElementById('mcmModeName');
+      if (confirmModal && nameEl) {
+        nameEl.innerText = mode === 'auto' ? 'Fully Automatic' : 'Hybrid (Quality Gate)';
+        confirmModal.style.display = 'flex';
+        return;
+      }
+    }
+
+    applyPublishingModeSelection(mode);
+    if (!isInitial) markFormModified();
+  }
+
+  function applyPublishingModeSelection(mode) {
     var modeInp = document.getElementById('psmPublishingMode');
     if (modeInp) modeInp.value = mode;
 
@@ -2493,8 +2585,22 @@
     }
     var cardCheck3 = document.getElementById('psmCardCheck3');
     if (cardCheck3) cardCheck3.innerText = '✅';
+  }
 
-    markFormModified();
+  function confirmModeChange() {
+    var modal = document.getElementById('modeConfirmationModal');
+    if (modal) modal.style.display = 'none';
+    if (pendingPublishingMode) {
+      applyPublishingModeSelection(pendingPublishingMode);
+      pendingPublishingMode = null;
+      markFormModified();
+    }
+  }
+
+  function cancelModeConfirmation() {
+    var modal = document.getElementById('modeConfirmationModal');
+    if (modal) modal.style.display = 'none';
+    pendingPublishingMode = null;
   }
 
   function handleModalProfileChange(val, silent) {
@@ -2597,7 +2703,7 @@
         return;
       }
 
-      if (badge) badge.innerText = slots.length + ' slots planned over next 7 days';
+      if (badge) badge.innerText = (data.nextSlotLabel ? data.nextSlotLabel + ' • ' : '') + slots.length + ' slots planned over next 7 days';
 
       var html = '';
       slots.forEach(function (slot) {
@@ -2649,6 +2755,11 @@
         mode_chosen: true,
         hybrid_min_score: Number(document.getElementById('psmHybridScore').value) || 80,
         daily_cap: Number(document.getElementById('psmDailyCap').value) || 3,
+        qa_pass_threshold: Number(document.getElementById('psmQaPassThreshold') ? document.getElementById('psmQaPassThreshold').value : 80) || 80,
+        max_sentences_per_paragraph: Number(document.getElementById('psmMaxSentencesPerParagraph') ? document.getElementById('psmMaxSentencesPerParagraph').value : 3) || 3,
+        min_words: document.getElementById('psmMinWords') && document.getElementById('psmMinWords').value ? Number(document.getElementById('psmMinWords').value) : null,
+        target_words: document.getElementById('psmTargetWords') && document.getElementById('psmTargetWords').value ? Number(document.getElementById('psmTargetWords').value) : null,
+        max_words: document.getElementById('psmMaxWords') && document.getElementById('psmMaxWords').value ? Number(document.getElementById('psmMaxWords').value) : null,
         schedule: sched,
         ai_disclosure_enabled: document.getElementById('psmAiDisclosureToggle').checked,
         ai_disclosure_text: document.getElementById('psmAiDisclosureText').value,
@@ -2674,6 +2785,14 @@
       }
 
       if (!res.ok || data.error) {
+        if (data.missingId || (data.error && data.error.includes('profile'))) {
+          var alertBox = document.getElementById('psmAlertNotice');
+          var alertText = document.getElementById('psmAlertNoticeText');
+          if (alertBox && alertText) {
+            alertText.innerText = data.error || 'Selected profile no longer exists. Click "Reload Profiles & Reset to Custom" above to recover.';
+            alertBox.style.display = 'block';
+          }
+        }
         showToast('Failed to save settings: ' + (data.error || 'Unknown error'), 'error');
         return;
       }
@@ -2846,6 +2965,58 @@
           (s.error ? ('<div style="font-size: 11px; color: #fca5a5; margin-top: 4px;">' + escapeHtml(s.error) + '</div>') : '') +
           '</div>';
       }).join('');
+    }
+
+    // Rules Badges
+    const rulesContainer = document.getElementById('trrRulesContainer');
+    if (rulesContainer) {
+      if (report.structureRules) {
+        const r = report.structureRules;
+        rulesContainer.innerHTML =
+          '<span class="badge" style="background: rgba(59,130,246,0.15); color: #93c5fd; padding: 3px 8px;">Target Words: ' + r.minWords + '–' + r.maxWords + ' (Goal: ' + r.targetWords + ')</span>' +
+          '<span class="badge" style="background: rgba(168,85,247,0.15); color: #c084fc; padding: 3px 8px;">Max Sentences/Para: ' + r.maxSentencesPerParagraph + '</span>' +
+          '<span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399; padding: 3px 8px;">QA Pass Threshold: ' + r.passThreshold + '/100</span>';
+      } else {
+        rulesContainer.innerHTML = '';
+      }
+    }
+
+    // Revision Attempts Log
+    const attemptsSection = document.getElementById('trrAttemptsSection');
+    const attemptsContainer = document.getElementById('trrAttemptsContainer');
+    if (attemptsSection && attemptsContainer) {
+      if (report.attempts && report.attempts.length > 0) {
+        attemptsContainer.innerHTML = report.attempts.map(function (att) {
+          const isPassed = att.status === 'passed';
+          const icon = isPassed ? '✅' : '⚠️';
+          const badgeColor = isPassed ? '#34d399' : '#f59e0b';
+          const violationsHtml = att.violations && att.violations.length > 0
+            ? '<div style="font-size: 11px; color: #fca5a5; margin-top: 4px;"><strong>Violations:</strong> ' + escapeHtml(att.violations.join('; ')) + '</div>'
+            : '';
+          return '<div style="background: #0b0f19; border: 1px solid ' + (isPassed ? '#1e293b' : 'rgba(245,158,11,0.3)') + '; border-radius: 6px; padding: 10px;">' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 2px;">' +
+              '<span>' + icon + ' <strong>Attempt ' + att.attempt + '</strong> (' + escapeHtml(att.provider) + ' / ' + escapeHtml(att.model) + ')</span>' +
+              '<span style="font-weight: 700; color: ' + badgeColor + ';">Score ' + att.qaScore + ' • ' + (att.durationMs || 0) + 'ms</span>' +
+            '</div>' +
+            violationsHtml +
+          '</div>';
+        }).join('');
+        attemptsSection.style.display = 'block';
+      } else {
+        attemptsSection.style.display = 'none';
+      }
+    }
+
+    // Effective Prompt (Masked Secrets)
+    const promptSection = document.getElementById('trrPromptSection');
+    const promptText = document.getElementById('trrEffectivePromptText');
+    if (promptSection && promptText) {
+      if (report.effectivePrompt) {
+        promptText.innerText = report.effectivePrompt;
+        promptSection.style.display = 'block';
+      } else {
+        promptSection.style.display = 'none';
+      }
     }
 
     const topicEl = document.getElementById('trrTopicTitle');
@@ -3165,7 +3336,8 @@
       if (res.ok && data.success) {
         var imp = data.importedCount !== undefined ? data.importedCount : (data.count || 0);
         var skip = data.skippedCount !== undefined ? data.skippedCount : 0;
-        showToast('📦 Imported ' + imp + ' new, ' + skip + ' skipped (already up to date).', 'success');
+        var upd = data.updatedCount !== undefined ? data.updatedCount : 0;
+        showToast('📦 Starter profiles: ' + imp + ' imported, ' + skip + ' skipped, ' + upd + ' updated.', 'success');
         var profSelect = document.getElementById('psmProfileSelect');
         var studioSelect = document.getElementById('editProfileSelect');
         if (data.profiles) {
@@ -3207,7 +3379,8 @@
       if (res.ok && data.success) {
         var imp = data.importedCount !== undefined ? data.importedCount : (data.count || 0);
         var skip = data.skippedCount !== undefined ? data.skippedCount : 0;
-        showToast('📦 Imported ' + imp + ' new, ' + skip + ' skipped (already up to date).', 'success');
+        var upd = data.updatedCount !== undefined ? data.updatedCount : 0;
+        showToast('📦 Starter profiles: ' + imp + ' imported, ' + skip + ' skipped, ' + upd + ' updated.', 'success');
         fetchPagesTab();
       } else {
         showToast('Notice: ' + (data.error || 'Failed to import starter profiles'), 'error');
@@ -3428,6 +3601,9 @@
   window.resolveConflictMerge = resolveConflictMerge;
   window.viewTestRunReport = viewTestRunReport;
   window.closeTestRunReportModal = closeTestRunReportModal;
+  window.confirmModeChange = confirmModeChange;
+  window.cancelModeConfirmation = cancelModeConfirmation;
+  window.reloadProfilesAndResetToCustom = reloadProfilesAndResetToCustom;
 
   function copyExpectedRedirectUri() {
     const el = document.getElementById('expectedRedirectUriText');

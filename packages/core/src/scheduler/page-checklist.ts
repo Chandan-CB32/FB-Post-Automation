@@ -89,9 +89,9 @@ export function evaluatePageChecklist(page: PageOnboardingInput): PageChecklistS
     missingSteps.push('Configure posting frequency and schedule times');
   }
 
-  // Step 3: Publishing Mode
+  // Step 3: Publishing Mode (Explicit choice required)
   const modeChosen = Boolean(
-    page.mode_chosen !== false &&
+    page.mode_chosen === true &&
     (page.publishing_mode === 'auto' || page.publishing_mode === 'review' || page.publishing_mode === 'hybrid')
   );
   if (!modeChosen) {
@@ -101,7 +101,7 @@ export function evaluatePageChecklist(page: PageOnboardingInput): PageChecklistS
   // Step 4: Test Run (Marked verified ONLY when real pipeline pass is verified)
   const testRunDone = Boolean(
     page.last_test_run_at &&
-    page.test_run_verified !== false
+    page.test_run_verified === true
   );
   if (!testRunDone) {
     missingSteps.push('Execute a verified Test Run through the pipeline');

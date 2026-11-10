@@ -98,7 +98,57 @@ BEGIN
         ALTER TABLE public.pages ADD COLUMN test_run_report JSONB DEFAULT NULL;
     END IF;
 
-    -- 2. Ensure version and system flags exist on public.content_profiles
+    -- QA configuration and editorial word limits on public.pages
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'qa_pass_threshold'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN qa_pass_threshold INTEGER DEFAULT 80;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'max_sentences_per_paragraph'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN max_sentences_per_paragraph INTEGER DEFAULT 3;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'min_words'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN min_words INTEGER DEFAULT NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'target_words'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN target_words INTEGER DEFAULT NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'max_words'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN max_words INTEGER DEFAULT NULL;
+    END IF;
+
+    -- 2. Ensure version, slug, customization and system flags exist on public.content_profiles
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'slug'
+    ) THEN
+        ALTER TABLE public.content_profiles ADD COLUMN slug TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'is_customized'
+    ) THEN
+        ALTER TABLE public.content_profiles ADD COLUMN is_customized BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
         WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'version'
@@ -155,14 +205,34 @@ CREATE INDEX IF NOT EXISTS idx_provider_keys_active ON public.provider_keys (pro
 CREATE UNIQUE INDEX IF NOT EXISTS idx_content_profiles_name ON public.content_profiles (name);
 CREATE INDEX IF NOT EXISTS idx_pages_settings_version ON public.pages (settings_version);
 
--- 7. Seed Starter & Extended Content Profiles (27 Viral Niches)
+-- 7. Content Profiles Slug Backfill & Unique Index
+UPDATE public.content_profiles 
+SET slug = lower(trim(regexp_replace(regexp_replace(name, '&', '', 'g'), '[^a-zA-Z0-9]+', '-', 'g'), '-'))
+WHERE slug IS NULL OR slug = '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_content_profiles_slug ON public.content_profiles (slug);
+
+-- 8. Resilient Foreign Key & Orphan Cleanup
+-- Clean up orphaned profile references (stale profile IDs)
+UPDATE public.pages 
+SET profile_id = NULL 
+WHERE profile_id IS NOT NULL 
+  AND profile_id NOT IN (SELECT id FROM public.content_profiles);
+
+-- Recreate foreign key with ON DELETE SET NULL to ensure deleting a profile never cascades or errors
+ALTER TABLE public.pages DROP CONSTRAINT IF EXISTS pages_profile_id_fkey;
+ALTER TABLE public.pages 
+ADD CONSTRAINT pages_profile_id_fkey 
+FOREIGN KEY (profile_id) REFERENCES public.content_profiles(id) ON DELETE SET NULL;
+
+-- 9. Seed Starter & Extended Content Profiles (27 Viral Niches) Keyed by Stable Slug
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Historical Photos', 'Master prompt profile for Historical Photos (historical_photos)', 'factual', 'en',
+    'historical-photos', 'Historical Photos', 'Master prompt profile for Historical Photos (historical_photos)', 'factual', 'en',
     'General Facebook English-speaking audience', '` until the RUNTIME DATA section is the owner''s original
 > interactive text, unmodified (see `originals/historical_photos_OWNER_ORIGINAL.md`).
 > **Interactive-only rules** (enter-a-number, CONTINUE, batch handling) are
@@ -293,9 +363,10 @@ Repeat this complete structure for every requested entry. Never omit an image, c
     '{"captionPrompt":"{{master_prompt}}\n\nTopic for this post: {{topic}}\nTarget word count: {{word_target}} words.\nLanguage: {{language}}. Audience: {{audience}}.","imagePromptTemplate":"Cinematic vintage documentary photograph of {{key_scene}}, authentic period atmosphere, highly detailed, realistic.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, blurry, modern artifacts","ideaPrompt":"Based on the profile categories, propose 3 fresh, unique post premises for {{niche}}. Avoid: {{recent_titles}}.","topicPrompt":"Select the single strongest topic from the candidate pool for {{niche}} with maximum visual and storytelling potential.","factExtractionPrompt":"Extract verified, factual claims from the following sources for topic ''{{topic}}''. Include source attributions: {{sources}}.","qaPrompt":"Review the post caption for {{niche}}. Score 0-100 on historical/scientific accuracy, coherence, hook strength, and safety baseline compliance."}'::jsonb, '{"unit":"words","min":150,"target":200,"max":300,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"nostalgic, historical storytelling","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["you won’t believe","mind-blowing clickbait"],"requiredPhrases":[]},"endingStyle":"twist","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#History","#Vintage"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Cinematic vintage documentary photograph of {{key_scene}}, authentic period atmosphere, highly detailed, realistic.","aspectRatio":"4:5","width":1080,"height":1350,"style":"archival vintage photograph","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":false,"heightPercent":28,"backgroundColor":"#000000","textColor":"#FFFFFF"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"WORK AND INDUSTRY","weight":25},{"name":"HARDSHIP AND RESILIENCE","weight":25},{"name":"RURAL AND SMALL-TOWN LIFE","weight":25},{"name":"CITIES, TRANSPORT, AND PUBLIC LIFE","weight":25}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"historical_photos"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -310,15 +381,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Real-Life Photography', 'Master prompt profile for Real-Life Photography (real_life_photography)', 'factual', 'en',
+    'real-life-photography', 'Real-Life Photography', 'Master prompt profile for Real-Life Photography (real_life_photography)', 'factual', 'en',
     'General Facebook English-speaking audience', '` until the RUNTIME DATA section is the owner''s original
 > interactive text, unmodified (see `originals/real_life_photography_OWNER_ORIGINAL.md`).
 > **Interactive-only rules** (enter-a-number, CONTINUE, batch handling) are
@@ -522,9 +594,10 @@ Repeat this complete structure for every requested entry. Never omit the image, 
     '{"captionPrompt":"{{master_prompt}}\n\nTopic for this post: {{topic}}\nTarget word count: {{word_target}} words.\nLanguage: {{language}}. Audience: {{audience}}.","imagePromptTemplate":"Cinematic vintage documentary photograph of {{key_scene}}, authentic period atmosphere, highly detailed, realistic.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, blurry, modern artifacts","ideaPrompt":"Based on the profile categories, propose 3 fresh, unique post premises for {{niche}}. Avoid: {{recent_titles}}.","topicPrompt":"Select the single strongest topic from the candidate pool for {{niche}} with maximum visual and storytelling potential.","factExtractionPrompt":"Extract verified, factual claims from the following sources for topic ''{{topic}}''. Include source attributions: {{sources}}.","qaPrompt":"Review the post caption for {{niche}}. Score 0-100 on historical/scientific accuracy, coherence, hook strength, and safety baseline compliance."}'::jsonb, '{"unit":"words","min":150,"target":200,"max":300,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"nostalgic, historical storytelling","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["you won’t believe","mind-blowing clickbait"],"requiredPhrases":[]},"endingStyle":"twist","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#History","#Vintage"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Cinematic vintage documentary photograph of {{key_scene}}, authentic period atmosphere, highly detailed, realistic.","aspectRatio":"4:5","width":1080,"height":1350,"style":"archival vintage photograph","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":false,"heightPercent":28,"backgroundColor":"#000000","textColor":"#FFFFFF"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"FUNNY REAL-LIFE MOMENTS","weight":17},{"name":"AUTUMN AND SEASONAL BEAUTY","weight":17},{"name":"CITY LIFE AND ARCHITECTURE","weight":17},{"name":"PEACEFUL NATURE AND PARKS","weight":17},{"name":"HOME DECOR AND EVERYDAY LIFESTYLE","weight":16},{"name":"SURPRISING AND SHAREABLE DISCOVERIES","weight":16}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"real_life_photography"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -539,15 +612,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Science & Space', 'Master prompt profile for Science & Space (science_space)', 'factual', 'en',
+    'science-space', 'Science & Space', 'Master prompt profile for Science & Space (science_space)', 'factual', 'en',
     'General Facebook English-speaking audience', '` until the RUNTIME DATA section is the owner''s original
 > interactive text, unmodified (see `originals/science_space_OWNER_ORIGINAL.md`).
 > **Interactive-only rules** (enter-a-number, CONTINUE, batch handling) are
@@ -778,9 +852,10 @@ Repeat this complete structure for every requested entry. Never omit the image, 
     '{"captionPrompt":"{{master_prompt}}\n\nTopic for this post: {{topic}}\nTarget word count: {{word_target}} words.\nLanguage: {{language}}. Audience: {{audience}}.","imagePromptTemplate":"Photorealistic, scientifically accurate rendering of {{key_scene}}, 8k detail, vivid deep space colors.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, blurry, modern artifacts","ideaPrompt":"Based on the profile categories, propose 3 fresh, unique post premises for {{niche}}. Avoid: {{recent_titles}}.","topicPrompt":"Select the single strongest topic from the candidate pool for {{niche}} with maximum visual and storytelling potential.","factExtractionPrompt":"Extract verified, factual claims from the following sources for topic ''{{topic}}''. Include source attributions: {{sources}}.","qaPrompt":"Review the post caption for {{niche}}. Score 0-100 on historical/scientific accuracy, coherence, hook strength, and safety baseline compliance."}'::jsonb, '{"unit":"words","min":120,"target":200,"max":250,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"awe-inspiring, scientifically accurate","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["you won’t believe","mind-blowing clickbait"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Science","#Space"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Photorealistic, scientifically accurate rendering of {{key_scene}}, 8k detail, vivid deep space colors.","aspectRatio":"4:5","width":1080,"height":1350,"style":"scientifically accurate rendering","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":28,"backgroundColor":"#000000","textColor":"#FFFFFF"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"SPACE AND ASTRONOMY","weight":15},{"name":"MIND-BLOWING NATURE","weight":15},{"name":"ANIMAL AND OCEAN SCIENCE","weight":14},{"name":"AI AND FUTURE TECHNOLOGY","weight":14},{"name":"SCIENTISTS AND SCIENTIFIC IDEAS","weight":14},{"name":"EARTH AND EXTREME PHENOMENA","weight":14},{"name":"MICROSCOPIC AND INVISIBLE WORLDS","weight":14}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"science_space"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -795,15 +870,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Vintage Cars', 'Master prompt profile for Vintage Cars (vintage_cars)', 'factual', 'en',
+    'vintage-cars', 'Vintage Cars', 'Master prompt profile for Vintage Cars (vintage_cars)', 'factual', 'en',
     'General Facebook English-speaking audience', '` until the RUNTIME DATA section is the owner''s original
 > interactive text, unmodified (see `originals/vintage_cars_OWNER_ORIGINAL.md`).
 > **Interactive-only rules** (enter-a-number, CONTINUE, batch handling) are
@@ -995,9 +1071,10 @@ Repeat this complete structure for every requested entry. Never omit the image, 
     '{"captionPrompt":"{{master_prompt}}\n\nTopic for this post: {{topic}}\nTarget word count: {{word_target}} words.\nLanguage: {{language}}. Audience: {{audience}}.","imagePromptTemplate":"Cinematic vintage documentary photograph of {{key_scene}}, authentic period atmosphere, highly detailed, realistic.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, blurry, modern artifacts","ideaPrompt":"Based on the profile categories, propose 3 fresh, unique post premises for {{niche}}. Avoid: {{recent_titles}}.","topicPrompt":"Select the single strongest topic from the candidate pool for {{niche}} with maximum visual and storytelling potential.","factExtractionPrompt":"Extract verified, factual claims from the following sources for topic ''{{topic}}''. Include source attributions: {{sources}}.","qaPrompt":"Review the post caption for {{niche}}. Score 0-100 on historical/scientific accuracy, coherence, hook strength, and safety baseline compliance."}'::jsonb, '{"unit":"words","min":150,"target":200,"max":300,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"nostalgic, historical storytelling","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["you won’t believe","mind-blowing clickbait"],"requiredPhrases":[]},"endingStyle":"twist","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#History","#Vintage"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Cinematic vintage documentary photograph of {{key_scene}}, authentic period atmosphere, highly detailed, realistic.","aspectRatio":"4:5","width":1080,"height":1350,"style":"archival vintage photograph","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":false,"heightPercent":28,"backgroundColor":"#000000","textColor":"#FFFFFF"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"AMERICAN CLASSICS","weight":17},{"name":"BRITISH AND EUROPEAN CLASSICS","weight":17},{"name":"PRE-WAR AND EARLY MOTORING (1900s–1930s)","weight":17},{"name":"BARN FINDS, RESTORATION, AND CRAFTSMANSHIP","weight":17},{"name":"CAR SHOWS, MEETS, AND EVERYDAY NOSTALGIA","weight":16},{"name":"ICONIC DESIGN, DETAILS, AND SURPRISING DISCOVERIES","weight":16}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"vintage_cars"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1012,22 +1089,24 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Horror Story', 'Suspenseful and psychological original horror stories for Facebook', 'fiction', 'en',
+    'horror', 'Horror Story', 'Suspenseful and psychological original horror stories for Facebook', 'fiction', 'en',
     'General Facebook English-speaking audience who enjoy horror and folklore', 'You are a master horror storyteller writing original short stories for a Facebook audience in {{language}}. Write in {{pov}} with a {{tone}} tone. Build dread slowly with specific sensory details, a strong hook in the first two lines, escalating tension, and an unsettling ending. Keep stories original, self-contained and suitable for a general social-media audience: suggest rather than show gore, no sexual content, no violence against children, no real people, no real brands. Categories: haunted places, urban legends, psychological horror, folklore and creatures, night-shift and isolation stories. Avoid clichés listed in {{avoid_list}} and do not repeat premises from {{recent_titles}}. Target {{word_target}} words ({{word_min}}–{{word_max}}). End with the configured ending style.',
     '{"captionPrompt":"Write an original horror story about {{topic}}.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","imagePromptTemplate":"Dark, moody, cinematic photograph of {{key_scene}}, atmospheric lighting, fog and deep shadows, realistic textures, no text, no people''s faces in close-up, no gore.","negativeImagePrompt":"gore, blood splatter, text, watermark, deformed anatomy, modern digital artifacts","ideaPrompt":"Propose 3 original horror story premises within category ''{{category}}''. Avoid: {{avoid_list}} and {{recent_titles}}.","topicPrompt":"Select the most terrifying and coherent horror premise from the candidates.","qaPrompt":"Evaluate horror story quality: pacing, slow-burn dread, hook in first 2 lines, ending twist, and verify no graphic gore or policy violations."}'::jsonb, '{"unit":"words","min":500,"target":700,"max":900,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"chilling, atmospheric, slow-burn dread","pov":"first-person","emojiPolicy":"none","bannedPhrases":["you won’t believe","click here","suddenly a jump scare"],"requiredPhrases":[]},"endingStyle":"cliffhanger","includeQuestion":false,"formatSourceLine":false,"disclaimerLine":"Fictional story. Any resemblance to real events or persons is purely coincidental."}'::jsonb, '{"count":5,"bannedHashtags":["#gore","#blood"],"fixedHashtags":["#HorrorStories","#CreepyTales","#UrbanLegends"],"style":"niche"}'::jsonb,
     '{}'::jsonb, '{"template":"Dark, moody, cinematic photograph of {{key_scene}}, atmospheric lighting, fog and deep shadows, realistic textures, no text, no people''s faces in close-up, no gore.","aspectRatio":"4:5","width":1080,"height":1350,"style":"dark atmospheric cinematic","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":false,"heightPercent":25,"backgroundColor":"#000000","textColor":"#FFFFFF"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Haunted Places","weight":30},{"name":"Urban Legends","weight":30},{"name":"Psychological Horror","weight":20},{"name":"Folklore and Creatures","weight":20}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"horror"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1042,22 +1121,24 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Crime Story', 'Suspenseful detective mysteries and whodunits', 'fiction', 'en',
+    'crime-fiction', 'Crime Story', 'Suspenseful detective mysteries and whodunits', 'fiction', 'en',
     'General Facebook English-speaking audience who love mystery and detective fiction', 'You are a crime fiction writer producing original mystery and detective short stories for a Facebook audience in {{language}}. Open with an intriguing hook, plant clues fairly, build suspense through investigation and misdirection, and finish with a satisfying reveal. Keep violence non-graphic and off-screen, no sexual content, no real people, places of real crimes or real victims, no instructions for committing crimes. Categories: whodunit mysteries, heists, cold cases (fictional), courtroom twists, detective duos. Do not repeat premises from {{recent_titles}}. Target {{word_target}} words.',
     '{"captionPrompt":"Write an original mystery short story about {{topic}}.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nEnding style: {{ending_style}}.","imagePromptTemplate":"Cinematic, noir-style photograph of {{key_scene}}, moody lighting, rain-slick streets or dim interior, realistic, no text, no real people''s likeness, no blood.","negativeImagePrompt":"gore, weapons pointed at camera, text, watermark, modern oversaturated colors","ideaPrompt":"Propose 3 original mystery cases or heist premises within category ''{{category}}''.","topicPrompt":"Select the most intriguing crime mystery premise from the candidates.","qaPrompt":"Verify fair clue placement, satisfying twist, non-graphic off-screen violence, and no real crime victim references."}'::jsonb, '{"unit":"words","min":500,"target":750,"max":1000,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"sharp, observant, noir detective mystery","pov":"third-person","emojiPolicy":"none","bannedPhrases":["you won’t believe who did it"],"requiredPhrases":[]},"endingStyle":"twist","includeQuestion":true,"formatSourceLine":false,"disclaimerLine":"Fictional story. All characters and situations are entirely fictitious."}'::jsonb, '{"count":5,"bannedHashtags":["#realcrime"],"fixedHashtags":["#CrimeFiction","#Whodunit","#MysteryStories"],"style":"niche"}'::jsonb,
     '{}'::jsonb, '{"template":"Cinematic, noir-style photograph of {{key_scene}}, moody lighting, rain-slick streets or dim interior, realistic, no text, no real people''s likeness, no blood.","aspectRatio":"4:5","width":1080,"height":1350,"style":"cinematic noir photograph","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":false,"heightPercent":25,"backgroundColor":"#000000","textColor":"#FFFFFF"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Whodunit Mysteries","weight":30},{"name":"Heists and Cons","weight":25},{"name":"Cold Cases","weight":25},{"name":"Courtroom Twists","weight":20}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"crime_fiction"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1072,22 +1153,24 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Science Story', 'Real discoveries, breakthrough experiments, and astronomy narratives', 'factual', 'en',
+    'science-story', 'Science Story', 'Real discoveries, breakthrough experiments, and astronomy narratives', 'factual', 'en',
     'Science enthusiasts and curious readers worldwide', 'You are a science storyteller turning real discoveries, experiments and scientists into engaging narratives for a general audience in {{language}}. Use ONLY the verified facts in {{facts}} for factual claims; add vivid but non-factual scene-setting sparingly and never invent quotes, dates or numbers. Begin with a hook, tell the story in clear steps (the question, the attempt, the surprise, the result, why it matters), distinguish confirmed results from hypotheses, and end with a thought-provoking question. Credit sources in the Source line. Categories: space discoveries, breakthrough experiments, scientists'' lives, nature''s strangest facts, technology and medicine breakthroughs. Target {{word_target}} words.',
     '{"captionPrompt":"Write an engaging science story about {{topic}} based strictly on verified facts:\n{{facts}}\n\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words). Credit sources at the end: {{sources}}.","imagePromptTemplate":"Photorealistic, high-detail image of {{key_scene}}, scientifically plausible, natural lighting, no text, no real people''s likeness; if depicting something never photographed, style as an artist''s illustration.","negativeImagePrompt":"text, watermark, unscientific elements, oversaturated fantasy colors","ideaPrompt":"Propose 3 compelling science story topics based on recent discoveries or archival breakthroughs in {{category}}.","topicPrompt":"Choose the science story candidate with greatest educational value and awe factor.","qaPrompt":"Confirm every single factual claim is supported by {{facts}}. Check for clear scientific distinction between hypothesis and confirmed evidence."}'::jsonb, '{"unit":"words","min":400,"target":600,"max":800,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"awe-inspiring, scientifically accurate, accessible","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["mind-blowing miracle","scientists are baffled"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Science","#Discovery","#Astronomy","#Tech"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Photorealistic, high-detail image of {{key_scene}}, scientifically plausible, natural lighting, no text, no real people''s likeness; if depicting something never photographed, style as an artist''s illustration.","aspectRatio":"4:5","width":1080,"height":1350,"style":"scientifically plausible illustration","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":28,"backgroundColor":"#000000","textColor":"#FFFFFF"}}'::jsonb, '{"sources":{"autoTopicsWeight":30,"ownerQueueWeight":30,"researchWeight":40,"seriesWeight":0},"categories":[{"name":"Space Discoveries","weight":30},{"name":"Breakthrough Experiments","weight":25},{"name":"Scientists Lives","weight":25},{"name":"Nature Secrets","weight":20}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"science_story"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1102,15 +1185,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'AI & Future Technology', 'Breakthrough artificial intelligence, quantum computing, robotics, and cybernetics', 'factual', 'en',
+    'aifuturetechnology', 'AI & Future Technology', 'Breakthrough artificial intelligence, quantum computing, robotics, and cybernetics', 'factual', 'en',
     'Tech enthusiasts, engineers, futurists, and innovators', 'You are an elite social media content creator specializing in AI & Future Technology for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1122,9 +1206,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for AI & Future Technology within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for AI & Future Technology.","captionPrompt":"Write a captivating post about {{topic}} for the AI & Future Technology community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for AI & Future Technology: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of AI & Future Technology, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":160,"target":240,"max":380,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"visionary, analytical, accessible, forward-looking","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["sky-net is coming","robots take over"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#ArtificialIntelligence","#FutureTech","#Robotics","#Innovation","#TechNews"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Cinematic photograph of futuristic technology, {{key_scene}}, volumetric blue and amber lighting, sleek robotics and cybernetics, 8k resolution, photorealistic.","aspectRatio":"4:5","width":1080,"height":1350,"style":"futuristic high-tech photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":25,"backgroundColor":"#050c1a","textColor":"#38bdf8"}}'::jsonb, '{"sources":{"autoTopicsWeight":40,"ownerQueueWeight":30,"researchWeight":30,"seriesWeight":0},"categories":[{"name":"Generative AI & LLMs","weight":30},{"name":"Humanoid Robotics","weight":25},{"name":"Quantum Computing","weight":25},{"name":"Brain-Computer Interfaces","weight":20}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"aifuturetechnology"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1139,15 +1224,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Deep Ocean & Marine Mysteries', 'Abyssal discoveries, bioluminescent life, Mariana Trench anomalies, and submarine exploration', 'factual', 'en',
+    'deepoceanmarinemysteries', 'Deep Ocean & Marine Mysteries', 'Abyssal discoveries, bioluminescent life, Mariana Trench anomalies, and submarine exploration', 'factual', 'en',
     'Ocean lovers, nature explorers, and mystery enthusiasts', 'You are an elite social media content creator specializing in Deep Ocean & Marine Mysteries for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1159,9 +1245,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Deep Ocean & Marine Mysteries within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Deep Ocean & Marine Mysteries.","captionPrompt":"Write a captivating post about {{topic}} for the Deep Ocean & Marine Mysteries community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Deep Ocean & Marine Mysteries: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Deep Ocean & Marine Mysteries, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":150,"target":220,"max":350,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"awe-inspiring, mysterious, scientifically accurate","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["megalodon is still alive"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#DeepSea","#MarineBiology","#OceanExploration","#Abyss","#NatureWonders"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"National Geographic style underwater photography of {{key_scene}}, bioluminescence glowing in deep dark abyss, clear ocean particulates, high contrast, photorealistic.","aspectRatio":"4:5","width":1080,"height":1350,"style":"deep ocean marine photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#020b14","textColor":"#06b6d4"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Abyssal Zone Discoveries","weight":35},{"name":"Underwater Megastructures & Shipwrecks","weight":25},{"name":"Bioluminescent Organisms","weight":20},{"name":"Deep Sea Trenches","weight":20}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"deepoceanmarinemysteries"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1176,15 +1263,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Aviation & Military Aerospace', 'Supersonic fighters, stealth bombers, aerospace breakthroughs, and cockpit aerodynamics', 'factual', 'en',
+    'aviationmilitaryaerospace', 'Aviation & Military Aerospace', 'Supersonic fighters, stealth bombers, aerospace breakthroughs, and cockpit aerodynamics', 'factual', 'en',
     'Aviation geeks, pilots, military technology enthusiasts, and mechanical engineers', 'You are an elite social media content creator specializing in Aviation & Military Aerospace for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1196,9 +1284,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Aviation & Military Aerospace within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Aviation & Military Aerospace.","captionPrompt":"Write a captivating post about {{topic}} for the Aviation & Military Aerospace community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Aviation & Military Aerospace: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Aviation & Military Aerospace, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":160,"target":230,"max":360,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"authoritative, adrenaline-fueled, technically detailed","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["secret alien tech"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Aviation","#FighterJets","#Aerospace","#MilitaryTech","#AviationDaily"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Dynamic telephoto action photograph of {{key_scene}}, dramatic cloud vapor cone, golden hour lighting on fuselage, photorealistic aerospace photography, crisp details.","aspectRatio":"4:5","width":1080,"height":1350,"style":"aerospace action photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#09131f","textColor":"#f59e0b"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Stealth Aircraft & 5th/6th Gen Fighters","weight":35},{"name":"Historical Dogfights & Legends","weight":25},{"name":"Supersonic & Hypersonic Propulsion","weight":20},{"name":"Commercial Aviation Innovations","weight":20}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"aviationmilitaryaerospace"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1213,15 +1302,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Archeology & Lost Civilizations', 'Ancient megaliths, lost tombs, forgotten languages, and archaeological discoveries', 'factual', 'en',
+    'archeologylostcivilizations', 'Archeology & Lost Civilizations', 'Ancient megaliths, lost tombs, forgotten languages, and archaeological discoveries', 'factual', 'en',
     'History buffs, archaeology fans, and ancient mystery seekers', 'You are an elite social media content creator specializing in Archeology & Lost Civilizations for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1233,9 +1323,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Archeology & Lost Civilizations within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Archeology & Lost Civilizations.","captionPrompt":"Write a captivating post about {{topic}} for the Archeology & Lost Civilizations community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Archeology & Lost Civilizations: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Archeology & Lost Civilizations, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":180,"target":250,"max":400,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"fascinating, scholarly yet accessible, reverent","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["aliens built the pyramids"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Archaeology","#AncientHistory","#LostCivilizations","#HistoryLovers","#Antiquity"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Archaeological expedition photograph of {{key_scene}}, golden desert dust or lush overgrown jungle ruins, natural cinematic lighting, highly detailed stone textures, realistic.","aspectRatio":"4:5","width":1080,"height":1350,"style":"archaeological documentation photograph","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":25,"backgroundColor":"#18120c","textColor":"#fbbf24"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Megaliths & Stone Architecture","weight":30},{"name":"Submerged Cities & Tombs","weight":30},{"name":"Forgotten Ancient Empires","weight":25},{"name":"Undeciphered Scripts & Artifacts","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"archeologylostcivilizations"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1250,15 +1341,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Hypercars & Supercar Engineering', 'Koenigsegg, Bugatti, Pagani, F1 telemetry, carbon-fiber aerodynamics, and twin-turbo engineering', 'factual', 'en',
+    'hypercarssupercarengineering', 'Hypercars & Supercar Engineering', 'Koenigsegg, Bugatti, Pagani, F1 telemetry, carbon-fiber aerodynamics, and twin-turbo engineering', 'factual', 'en',
     'Automotive enthusiasts, supercar collectors, petrolheads, and design connoisseurs', 'You are an elite social media content creator specializing in Hypercars & Supercar Engineering for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1270,9 +1362,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Hypercars & Supercar Engineering within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Hypercars & Supercar Engineering.","captionPrompt":"Write a captivating post about {{topic}} for the Hypercars & Supercar Engineering community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Hypercars & Supercar Engineering: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Hypercars & Supercar Engineering, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":150,"target":220,"max":340,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"exhilarating, sophisticated, precision-oriented","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["cheap cars","budget daily driver"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Supercars","#Hypercars","#CarEnthusiast","#Motorsport","#AutomotiveDesign"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Commercial automotive studio photography of {{key_scene}}, dramatic rim lighting, glossy carbon fiber reflections, rolling racetrack background, ultra-sharp detail, 8k.","aspectRatio":"4:5","width":1080,"height":1350,"style":"automotive commercial photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#0f0f12","textColor":"#ef4444"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Record-Breaking Top Speed Runs","weight":35},{"name":"Aerodynamic Innovations & Active Aero","weight":25},{"name":"Bespoke Hypercar Builders","weight":25},{"name":"Formula 1 Technology Transferred to Road","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"hypercarssupercarengineering"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1287,15 +1380,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Horology & Haute Watchmaking', 'Tourbillons, perpetual calendars, Swiss micro-mechanics, and rare luxury timepieces', 'factual', 'en',
+    'horologyhautewatchmaking', 'Horology & Haute Watchmaking', 'Tourbillons, perpetual calendars, Swiss micro-mechanics, and rare luxury timepieces', 'factual', 'en',
     'Watch collectors, horology purists, luxury aficionados, and mechanical artisans', 'You are an elite social media content creator specializing in Horology & Haute Watchmaking for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1307,9 +1401,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Horology & Haute Watchmaking within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Horology & Haute Watchmaking.","captionPrompt":"Write a captivating post about {{topic}} for the Horology & Haute Watchmaking community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Horology & Haute Watchmaking: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Horology & Haute Watchmaking, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":140,"target":210,"max":320,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"refined, prestigious, passionate, meticulous","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["cheap knockoffs","smartwatches are better"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Horology","#LuxuryWatches","#WatchCollector","#HauteHorlogerie","#Timepiece"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Macro photography of mechanical watch movement, {{key_scene}}, polished bevels, Geneva stripes, balance wheel in motion, ruby jewels, studio softbox lighting, tack-sharp.","aspectRatio":"4:5","width":1080,"height":1350,"style":"macro horology photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#0d0d11","textColor":"#d4af37"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Grand Complications & Tourbillons","weight":35},{"name":"Legendary Vintage Reference Pieces","weight":25},{"name":"Independent Master Watchmakers","weight":25},{"name":"Metallurgy & Exotic Materials","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"horologyhautewatchmaking"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1324,15 +1419,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Mega Architecture & Structural Engineering', 'Super-tall skyscrapers, extreme bridges, deep sea tunnels, and monumental engineering feats', 'factual', 'en',
+    'megaarchitecturestructuralengineering', 'Mega Architecture & Structural Engineering', 'Super-tall skyscrapers, extreme bridges, deep sea tunnels, and monumental engineering feats', 'factual', 'en',
     'Civil engineers, architects, construction enthusiasts, and lovers of megastructures', 'You are an elite social media content creator specializing in Mega Architecture & Structural Engineering for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1344,9 +1440,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Mega Architecture & Structural Engineering within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Mega Architecture & Structural Engineering.","captionPrompt":"Write a captivating post about {{topic}} for the Mega Architecture & Structural Engineering community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Mega Architecture & Structural Engineering: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Mega Architecture & Structural Engineering, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":150,"target":230,"max":350,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"grandiose, awe-inspiring, structurally precise","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":[],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Architecture","#Engineering","#Megastructures","#Skyscrapers","#CivilEngineering"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Dramatic architectural photography of {{key_scene}}, ultra-wide angle looking up, dramatic cloud patterns, gleaming steel and glass reflections, cinematic twilight lighting.","aspectRatio":"4:5","width":1080,"height":1350,"style":"architectural fine art photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#101726","textColor":"#60a5fa"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Extreme Skyscrapers & Tuned Mass Dampers","weight":35},{"name":"Epic Suspension Bridges & Deep Tunnels","weight":25},{"name":"Futuristic Eco-Cities & Megaprojects","weight":25},{"name":"Historic Structural Marvels","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"megaarchitecturestructuralengineering"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1361,15 +1458,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Stoicism & Philosophy of Mind', 'Marcus Aurelius, Seneca, mental toughness, emotional mastery, and timeless life philosophy', 'evergreen', 'en',
+    'stoicismphilosophyofmind', 'Stoicism & Philosophy of Mind', 'Marcus Aurelius, Seneca, mental toughness, emotional mastery, and timeless life philosophy', 'evergreen', 'en',
     'Philosophers, thinkers, entrepreneurs, and seekers of clarity and discipline', 'You are an elite social media content creator specializing in Stoicism & Philosophy of Mind for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1381,9 +1479,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Stoicism & Philosophy of Mind within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Stoicism & Philosophy of Mind.","captionPrompt":"Write a captivating post about {{topic}} for the Stoicism & Philosophy of Mind community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Stoicism & Philosophy of Mind: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Stoicism & Philosophy of Mind, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":150,"target":220,"max":330,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"stoic, calm, profound, deeply grounding","pov":"third-person","emojiPolicy":"none","bannedPhrases":["get rich quick","hustle 24/7"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":false}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Stoicism","#Philosophy","#MarcusAurelius","#Mindset","#InnerPeace"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Moody classical marble bust sculpture in dramatic chiaroscuro lighting, {{key_scene}}, dark textured background, deep contemplative shadows, cinematic fine art portrait.","aspectRatio":"4:5","width":1080,"height":1350,"style":"chiaroscuro classical fine art","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#13110f","textColor":"#e2e8f0"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Dichotomy of Control & Adversity","weight":35},{"name":"Memento Mori & Perspective on Time","weight":25},{"name":"Emotional Mastery & Calm Mind","weight":25},{"name":"Ancient Lessons for Modern Stress","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"stoicismphilosophyofmind"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1398,15 +1497,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Personal Finance & Wealth Creation', 'Compound interest, asymmetric investing, financial independence, and business case studies', 'evergreen', 'en',
+    'personalfinancewealthcreation', 'Personal Finance & Wealth Creation', 'Compound interest, asymmetric investing, financial independence, and business case studies', 'evergreen', 'en',
     'Aspiring entrepreneurs, investors, savers, and financial literacy seekers', 'You are an elite social media content creator specializing in Personal Finance & Wealth Creation for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1418,9 +1518,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Personal Finance & Wealth Creation within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Personal Finance & Wealth Creation.","captionPrompt":"Write a captivating post about {{topic}} for the Personal Finance & Wealth Creation community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Personal Finance & Wealth Creation: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Personal Finance & Wealth Creation, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":160,"target":240,"max":360,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"practical, strategic, clear-headed, empowering","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["guaranteed 100x return","crypto moon shot","get rich quick scheme"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":["#crypto","#forexscam"],"fixedHashtags":["#PersonalFinance","#WealthBuilding","#FinancialFreedom","#InvestingTips","#MoneyMindset"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Editorial conceptual photograph representing {{key_scene}}, elegant minimalist financial objects, warm natural architectural lighting, crisp high-end composition.","aspectRatio":"4:5","width":1080,"height":1350,"style":"editorial financial photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#091c13","textColor":"#10b981"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Compound Interest & Asset Allocation","weight":35},{"name":"Psychology of Spending & Saving","weight":25},{"name":"Historical Market Cycles & Lessons","weight":25},{"name":"Asymmetric Business Models","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"personalfinancewealthcreation"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1435,15 +1536,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Biohacking, Fitness & Longevity', 'Zone 2 training, circadian optimization, fasting, mitochondrial health, and cold exposure', 'factual', 'en',
+    'biohackingfitnesslongevity', 'Biohacking, Fitness & Longevity', 'Zone 2 training, circadian optimization, fasting, mitochondrial health, and cold exposure', 'factual', 'en',
     'Athletes, biohackers, health enthusiasts, and longevity researchers', 'You are an elite social media content creator specializing in Biohacking, Fitness & Longevity for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1455,9 +1557,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Biohacking, Fitness & Longevity within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Biohacking, Fitness & Longevity.","captionPrompt":"Write a captivating post about {{topic}} for the Biohacking, Fitness & Longevity community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Biohacking, Fitness & Longevity: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Biohacking, Fitness & Longevity, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":150,"target":230,"max":350,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"science-backed, energetic, disciplined, health-focused","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["magic cure","miracle pill"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Biohacking","#Longevity","#FitnessScience","#OptimalHealth","#Habits"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"High-contrast athletic and scientific wellness photograph of {{key_scene}}, natural morning sunlight, clean minimalist aesthetic, high dynamic range, photorealistic.","aspectRatio":"4:5","width":1080,"height":1350,"style":"wellness lifestyle photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#091a1e","textColor":"#14b8a6"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Circadian Biology & Sleep Optimization","weight":30},{"name":"Zone 2 Cardio & Vo2 Max Science","weight":30},{"name":"Mitochondrial Health & Fasting Protocols","weight":25},{"name":"Thermal Stress (Sauna & Cold Plunges)","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"biohackingfitnesslongevity"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1472,15 +1575,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Human Psychology & Cognitive Biases', 'Behavioral economics, optical illusions, cognitive distortions, and social dynamics', 'evergreen', 'en',
+    'humanpsychologycognitivebiases', 'Human Psychology & Cognitive Biases', 'Behavioral economics, optical illusions, cognitive distortions, and social dynamics', 'evergreen', 'en',
     'Psychology enthusiasts, curious minds, marketers, and avid readers', 'You are an elite social media content creator specializing in Human Psychology & Cognitive Biases for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1492,9 +1596,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Human Psychology & Cognitive Biases within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Human Psychology & Cognitive Biases.","captionPrompt":"Write a captivating post about {{topic}} for the Human Psychology & Cognitive Biases community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Human Psychology & Cognitive Biases: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Human Psychology & Cognitive Biases, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":150,"target":220,"max":340,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"fascinating, revealing, psychological, eye-opening","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["mind control hypnosis"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Psychology","#CognitiveBiases","#BehavioralScience","#HumanNature","#Mind"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Surreal conceptual photography exploring human mind and perception, {{key_scene}}, dramatic shadow play, symbolic and thoughtful composition, photorealistic.","aspectRatio":"4:5","width":1080,"height":1350,"style":"conceptual psychological fine art","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#130e1c","textColor":"#a855f7"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Cognitive Illusions & Mental Shortcuts","weight":35},{"name":"Social Proof & Group Dynamics","weight":25},{"name":"Memory Distortions & Recall Tricks","weight":25},{"name":"Decision-Making Paradigms","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"humanpsychologycognitivebiases"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1509,15 +1614,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Wilderness Survival & Bushcraft', 'Off-grid shelter building, primitive firecraft, wild foraging, and survival psychology', 'factual', 'en',
+    'wildernesssurvivalbushcraft', 'Wilderness Survival & Bushcraft', 'Off-grid shelter building, primitive firecraft, wild foraging, and survival psychology', 'factual', 'en',
     'Outdoorsmen, campers, survivalists, bushcraft artisans, and adventurers', 'You are an elite social media content creator specializing in Wilderness Survival & Bushcraft for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1529,9 +1635,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Wilderness Survival & Bushcraft within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Wilderness Survival & Bushcraft.","captionPrompt":"Write a captivating post about {{topic}} for the Wilderness Survival & Bushcraft community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Wilderness Survival & Bushcraft: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Wilderness Survival & Bushcraft, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":150,"target":220,"max":340,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"rugged, practical, resourceful, educational","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":[],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":false}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Bushcraft","#SurvivalSkills","#Wilderness","#OffGrid","#OutdoorsLife"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Cinematic wilderness photograph of {{key_scene}}, warm campfire glow in pine forest at dusk, realistic wood craft details, authentic outdoor equipment, atmospheric mist.","aspectRatio":"4:5","width":1080,"height":1350,"style":"outdoor documentary photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#14170d","textColor":"#84cc16"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Primitive Fire Making & Tinder Prep","weight":30},{"name":"Natural Shelters & Thermal Insulation","weight":30},{"name":"Water Filtration in the Wild","weight":25},{"name":"Survival Knotcraft & Tool Crafting","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"wildernesssurvivalbushcraft"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1546,15 +1653,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Apex Predators & Wildlife Secrets', 'Hunting strategies, territorial battles, camouflage tactics, and Serengeti migrations', 'factual', 'en',
+    'apexpredatorswildlifesecrets', 'Apex Predators & Wildlife Secrets', 'Hunting strategies, territorial battles, camouflage tactics, and Serengeti migrations', 'factual', 'en',
     'Wildlife photographers, biology fans, animal lovers, and safari enthusiasts', 'You are an elite social media content creator specializing in Apex Predators & Wildlife Secrets for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1566,9 +1674,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Apex Predators & Wildlife Secrets within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Apex Predators & Wildlife Secrets.","captionPrompt":"Write a captivating post about {{topic}} for the Apex Predators & Wildlife Secrets community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Apex Predators & Wildlife Secrets: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Apex Predators & Wildlife Secrets, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":150,"target":220,"max":340,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"dramatic, reverent, visually vibrant, captivating","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":[],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#WildlifePhotography","#ApexPredator","#NatureDocumentary","#WildAnimals","#BigCats"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"National Geographic telephoto portrait of {{key_scene}}, shallow depth of field, sharp amber eyes, natural savanna dust or arctic snow, breathtaking detail.","aspectRatio":"4:5","width":1080,"height":1350,"style":"wildlife telephoto photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#171109","textColor":"#f97316"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Apex Hunting Tactics & Teamwork","weight":35},{"name":"Extreme Camouflage & Mimicry","weight":25},{"name":"Territorial Duels & Hierarchies","weight":25},{"name":"Rare Endemic Species","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"apexpredatorswildlifesecrets"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1583,15 +1692,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Extreme Weather & Planetary Wonders', 'Supercell thunderstorms, volcanic lightning, aurora borealis, and tectonic phenomena', 'factual', 'en',
+    'extremeweatherplanetarywonders', 'Extreme Weather & Planetary Wonders', 'Supercell thunderstorms, volcanic lightning, aurora borealis, and tectonic phenomena', 'factual', 'en',
     'Meteorology fans, storm chasers, earth science lovers, and nature admirers', 'You are an elite social media content creator specializing in Extreme Weather & Planetary Wonders for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1603,9 +1713,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Extreme Weather & Planetary Wonders within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Extreme Weather & Planetary Wonders.","captionPrompt":"Write a captivating post about {{topic}} for the Extreme Weather & Planetary Wonders community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Extreme Weather & Planetary Wonders: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Extreme Weather & Planetary Wonders, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":150,"target":220,"max":330,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"electrifying, powerful, awe-inspiring, educational","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":[],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#ExtremeWeather","#StormChasing","#EarthScience","#MotherNature","#Aurora"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Dramatic landscape photograph of extreme natural event, {{key_scene}}, illuminated by lightning flash or green aurora glow, majestic scale, tack sharp.","aspectRatio":"4:5","width":1080,"height":1350,"style":"storm chasing landscape photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#0f172a","textColor":"#38bdf8"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Supercells & Mesocyclone Dynamics","weight":35},{"name":"Volcanic Eruptions & Pyroclastic Flows","weight":25},{"name":"Solar Storms & Northern Lights","weight":25},{"name":"Tsunami & Oceanic Rogue Waves","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"extremeweatherplanetarywonders"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1620,15 +1731,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Dark Mythology & Ancient Legends', 'Norse Ragnarök, Greek underworld mythos, Slavic creatures, and primordial folklore', 'fiction', 'en',
+    'darkmythologyancientlegends', 'Dark Mythology & Ancient Legends', 'Norse Ragnarök, Greek underworld mythos, Slavic creatures, and primordial folklore', 'fiction', 'en',
     'Mythology lovers, fantasy readers, gamers, and worldbuilding enthusiasts', 'You are an elite social media content creator specializing in Dark Mythology & Ancient Legends for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1640,9 +1752,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Dark Mythology & Ancient Legends within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Dark Mythology & Ancient Legends.","captionPrompt":"Write a captivating post about {{topic}} for the Dark Mythology & Ancient Legends community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Dark Mythology & Ancient Legends: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Dark Mythology & Ancient Legends, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":200,"target":300,"max":500,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"epic, legendary, atmospheric, evocative","pov":"third-person","emojiPolicy":"none","bannedPhrases":[],"requiredPhrases":[]},"endingStyle":"twist","includeQuestion":true,"formatSourceLine":false}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Mythology","#NorseMythology","#AncientFolklore","#DarkFantasy","#Legends"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Cinematic fantasy painting of {{key_scene}}, mist-shrouded ruins, glowing runes, dark mythic atmosphere, Frank Frazetta and modern fantasy illustration style, epic scale.","aspectRatio":"4:5","width":1080,"height":1350,"style":"epic mythic illustration","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#140c10","textColor":"#f43f5e"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Norse Gods & Ragnarök Omens","weight":35},{"name":"Greek Underworld & Primordials","weight":25},{"name":"Slavic Forest Spirits & Folklore","weight":25},{"name":"Lost Mythological Relics & Weapons","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"darkmythologyancientlegends"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1657,15 +1770,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Sci-Fi Worldbuilding & Cyberpunk', 'Dystopian megacities, orbital elevators, interstellar colony ships, and rogue neural AI', 'fiction', 'en',
+    'scifiworldbuildingcyberpunk', 'Sci-Fi Worldbuilding & Cyberpunk', 'Dystopian megacities, orbital elevators, interstellar colony ships, and rogue neural AI', 'fiction', 'en',
     'Sci-fi readers, concept artists, gamers, and futuristic dreamers', 'You are an elite social media content creator specializing in Sci-Fi Worldbuilding & Cyberpunk for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1677,9 +1791,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Sci-Fi Worldbuilding & Cyberpunk within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Sci-Fi Worldbuilding & Cyberpunk.","captionPrompt":"Write a captivating post about {{topic}} for the Sci-Fi Worldbuilding & Cyberpunk community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Sci-Fi Worldbuilding & Cyberpunk: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Sci-Fi Worldbuilding & Cyberpunk, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":220,"target":350,"max":550,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"gritty, cyberpunk, immersive, cinematic","pov":"third-person","emojiPolicy":"none","bannedPhrases":[],"requiredPhrases":[]},"endingStyle":"cliffhanger","includeQuestion":false,"formatSourceLine":false}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Cyberpunk","#SciFi","#WorldBuilding","#Dystopian","#ConceptArt"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Cinematic cyberpunk visual of {{key_scene}}, rain-slicked neon street, holographic advertisements, towering megastructures disappearing into heavy fog, Blade Runner aesthetic.","aspectRatio":"4:5","width":1080,"height":1350,"style":"cyberpunk cinematic concept art","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#090814","textColor":"#06b6d4"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Cybernetic Megacity Chronicles","weight":35},{"name":"Generation Colony Ships in Deep Space","weight":25},{"name":"Sentient AI Awakening Protocols","weight":25},{"name":"Subterranean Bunker Societies","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"scifiworldbuildingcyberpunk"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1694,15 +1809,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Urban Legends & Paranormal Anomalies', 'Cryptids, mysterious disappearances, radio signal anomalies, and strange folklore', 'fiction', 'en',
+    'urbanlegendsparanormalanomalies', 'Urban Legends & Paranormal Anomalies', 'Cryptids, mysterious disappearances, radio signal anomalies, and strange folklore', 'fiction', 'en',
     'Paranormal researchers, campfire story fans, and mystery enthusiasts', 'You are an elite social media content creator specializing in Urban Legends & Paranormal Anomalies for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1714,9 +1830,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Urban Legends & Paranormal Anomalies within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Urban Legends & Paranormal Anomalies.","captionPrompt":"Write a captivating post about {{topic}} for the Urban Legends & Paranormal Anomalies community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Urban Legends & Paranormal Anomalies: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Urban Legends & Paranormal Anomalies, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":200,"target":320,"max":500,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"eerie, investigative, unsettling, suspenseful","pov":"third-person","emojiPolicy":"none","bannedPhrases":["ghostbusters"],"requiredPhrases":[]},"endingStyle":"cliffhanger","includeQuestion":true,"formatSourceLine":false}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#UrbanLegends","#Cryptids","#Paranormal","#UnexplainedMysteries","#CreepyTales"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Atmospheric found-footage style photograph of {{key_scene}}, flashlight beam piercing thick autumn fog, abandoned backroads, eerie silhouette, grain and realism.","aspectRatio":"4:5","width":1080,"height":1350,"style":"found-footage eerie photograph","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#0c0d0e","textColor":"#e2e8f0"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Forest Cryptids & Sightings","weight":35},{"name":"Anomalous Ghost Towns & Highway Legends","weight":25},{"name":"Unidentified Radio Signals & Transmissions","weight":25},{"name":"Historical Folk Superstitions","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"urbanlegendsparanormalanomalies"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1731,15 +1848,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Gourmet Gastronomy & Culinary Secrets', 'Artisan fermentation, dry-aging biochemistry, Michelin knife techniques, and culinary history', 'evergreen', 'en',
+    'gourmetgastronomyculinarysecrets', 'Gourmet Gastronomy & Culinary Secrets', 'Artisan fermentation, dry-aging biochemistry, Michelin knife techniques, and culinary history', 'evergreen', 'en',
     'Foodies, chefs, culinary students, and home cooking artisans', 'You are an elite social media content creator specializing in Gourmet Gastronomy & Culinary Secrets for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1751,9 +1869,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Gourmet Gastronomy & Culinary Secrets within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Gourmet Gastronomy & Culinary Secrets.","captionPrompt":"Write a captivating post about {{topic}} for the Gourmet Gastronomy & Culinary Secrets community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Gourmet Gastronomy & Culinary Secrets: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Gourmet Gastronomy & Culinary Secrets, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":140,"target":210,"max":320,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"sensory, passionate, mouth-watering, insightful","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["tastes yummy"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":false}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Gastronomy","#CulinaryArts","#ChefLife","#FoodScience","#Gourmet"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Editorial gourmet food photography of {{key_scene}}, dark rustic wooden table, steam rising gently, beautiful micro-herbs garnish, dramatic side lighting.","aspectRatio":"4:5","width":1080,"height":1350,"style":"editorial gourmet photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#1c100c","textColor":"#f97316"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Fermentation & Umami Chemistry","weight":35},{"name":"Dry-Aging & Wood-Fire Mastery","weight":25},{"name":"Heritage Street Food Recipes & Origins","weight":25},{"name":"Master Knife Techniques & Plating","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"gourmetgastronomyculinarysecrets"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1768,15 +1887,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Artisan Woodworking & Master Craft', 'Japanese mortise and tenon joinery, live-edge slab furniture, hand planes, and wood finishing', 'evergreen', 'en',
+    'artisanwoodworkingmastercraft', 'Artisan Woodworking & Master Craft', 'Japanese mortise and tenon joinery, live-edge slab furniture, hand planes, and wood finishing', 'evergreen', 'en',
     'Makers, carpenters, woodworkers, DIY crafters, and restoration enthusiasts', 'You are an elite social media content creator specializing in Artisan Woodworking & Master Craft for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1788,9 +1908,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Artisan Woodworking & Master Craft within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Artisan Woodworking & Master Craft.","captionPrompt":"Write a captivating post about {{topic}} for the Artisan Woodworking & Master Craft community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Artisan Woodworking & Master Craft: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Artisan Woodworking & Master Craft, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":140,"target":210,"max":320,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"warm, artisanal, patient, appreciative of craft","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["cheap plastic furniture"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":false}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#Woodworking","#Handcrafted","#ArtisanCraft","#CustomFurniture","#MakerCommunity"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Workshop photograph of {{key_scene}}, wooden shavings curling off a hand plane, rich walnut wood grain, warm sunbeam through vintage window, crisp focus.","aspectRatio":"4:5","width":1080,"height":1350,"style":"artisan workshop photography","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#1a130e","textColor":"#d97706"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Japanese Joinery & Hidden Locks","weight":35},{"name":"Live Edge Slabs & Natural Finishes","weight":25},{"name":"Hand Tool Restoration & Sharpening","weight":25},{"name":"Exotic Hardwoods & Grain Patterns","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"artisanwoodworkingmastercraft"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1805,15 +1926,16 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    'Space Exploration & Mars Missions', 'Starship launches, Martian rovers, Artemis moon base, and planetary terraforming', 'factual', 'en',
+    'spaceexplorationmarsmissions', 'Space Exploration & Mars Missions', 'Starship launches, Martian rovers, Artemis moon base, and planetary terraforming', 'factual', 'en',
     'Space enthusiasts, planetary scientists, aerospace followers, and stargazers', 'You are an elite social media content creator specializing in Space Exploration & Mars Missions for a viral Facebook page in {{language}}.
 Craft compelling, informative, and audience-first posts that hook readers in the first two sentences.
 Structure each piece with:
@@ -1825,9 +1947,10 @@ Tone: {{tone}}. Target word count: {{word_target}} words ({{word_min}}-{{word_ma
     '{"ideaPrompt":"Propose 3 viral, high-curiosity content topics for Space Exploration & Mars Missions within category ''{{category}}''. Avoid recent topics in {{recent_titles}}.","topicPrompt":"Select the most compelling, educational, and high-engagement topic candidate for Space Exploration & Mars Missions.","captionPrompt":"Write a captivating post about {{topic}} for the Space Exploration & Mars Missions community.\nTarget word count: {{word_target}} words ({{word_min}}-{{word_max}} words).\nTone: {{tone}}.\nPOV: {{pov}}.\nEnding style: {{ending_style}}.","qaPrompt":"Verify content quality for Space Exploration & Mars Missions: strong opening hook, accurate and valuable insights, compliant with community safety standards, zero policy violations.","imagePromptTemplate":"High-end, cinematic, hyper-detailed photograph capturing {{key_scene}} in the theme of Space Exploration & Mars Missions, 8k resolution, authentic textures, volumetric dramatic lighting, photorealistic composition, no text, no watermarks, no logos.","negativeImagePrompt":"text, watermark, logo, deformed anatomy, low resolution, blurry artifacts, cartoon, oversaturated plastic textures"}'::jsonb, '{"unit":"words","min":160,"target":240,"max":360,"hookRule":true,"maxSentencesPerParagraph":3,"voice":{"tone":"inspirational, cosmic, scientifically rigorous","pov":"third-person","emojiPolicy":"minimal","bannedPhrases":["flat earth"],"requiredPhrases":[]},"endingStyle":"question","includeQuestion":true,"formatSourceLine":true}'::jsonb, '{"count":5,"bannedHashtags":[],"fixedHashtags":["#SpaceX","#MarsMission","#NASA","#Astronomy","#SpaceExploration"],"style":"mixed"}'::jsonb,
     '{}'::jsonb, '{"template":"Photorealistic render of {{key_scene}}, red Martian soil, dust storms on horizon, human outpost habitat gleaming under distant sun, ultra-high resolution.","aspectRatio":"4:5","width":1080,"height":1350,"style":"astronomical planetary render","keySceneMode":"climax","allowTextInImage":false,"allowRealPeople":false,"allowLogos":false,"headlinePanel":{"enabled":true,"heightPercent":24,"backgroundColor":"#1a0d0a","textColor":"#f87171"}}'::jsonb, '{"sources":{"autoTopicsWeight":50,"ownerQueueWeight":50,"researchWeight":0,"seriesWeight":0},"categories":[{"name":"Mars Surface Rovers & Water Discoveries","weight":35},{"name":"Starship & Interplanetary Transport","weight":25},{"name":"Artemis Lunar Base & Habitats","weight":25},{"name":"Moons of Jupiter & Saturn (Europa/Titan)","weight":15}],"preventConsecutiveCategory":true,"dedupWindowDays":90,"dedupWindowPosts":200,"bannedTopics":[],"includeKeywords":[],"excludeKeywords":[]}'::jsonb,
     '[]'::jsonb, '{"niche":"spaceexplorationmarsmissions"}'::jsonb,
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -1842,5 +1965,6 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 

@@ -646,4 +646,161 @@ describe('Production Critical Bugs & Fixes Suite (fbauto247.vercel.app)', () => 
     expect(data2.skippedCount).toBe(27);
     expect(data2.importedCount).toBe(0);
   });
+
+  // --------------------------------------------------------------------------
+  // Prompt 10 Revision Loop, Slot Filtering, and Stale Profile Recovery
+  // --------------------------------------------------------------------------
+  it('Revision Loop: Returns effective prompt with masked secrets, structure rules, and attempts history', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+      profile_id: 'science_space',
+      custom_caption_prompt: 'Primary voice secret: sk-1234567890abcdef1234567890 should be masked. Emphasize cosmic awe.',
+      custom_caption_prompt_mode: 'replace',
+      qa_pass_threshold: 80,
+      max_sentences_per_paragraph: 3,
+      min_words: 60,
+      target_words: 130,
+      max_words: 230,
+    });
+
+    const res = await fetch(`${baseUrl}/api/test-run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({ pageId: page.id }),
+    });
+
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.effectivePrompt).toBeDefined();
+    // Verify secret is masked
+    expect(data.effectivePrompt).not.toContain('sk-1234567890abcdef1234567890');
+    expect(data.effectivePrompt).toContain('sk-1...');
+
+    // Verify structure rules are returned
+    expect(data.structureRules).toEqual({
+      minWords: 60,
+      targetWords: 130,
+      maxWords: 230,
+      maxSentencesPerParagraph: 3,
+      passThreshold: 80,
+    });
+
+    // Verify attempts history
+    expect(Array.isArray(data.attempts)).toBe(true);
+    expect(data.attempts.length).toBeGreaterThanOrEqual(1);
+    expect(data.attempts[0].stage).toBe('content_generation');
+    expect(data.attempts[0].qaScore).toBeGreaterThanOrEqual(70);
+  });
+
+  it('Slot Preview: Excludes past slots, calculates nextSlotLabel, and respects minimum lead buffer', async () => {
+    const schedule = {
+      postsPerDay: 3,
+      mode: 'fixed' as const,
+      postingTimes: ['09:00', '13:00', '18:00'],
+      daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
+      timezone: 'America/New_York',
+      windowStart: '09:00',
+      windowEnd: '21:00',
+      intervalHours: 4,
+      jitterMinutes: 0,
+      minGapMinutes: 60,
+      leadTimeHours: 24,
+    };
+
+    const res = await fetch(`${baseUrl}/api/pages/preview-schedule`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        schedule,
+        countDays: 7,
+        userTimezone: 'Asia/Kolkata',
+      }),
+    });
+
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(Array.isArray(data.slots)).toBe(true);
+    expect(data.slots.length).toBeGreaterThan(0);
+    expect(data.nextSlotLabel).toBeDefined();
+    expect(data.nextSlotLabel).toMatch(/Next post in/);
+
+    // Verify all returned slots are in the future
+    const now = Date.now();
+    for (const slot of data.slots) {
+      const slotTime = new Date(slot.slotIso || slot.utcIso).getTime();
+      expect(slotTime).toBeGreaterThan(now);
+    }
+  });
+
+  it('Stale Profile Recovery: Rejects unknown profile with missingId and content_profiles table reference', async () => {
+    const page = await store.createPage({
+      name: 'Beyond the Known',
+      fb_page_id: '1347402001799226',
+      fb_page_token: 'EAABtesttoken123',
+    });
+
+    const badProfileRes = await fetch(`${baseUrl}/api/pages/update-settings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        pageId: page.id,
+        profile_id: 'non-existent-profile-id-12345',
+      }),
+    });
+
+    const badData = await badProfileRes.json();
+    expect(badProfileRes.status).toBe(400);
+    expect(badData.missingId).toBe('non-existent-profile-id-12345');
+    expect(badData.table).toBe('content_profiles');
+
+    // Recovery: updating with profile_id = null and custom_niche succeeds
+    const recoveryRes = await fetch(`${baseUrl}/api/pages/update-settings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: authCookie,
+      },
+      body: JSON.stringify({
+        pageId: page.id,
+        profile_id: null,
+        custom_niche: 'Deep Space Astronomy',
+      }),
+    });
+
+    const recoveryData = await recoveryRes.json();
+    expect(recoveryRes.status).toBe(200);
+    expect(recoveryData.success).toBe(true);
+    expect(recoveryData.page.profile_id).toBeNull();
+    expect(recoveryData.page.custom_niche).toBe('Deep Space Astronomy');
+  });
+
+  it('Safe Defaults: newly created page has publishing_mode = review and mode_chosen = false', async () => {
+    const page = await store.createPage({
+      name: 'Newly Discovered Page',
+      fb_page_id: '999888777666',
+      fb_page_token: 'EAABtoken123',
+    });
+
+    expect(page.active).toBe(false);
+    expect(page.is_live).toBe(false);
+    expect(page.publishing_mode).toBe('review');
+    expect(page.mode_chosen).toBe(false);
+
+    const checklist = evaluatePageChecklist(page);
+    expect(checklist.modeChosen).toBe(false);
+    expect(checklist.isReadyToGoLive).toBe(false);
+  });
 });

@@ -290,28 +290,41 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 /**
  * Generates interactive slot preview for the next N days.
  * Formats times in both Audience Timezone and Viewer Local Timezone.
+ * Strictly excludes past slots (must be >= fromDate + minLeadMinutes).
  */
 export function generateLiveSchedulePreview(
   schedule: Partial<PageSchedule>,
   fromDate: Date = new Date(),
   viewerTimezone: string = 'Asia/Kolkata',
-  previewDays: number = 7
+  previewDays: number = 7,
+  options?: { minLeadMinutes?: number }
 ): {
   slots: ScheduledSlotPreview[];
   validation: ScheduleValidationResult;
+  nextSlotLabel: string;
+  nextSlotIso: string | null;
+  futureSlotsCount: number;
 } {
   const validation = validatePageSchedule(schedule);
   const targetTimezone = schedule.timezone || 'Asia/Kolkata';
   const resolvedTimes = validation.resolvedPostingTimes;
 
   if (schedule.postsPerDay === 0 || resolvedTimes.length === 0 || !validation.valid) {
-    return { slots: [], validation };
+    return {
+      slots: [],
+      validation,
+      nextSlotLabel: 'Posting Disabled (0 posts/day)',
+      nextSlotIso: null,
+      futureSlotsCount: 0,
+    };
   }
 
   const activeDays = new Set(
     schedule.daysOfWeek && schedule.daysOfWeek.length > 0 ? schedule.daysOfWeek : [1, 2, 3, 4, 5, 6, 7]
   );
   const jitter = schedule.jitterMinutes ?? 10;
+  const minLeadMinutes = options?.minLeadMinutes ?? (schedule as any).minLeadMinutes ?? 15;
+  const minSlotTime = fromDate.getTime() + minLeadMinutes * 60 * 1000;
   const slots: ScheduledSlotPreview[] = [];
 
   // Get current calendar year/month/day in audience timezone
@@ -350,6 +363,11 @@ export function generateLiveSchedulePreview(
     resolvedTimes.forEach((timeStr, idx) => {
       const { hours, minutes } = parseTimeString(timeStr);
       const slotUtcDate = createDateInTimezone(y, m, d, hours, minutes, targetTimezone);
+
+      // Strictly filter out past slots or slots inside minimum lead buffer
+      if (slotUtcDate.getTime() < minSlotTime) {
+        return;
+      }
 
       // Audience timezone formatted time
       const audienceFormatter = new Intl.DateTimeFormat('en-US', {
@@ -391,7 +409,38 @@ export function generateLiveSchedulePreview(
     });
   }
 
-  return { slots, validation };
+  // Ensure slots are strictly sorted by ISO timestamp
+  slots.sort((a, b) => new Date(a.slotIso).getTime() - new Date(b.slotIso).getTime());
+
+  let nextSlotLabel = 'No upcoming slots planned';
+  let nextSlotIso: string | null = null;
+
+  if (slots.length > 0) {
+    nextSlotIso = slots[0].slotIso;
+    const diffMs = new Date(nextSlotIso).getTime() - fromDate.getTime();
+    if (diffMs > 0) {
+      const totalMinutes = Math.round(diffMs / 60000);
+      const hours = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      if (hours > 0 && mins > 0) {
+        nextSlotLabel = `Next post in ${hours} hour${hours > 1 ? 's' : ''} ${mins} minute${mins > 1 ? 's' : ''}`;
+      } else if (hours > 0) {
+        nextSlotLabel = `Next post in ${hours} hour${hours > 1 ? 's' : ''}`;
+      } else {
+        nextSlotLabel = `Next post in ${Math.max(1, mins)} minute${mins !== 1 ? 's' : ''}`;
+      }
+    } else {
+      nextSlotLabel = 'Next post due now';
+    }
+  }
+
+  return {
+    slots,
+    validation,
+    nextSlotLabel,
+    nextSlotIso,
+    futureSlotsCount: slots.length,
+  };
 }
 
 /**
@@ -456,11 +505,13 @@ export function calculateNextScheduledSlots(
     const isoDayOfWeek = jsDay === 0 ? 7 : jsDay;
 
     if (activeDays.has(isoDayOfWeek)) {
+      const minLeadMs = ((schedule as any).minLeadMinutes ?? 15) * 60 * 1000;
+      const minSlotTime = fromDate.getTime() + minLeadMs;
       for (const timeStr of times) {
         const { hours, minutes } = parseTimeString(timeStr);
         const slotDate = createDateInTimezone(y, m, d, hours, minutes, targetTimezone);
 
-        if (slotDate.getTime() > fromDate.getTime() && slotDate.getTime() <= maxFutureTime) {
+        if (slotDate.getTime() >= minSlotTime && slotDate.getTime() <= maxFutureTime) {
           const lastSlot = slots[slots.length - 1];
           if (!lastSlot || slotDate.getTime() - lastSlot.getTime() >= minGapMs) {
             slots.push(slotDate);

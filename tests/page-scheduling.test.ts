@@ -169,17 +169,18 @@ describe('Per-Page Scheduling Controls & Slot Planner', () => {
         active: false,
         profile_id: null,
         publishing_mode: 'review',
+        mode_chosen: false,
         schedule: SAFE_DEFAULT_SCHEDULE,
       };
 
       const status = evaluatePageChecklist(page);
       expect(status.profileChosen).toBe(false);
       expect(status.scheduleSet).toBe(false);
-      expect(status.modeChosen).toBe(true); // 'review' is chosen
+      expect(status.modeChosen).toBe(false); // Mode not explicitly chosen yet
       expect(status.testRunDone).toBe(false);
       expect(status.wentLive).toBe(false);
       expect(status.isReadyToGoLive).toBe(false);
-      expect(status.missingSteps.length).toBeGreaterThanOrEqual(3);
+      expect(status.missingSteps.length).toBeGreaterThanOrEqual(4);
     });
 
     it('confirms isReadyToGoLive when profile, schedule, mode, and test run are complete', () => {
@@ -189,6 +190,8 @@ describe('Per-Page Scheduling Controls & Slot Planner', () => {
         active: false,
         profile_id: 'science-space-deep-facts',
         publishing_mode: 'hybrid',
+        mode_chosen: true,
+        test_run_verified: true,
         schedule: {
           postsPerDay: 2,
           mode: 'fixed' as const,

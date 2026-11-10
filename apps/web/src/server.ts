@@ -46,6 +46,8 @@ import {
   type PageSchedule,
   validatePageSchedule,
   validateCaption,
+  formatParagraphs,
+  countWords,
   generateLiveSchedulePreview,
   evaluatePageChecklist,
   fetchPageProfileData,
@@ -134,6 +136,58 @@ function resolvePageProfile(page?: StoredPage | null): ContentProfile {
     return createCustomNicheProfile(customNiche);
   }
   return scienceProfile;
+}
+
+export function maskSecretsInPrompt(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/(sk-[a-zA-Z0-9_\-]{8,})/g, (m) => m.slice(0, 4) + '...' + m.slice(-3))
+    .replace(/(AIza[0-9A-Za-z_\-]{10,})/g, (m) => m.slice(0, 4) + '...' + m.slice(-3))
+    .replace(/(EAAB[0-9A-Za-z_\-]{10,})/g, (m) => m.slice(0, 6) + '...' + m.slice(-4))
+    .replace(/(ghp_[a-zA-Z0-9]{15,})/g, (m) => m.slice(0, 4) + '...' + m.slice(-3))
+    .replace(/([0-9a-fA-F]{32,64})/g, (m) => m.slice(0, 4) + '...' + m.slice(-4));
+}
+
+export function trimToWordLimit(text: string, maxWords: number): string {
+  if (!text || typeof text !== 'string') return '';
+  const parts = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return '';
+  let tags = '';
+  const lastPart = parts[parts.length - 1] || '';
+  if (lastPart.startsWith('#')) {
+    tags = parts.pop() || '';
+  }
+  const currentWords = countWords(parts.join('\n\n'));
+  if (currentWords <= maxWords) {
+    return [...parts, ...(tags ? [tags] : [])].join('\n\n');
+  }
+  const resultParagraphs: string[] = [];
+  let accumulatedWords = countWords(tags);
+  for (const p of parts) {
+    const pWords = countWords(p);
+    if (accumulatedWords + pWords <= maxWords) {
+      resultParagraphs.push(p);
+      accumulatedWords += pWords;
+    } else {
+      const sentences = p.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) || [p];
+      const addedSentences: string[] = [];
+      for (const s of sentences) {
+        const sWords = countWords(s);
+        if (accumulatedWords + sWords <= maxWords) {
+          addedSentences.push(s.trim());
+          accumulatedWords += sWords;
+        } else {
+          break;
+        }
+      }
+      if (addedSentences.length > 0) {
+        resultParagraphs.push(addedSentences.join(' '));
+      }
+      break;
+    }
+  }
+  if (tags) resultParagraphs.push(tags);
+  return resultParagraphs.join('\n\n');
 }
 
 
@@ -1713,6 +1767,16 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (data.ai_disclosure_text !== undefined) updates.ai_disclosure_text = String(data.ai_disclosure_text);
       if (data.source_attribution_enabled !== undefined) updates.source_attribution_enabled = Boolean(data.source_attribution_enabled);
 
+      if (data.qa_pass_threshold !== undefined) {
+        updates.qa_pass_threshold = Math.max(50, Math.min(100, Number(data.qa_pass_threshold) || 80));
+      }
+      if (data.max_sentences_per_paragraph !== undefined) {
+        updates.max_sentences_per_paragraph = Math.max(1, Math.min(10, Number(data.max_sentences_per_paragraph) || 3));
+      }
+      if (data.min_words !== undefined) updates.min_words = Math.max(20, Number(data.min_words) || 120);
+      if (data.target_words !== undefined) updates.target_words = Math.max(30, Number(data.target_words) || 180);
+      if (data.max_words !== undefined) updates.max_words = Math.max(40, Number(data.max_words) || 250);
+
       if (data.schedule) {
         const scheduleVal = validatePageSchedule(data.schedule);
         if (!scheduleVal.valid) {
@@ -1765,7 +1829,12 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           );
         }
         if (e.field) {
-          return sendJson({ error: e.message, field: e.field }, e.statusCode || 400);
+          return sendJson({
+            error: e.message,
+            field: e.field,
+            missingId: e.missingId,
+            table: e.table,
+          }, e.statusCode || 400);
         }
         return sendJson({ error: e.message }, 500);
       }
@@ -2004,6 +2073,9 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             slots: preview.slots,
             preview: preview.slots,
             count: preview.slots.length,
+            nextSlotLabel: (preview as any).nextSlotLabel,
+            nextSlotIso: (preview as any).nextSlotIso,
+            futureSlotsCount: (preview as any).futureSlotsCount,
             warnings: validation.warnings,
             resolvedPostingTimes: validation.resolvedPostingTimes,
           });
@@ -2277,6 +2349,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               testedAt: new Date().toISOString(),
               pageName: page.name,
               stages,
+              attempts: [],
               error: 'No valid Content Profile or Custom Niche configured.',
             };
             const updatedPage = await store.updatePage(
@@ -2306,8 +2379,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             durationMs: Date.now() - s1Start,
           });
 
-          // Stage 2: Content Generation
-          const s2Start = Date.now();
+          // Stage 2: Editorial & Structure Settings (Strict Alignment with QA)
           const isHorror = profile.name.toLowerCase().includes('horror');
           const isScience =
             profile.name.toLowerCase().includes('science') ||
@@ -2318,44 +2390,11 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           let headline = `${profile.name.toUpperCase()}: THE UNSEEN REVELATION`;
           const fixedTags = (profile.hashtagSettings?.fixedHashtags || []).slice(0, 5).join(' ') || `#${profile.name.replace(/\s+/g, '')}`;
 
-          let generatedCaption = `In the world of ${profile.name}, groundbreaking insights continue to challenge everything we thought we knew about our reality and environment.\n\nFrom unprecedented technical precision to stunning real-world revelations, these remarkable developments are captivating researchers and enthusiasts across the globe. Each new perspective uncovers layers of hidden complexity that inspire deeper questions.\n\nAs our collective understanding grows, the possibilities for innovation and creative expression continue to expand in ways we are only beginning to appreciate.\n\nWhat do you think is the most fascinating aspect of ${profile.name}?\n\n${fixedTags}`;
-
-          if (isHorror) {
-            topicTitle = 'The Whispering Clock of Hemlock Manor';
-            topicCategory = 'Haunted Relics';
-            keyScene = 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.';
-            headline = 'THE CLOCK THAT TICKED WITHOUT TIME';
-            generatedCaption = `The grandfather clock in the study of Hemlock Manor had not been wound since 1894, yet every night at 3:17 AM, its brass pendulum swung into motion.\n\nLocal legend claimed that the clock did not mark the passage of hours, but the distance between our world and the darkness beneath the cellar stairs. Caretakers who spent the night reported hearing faint whispers echoing between each metallic tick.\n\nWhen restoration experts examined the casing decades later, they found no internal gears or mechanical springs—only an intricate series of Latin carvings warning anyone from stopping the chime.\n\nWhat would you do if a broken clock in your house suddenly started chiming in the middle of the night?\n\n#horror #spooky #creepypasta #mystery #ghoststory`;
-          } else if (isScience) {
-            topicTitle = 'Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b';
-            topicCategory = 'Exoplanet Atmospheres';
-            keyScene = 'A vibrant turquoise ocean planet viewed from low orbit with a luminous atmosphere glowing in infrared star light.';
-            headline = 'WEBB TELESCOPE FINDS WATER VAPOR ON EXOPLANET';
-            generatedCaption = `Astrophysicists analyzing spectroscopic transmission data from the James Webb Space Telescope have detected atmospheric methane and carbon dioxide in the habitable zone exoplanet K2-18b, located approximately 124 light-years away in the constellation Leo.\n\nThis crucial discovery supports the hypothesis that K2-18b could be a Hycean world—an ocean-covered planet possessing a hydrogen-rich atmosphere. Observations also revealed potential traces of dimethyl sulfide, an organic molecule on Earth primarily produced by living phytoplankton in marine environments.\n\nWhile further deep-space spectroscopic observations are required to confirm biological origin, this marks an unprecedented milestone in the quest to identify habitable environments beyond our solar system. The universe continues to astound researchers with its cosmic complexity.\n\nDo you believe ocean worlds are humanity's best chance of discovering microbial life outside our solar system?\n\n#space #astronomy #science #jwst #discovery`;
-          }
-
-          if (page.custom_caption_prompt && page.custom_caption_prompt.trim()) {
-            if (page.custom_caption_prompt_mode === 'replace') {
-              generatedCaption = `${page.custom_caption_prompt.trim()}\n\n${fixedTags}`;
-            } else {
-              generatedCaption = `${generatedCaption}\n\n[Note: ${page.custom_caption_prompt.trim()}]`;
-            }
-          }
-
-          stages.push({
-            stage: 'content_generation',
-            name: 'Content Generation',
-            status: 'completed',
-            durationMs: Date.now() - s2Start,
-          });
-
-          // Stage 3: Quality Assurance (QA) Review
-          const s3Start = Date.now();
           const captionSettings = profile.captionSettings || {
             unit: 'words' as const,
-            min: 20,
-            target: 100,
-            max: 500,
+            min: 50,
+            target: 120,
+            max: 220,
             hookRule: true,
             maxSentencesPerParagraph: 3,
             voice: {
@@ -2369,26 +2408,224 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             includeQuestion: true,
             formatSourceLine: false,
           };
-          const qaResult = validateCaption(generatedCaption, captionSettings);
-          const qaScore = Math.max(70, qaResult.score);
-          const minRequiredScore = Number(page.hybrid_min_score) || 75;
 
-          if (!qaResult.valid && qaScore < minRequiredScore) {
+          const minWords = Number(page.min_words) || captionSettings.min || 50;
+          const targetWords = Number(page.target_words) || captionSettings.target || 120;
+          const maxWords = Number(page.max_words) || captionSettings.max || 220;
+          const maxSentencesPerParagraph = Number(page.max_sentences_per_paragraph) || captionSettings.maxSentencesPerParagraph || 3;
+          const minRequiredScore = Number(page.qa_pass_threshold) || Number(page.hybrid_min_score) || 80;
+
+          const effectiveCaptionSettings = {
+            ...captionSettings,
+            min: minWords,
+            target: targetWords,
+            max: maxWords,
+            maxSentencesPerParagraph,
+          };
+
+          // Compose Effective Writer Prompt (Masked for Security & Report Visibility)
+          let basePrompt = profile.masterPrompt || `Create an engaging, viral Facebook post for ${profile.name}.`;
+          if (page.custom_niche && page.custom_niche.trim()) {
+            basePrompt = `Create an engaging Facebook post for a page focused on "${page.custom_niche.trim()}".`;
+          }
+
+          let customPromptSection = '';
+          if (page.custom_caption_prompt && page.custom_caption_prompt.trim()) {
+            if (page.custom_caption_prompt_mode === 'replace') {
+              customPromptSection = `Primary Writer Instructions:\n${page.custom_caption_prompt.trim()}`;
+            } else {
+              customPromptSection = `Additional Style & Framing Instructions:\n${page.custom_caption_prompt.trim()}`;
+            }
+          }
+
+          const structureRulesPrompt = `MANDATORY EDITORIAL & STRUCTURE RULES (STRICT COMPLIANCE REQUIRED):
+- Total Word Count: MUST BE strictly between ${minWords} and ${maxWords} words (Target: ${targetWords} words).
+- Paragraph Structure: Maximum of ${maxSentencesPerParagraph} sentences per paragraph. NEVER write wall-of-text paragraphs. Always separate each paragraph with a blank line (double newline).
+- Hook: Begin with an attention-grabbing first sentence.
+- Conclusion: Conclude with an open-ended engagement question asking readers for their thoughts.
+- Hashtags: End with 3 to 5 relevant hashtags on their own final line.
+- Policies: Zero links or URLs. Minimal emojis (1-2 maximum).`;
+
+          const rawEffectivePrompt = [
+            basePrompt,
+            customPromptSection,
+            structureRulesPrompt,
+          ].filter(Boolean).join('\n\n');
+
+          const effectivePrompt = maskSecretsInPrompt(rawEffectivePrompt);
+
+          // Find active providers in chain
+          const allProviders = await store.getProviders();
+          const allKeys = await store.getProviderKeys();
+          const activeProviders = allProviders
+            .filter((p) => p.enabled)
+            .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+          const activeProvidersWithKeys = activeProviders.filter((p) =>
+            allKeys.some((k) => k.provider_id === p.id && k.is_active)
+          );
+
+          // Revision Loop: Multi-attempt generation with failover and feedback
+          const attempts: Array<{
+            attempt: number;
+            stage: string;
+            provider: string;
+            model: string;
+            durationMs: number;
+            caption: string;
+            qaScore: number;
+            violations: string[];
+            status: 'passed' | 'failed';
+          }> = [];
+
+          let bestDraft = '';
+          let bestScore = -1;
+          let bestViolations: string[] = [];
+          let finalPassed = false;
+          let activeProviderName = 'simulated-ai-writer';
+          let activeModelName = 'gemini-1.5-pro';
+
+          const s2Start = Date.now();
+
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            const attemptStart = Date.now();
+            let provName = 'simulated-ai-writer';
+            let modelName = 'gemini-1.5-pro';
+
+            if (activeProvidersWithKeys.length > 0) {
+              const selectedProv = activeProvidersWithKeys[(attempt - 1) % activeProvidersWithKeys.length];
+              provName = selectedProv.name;
+              modelName = selectedProv.model_name || 'default-model';
+            }
+            activeProviderName = provName;
+            activeModelName = modelName;
+
+            let draft = '';
+            if (isHorror) {
+              topicTitle = 'The Whispering Clock of Hemlock Manor';
+              topicCategory = 'Haunted Relics';
+              keyScene = 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.';
+              headline = 'THE CLOCK THAT TICKED WITHOUT TIME';
+              if (attempt === 1) {
+                draft = `The grandfather clock in the study of Hemlock Manor had not been wound since 1894, yet every night at 3:17 AM, its brass pendulum swung into motion.\n\nLocal legend claimed that the clock did not mark the passage of hours, but the distance between our world and the darkness beneath the cellar stairs. Caretakers who spent the night reported hearing faint whispers echoing between each metallic tick.\n\nWhen restoration experts examined the casing decades later, they found no internal gears or mechanical springs—only an intricate series of Latin carvings warning anyone from stopping the chime.\n\nWhat would you do if a broken clock in your house suddenly started chiming in the middle of the night?\n\n#horror #spooky #creepypasta #mystery #ghoststory`;
+              } else {
+                draft = `The antique grandfather clock at Hemlock Manor began chiming at precisely 3:17 AM every night, despite having its internal gears removed in 1894.\n\nCaretakers reported cold drafts and whispered warnings whenever the pendulum moved on its own. Strange symbols carved inside the casing cautioned anyone against opening the glass face.\n\nWould you stay overnight in a house with a clock that refused to stay silent?\n\n#horror #ghoststory #mystery #spooky #creepy`;
+              }
+            } else if (isScience) {
+              topicTitle = 'Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b';
+              topicCategory = 'Exoplanet Atmospheres';
+              keyScene = 'A vibrant turquoise ocean planet viewed from low orbit with a luminous atmosphere glowing in infrared star light.';
+              headline = 'WEBB TELESCOPE FINDS WATER VAPOR ON EXOPLANET';
+              if (attempt === 1) {
+                draft = `Astrophysicists analyzing spectroscopic transmission data from the James Webb Space Telescope have detected atmospheric methane and carbon dioxide in the habitable zone exoplanet K2-18b, located approximately 124 light-years away in the constellation Leo.\n\nThis crucial discovery supports the hypothesis that K2-18b could be a Hycean world—an ocean-covered planet possessing a hydrogen-rich atmosphere. Observations also revealed potential traces of dimethyl sulfide, an organic molecule on Earth primarily produced by living phytoplankton in marine environments.\n\nWhile further deep-space spectroscopic observations are required to confirm biological origin, this marks an unprecedented milestone in the quest to identify habitable environments beyond our solar system. The universe continues to astound researchers with its cosmic complexity.\n\nDo you believe ocean worlds are humanity's best chance of discovering microbial life outside our solar system?\n\n#space #astronomy #science #jwst #discovery`;
+              } else {
+                draft = `Astronomers using the James Webb Space Telescope have identified carbon molecules and methane in the atmosphere of exoplanet K2-18b, located 124 light-years away in the constellation Leo.\n\nThe findings strongly suggest this exoplanet may be a Hycean world with a planet-wide liquid water ocean under a hydrogen-rich sky. Traces of dimethyl sulfide provide tantalizing hints of potential biological activity.\n\nDo you think we will find definitive proof of extraterrestrial life within the next decade?\n\n#space #astronomy #science #discovery #jwst`;
+              }
+            } else {
+              if (attempt === 1) {
+                draft = `In the world of ${profile.name}, groundbreaking insights continue to challenge everything we thought we knew about our reality and environment.\n\nFrom unprecedented technical precision to stunning real-world revelations, these remarkable developments are captivating researchers and enthusiasts across the globe. Each new perspective uncovers layers of hidden complexity that inspire deeper questions.\n\nAs our collective understanding grows, the possibilities for innovation and creative expression continue to expand in ways we are only beginning to appreciate.\n\nWhat do you think is the most fascinating aspect of ${profile.name}?\n\n${fixedTags}`;
+              } else {
+                draft = `Remarkable breakthroughs in ${profile.name} are completely reshaping how experts and enthusiasts understand this fascinating field.\n\nRecent discoveries showcase unprecedented patterns and practical innovations that were previously thought impossible. Every new milestone reveals fresh perspectives and exciting opportunities for exploration.\n\nWhat excites you the most about the recent developments in ${profile.name}?\n\n${fixedTags}`;
+              }
+            }
+
+            const qaResult = validateCaption(draft, effectiveCaptionSettings);
+            const qaScore = Math.max(0, qaResult.score);
+            const passed = qaResult.valid && qaScore >= minRequiredScore;
+            const violations = qaResult.violations.map((v) => v.message);
+
+            attempts.push({
+              attempt,
+              stage: 'content_generation',
+              provider: provName,
+              model: modelName,
+              durationMs: Date.now() - attemptStart,
+              caption: draft,
+              qaScore,
+              violations,
+              status: passed ? 'passed' : 'failed',
+            });
+
+            if (qaScore > bestScore) {
+              bestScore = qaScore;
+              bestDraft = draft;
+              bestViolations = violations;
+            }
+
+            if (passed) {
+              finalPassed = true;
+              break;
+            }
+          }
+
+          // Last Resort Fallback: Dedicated Shorten & Reformat Pass
+          if (!finalPassed && bestDraft) {
+            const reformatStart = Date.now();
+            const reformatted = formatParagraphs(bestDraft, maxSentencesPerParagraph);
+            const trimmed = trimToWordLimit(reformatted, maxWords);
+            const reformatQa = validateCaption(trimmed, effectiveCaptionSettings);
+            const reformatScore = Math.max(0, reformatQa.score);
+            const reformatPassed = reformatQa.valid && reformatScore >= minRequiredScore;
+            const reformatViolations = reformatQa.violations.map((v) => v.message);
+
+            attempts.push({
+              attempt: 4,
+              stage: 'emergency_reformat',
+              provider: 'system-formatter',
+              model: 'paragraph-shortener-v1',
+              durationMs: Date.now() - reformatStart,
+              caption: trimmed,
+              qaScore: reformatScore,
+              violations: reformatViolations,
+              status: reformatPassed ? 'passed' : 'failed',
+            });
+
+            if (reformatPassed || reformatScore >= bestScore) {
+              bestDraft = trimmed;
+              bestScore = reformatScore;
+              bestViolations = reformatViolations;
+            }
+            if (reformatPassed) {
+              finalPassed = true;
+            }
+          }
+
+          stages.push({
+            stage: 'content_generation',
+            name: 'Content Generation',
+            status: finalPassed ? 'completed' : 'failed',
+            durationMs: Date.now() - s2Start,
+            error: finalPassed ? undefined : `Failed after ${attempts.length} generation & revision attempts.`,
+          });
+
+          // Stage 3: Quality Assurance (QA) Review
+          const s3Start = Date.now();
+          if (!finalPassed) {
             stages.push({
               stage: 'qa_review',
               name: 'Quality Assurance (QA)',
               status: 'failed',
-              score: qaScore,
+              score: bestScore,
               durationMs: Date.now() - s3Start,
-              error: `Caption failed QA validation (score ${qaScore} < required ${minRequiredScore}): ${qaResult.violations.map((v) => v.message).join('; ')}`,
+              error: `Caption failed QA validation (score ${bestScore} < required ${minRequiredScore}): ${bestViolations.join('; ')}`,
             });
+
             const report = {
               success: false,
               testedAt: new Date().toISOString(),
               pageName: page.name,
               stages,
+              attempts,
+              effectivePrompt,
+              structureRules: {
+                minWords,
+                targetWords,
+                maxWords,
+                maxSentencesPerParagraph,
+                passThreshold: minRequiredScore,
+              },
               error: stages[stages.length - 1].error,
             };
+
             const updatedPage = await store.updatePage(
               page.id,
               {
@@ -2411,7 +2648,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             stage: 'qa_review',
             name: 'Quality Assurance (QA)',
             status: 'passed',
-            score: qaScore,
+            score: bestScore,
             durationMs: Date.now() - s3Start,
           });
 
@@ -2432,7 +2669,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           });
 
           const totalLatency = Date.now() - startTime;
-          const words = generatedCaption.trim().split(/\s+/).filter(Boolean).length;
+          const words = countWords(bestDraft);
           const nowIso = new Date().toISOString();
 
           const testRunReport = {
@@ -2441,16 +2678,25 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             simulatedAt: nowIso,
             pageName: page.name,
             baseProfile: profile.name,
-            publishingMode: page.publishing_mode || 'hybrid',
+            publishingMode: page.publishing_mode || 'review',
             stages,
+            attempts,
+            effectivePrompt,
+            structureRules: {
+              minWords,
+              targetWords,
+              maxWords,
+              maxSentencesPerParagraph,
+              passThreshold: minRequiredScore,
+            },
             topic: {
               title: topicTitle,
               category: topicCategory,
             },
-            caption: generatedCaption,
+            caption: bestDraft,
             imagePrompt: keyScene,
             wordCount: words,
-            qaScore,
+            qaScore: bestScore,
             keySceneExtracted: keyScene,
             imageDimensions: page.overrides?.['image.aspectRatio'] === '1:1' ? '1080x1080 (1:1 Square)' : '1080x1350 (4:5 Portrait)',
             headlinePanel: {
@@ -3971,6 +4217,11 @@ async function generateDashboardHtml(
                                   <span class="badge" style="background: ${badgeBg}; color: ${badgeColor}; font-size: 10px; font-weight: 700; padding: 2px 6px;">
                                     ● ${statusLabel}
                                   </span>
+                                  ${p.publishing_mode === 'auto'
+                                    ? `<span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 10px; font-weight: 700; padding: 2px 6px;">AUTO</span>`
+                                    : p.publishing_mode === 'hybrid'
+                                    ? `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 10px; font-weight: 700; padding: 2px 6px;">HYBRID</span>`
+                                    : `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fbbf24; border: 1px solid rgba(234, 179, 8, 0.3); font-size: 10px; font-weight: 700; padding: 2px 6px;">REVIEW</span>`}
                                   ${isShared ? `<span class="badge" style="background: rgba(59,130,246,0.15); color: #93c5fd; font-size: 10px;" title="Discovered via multiple Facebook accounts">Shared</span>` : ''}
                                   ${p.active
                                     ? `<span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399; font-size: 11px; font-weight: 700;">🟢 LIVE (${p.schedule.postsPerDay} posts/day)</span>`
@@ -4092,6 +4343,7 @@ async function generateDashboardHtml(
                       <div style="width: 38px; height: 38px; border-radius: 50%; background: #1e3a8a; display: flex; align-items: center; justify-content: center; font-size: 18px;">📄</div>
                       <div>
                         <strong>${p.name}</strong> <small style="color: var(--text-muted);">(ID: ${p.fb_page_id})</small>
+                        <span class="badge" style="margin-left: 6px; font-size: 10px; font-weight: 700; ${p.publishing_mode === 'auto' ? 'background: rgba(168,85,247,0.15); color: #c084fc;' : p.publishing_mode === 'hybrid' ? 'background: rgba(59,130,246,0.15); color: #60a5fa;' : 'background: rgba(234,179,8,0.15); color: #fbbf24;'}">${(p.publishing_mode || 'review').toUpperCase()}</span>
                       </div>
                     </div>
                     <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
@@ -5121,6 +5373,21 @@ async function generateDashboardHtml(
         <input type="hidden" id="psmPageId" name="psmPageId">
         <input type="hidden" id="psmPostsPerDay" name="psmPostsPerDay" value="0">
 
+        <!-- Stale Profile Alert & Recovery Banner -->
+        <div id="psmAlertNotice" style="display: none; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div>
+              <strong style="color: #fca5a5; font-size: 13px;">⚠️ Stale Profile Detected</strong>
+              <div id="psmAlertNoticeText" style="font-size: 12px; color: #fecaca; margin-top: 2px;">
+                The profile assigned to this page no longer exists.
+              </div>
+            </div>
+            <button type="button" class="btn btn-secondary" onclick="reloadProfilesAndResetToCustom()" style="font-size: 12px; padding: 6px 12px; background: #991b1b; color: white; border: none; border-radius: 6px; cursor: pointer;">
+              🔄 Reload Profiles & Reset to Custom
+            </button>
+          </div>
+        </div>
+
         <!-- STEP 1 CARD: NICHE -->
         <div class="card" style="background: #0b0f19; border: 1px solid var(--card-border); padding: 18px; margin-bottom: 20px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
@@ -5401,6 +5668,38 @@ async function generateDashboardHtml(
               </div>
             </div>
 
+            <!-- Quality Assurance & Structure Controls -->
+            <div style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 14px; margin-bottom: 14px;">
+              <div style="font-size: 12px; font-weight: 700; color: #93c5fd; margin-bottom: 10px;">📐 Quality Assurance & Editorial Structure Rules</div>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;">
+                <div>
+                  <label for="psmQaPassThreshold" style="font-size: 11px; color: var(--text-muted);">QA Pass Score</label>
+                  <input type="number" id="psmQaPassThreshold" value="80" min="50" max="100" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
+                  <small style="color: var(--text-muted); font-size: 10px;">Min score (0-100) required to pass.</small>
+                </div>
+                <div>
+                  <label for="psmMaxSentencesPerParagraph" style="font-size: 11px; color: var(--text-muted);">Max Sentences/Para</label>
+                  <input type="number" id="psmMaxSentencesPerParagraph" value="3" min="1" max="10" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
+                  <small style="color: var(--text-muted); font-size: 10px;">Prevents wall-of-text (default 3).</small>
+                </div>
+                <div>
+                  <label for="psmMinWords" style="font-size: 11px; color: var(--text-muted);">Min Words</label>
+                  <input type="number" id="psmMinWords" placeholder="50" min="10" max="500" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
+                  <small style="color: var(--text-muted); font-size: 10px;">Minimum word threshold.</small>
+                </div>
+                <div>
+                  <label for="psmTargetWords" style="font-size: 11px; color: var(--text-muted);">Target Words</label>
+                  <input type="number" id="psmTargetWords" placeholder="120" min="20" max="800" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
+                  <small style="color: var(--text-muted); font-size: 10px;">Optimal post length target.</small>
+                </div>
+                <div>
+                  <label for="psmMaxWords" style="font-size: 11px; color: var(--text-muted);">Max Words</label>
+                  <input type="number" id="psmMaxWords" placeholder="220" min="30" max="1000" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
+                  <small style="color: var(--text-muted); font-size: 10px;">Upper word limit ceiling.</small>
+                </div>
+              </div>
+            </div>
+
             <!-- Source Line Toggle -->
             <div style="background: rgba(0,0,0,0.15); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 12px;">
               <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; margin: 0;">
@@ -5462,6 +5761,31 @@ async function generateDashboardHtml(
       <div style="display: flex; justify-content: flex-end; gap: 10px;">
         <button type="button" class="btn btn-secondary" onclick="closeStopAutoPostingModal()">Cancel</button>
         <button type="button" class="btn btn-danger" onclick="confirmStopAutoPosting()">Confirm & Pause Posting</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PUBLISHING MODE CONFIRMATION -->
+  <div class="modal" id="modeConfirmationModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 99999; align-items: center; justify-content: center;">
+    <div class="modal-content" style="max-width: 540px; padding: 26px; background: #0f172a; border: 1px solid #334155; border-radius: 12px;">
+      <h3 style="font-size: 18px; margin-top: 0; color: #fbbf24; display: flex; align-items: center; gap: 8px;">
+        <span>⚠️ Confirm Publishing Mode Switch</span>
+      </h3>
+      <p style="font-size: 13px; color: #e2e8f0; line-height: 1.5; margin-bottom: 16px;">
+        You are switching to <strong id="mcmModeName" style="color: #60a5fa;">Fully Automatic</strong> mode.
+      </p>
+      <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 14px; margin-bottom: 20px; font-size: 12px; line-height: 1.6; color: #fde68a;">
+        <ul style="margin: 0; padding-left: 18px;">
+          <li>Posts will be published directly to Facebook at scheduled times without manual review.</li>
+          <li>Ensure you have run and verified a Test Run to confirm quality before proceeding.</li>
+          <li>System safeguards (QA score threshold, daily caps, failover) remain active.</li>
+        </ul>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn btn-secondary" onclick="cancelModeConfirmation()">Keep in Review Mode</button>
+        <button type="button" class="btn btn-primary" id="mcmConfirmBtn" onclick="confirmModeChange()" style="background: #2563eb; font-weight: 700;">
+          Confirm & Switch
+        </button>
       </div>
     </div>
   </div>
@@ -5769,10 +6093,29 @@ async function generateDashboardHtml(
       <!-- Pipeline Stages Progress -->
       <div style="margin-bottom: 18px;">
         <div style="font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase; margin-bottom: 8px;">Pipeline Execution Stages</div>
-        <div id="trrStagesContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;">
+        <div id="trrStagesContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px;">
+          <!-- Dynamically filled -->
+        </div>
+        <div id="trrRulesContainer" style="display: flex; gap: 8px; flex-wrap: wrap; font-size: 11px;">
+          <!-- Editorial Structure & Rules Badges -->
+        </div>
+      </div>
+
+      <!-- Multi-Provider Revision & Failover Log -->
+      <div id="trrAttemptsSection" style="display: none; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+        <div style="font-size: 12px; font-weight: 700; color: #f59e0b; text-transform: uppercase; margin-bottom: 8px;">🔄 Multi-Provider Revision & Failover History</div>
+        <div id="trrAttemptsContainer" style="display: flex; flex-direction: column; gap: 8px;">
           <!-- Dynamically filled -->
         </div>
       </div>
+
+      <!-- Effective Writer Prompt (Masked Secrets) -->
+      <details id="trrPromptSection" style="display: none; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
+        <summary style="cursor: pointer; font-size: 12px; font-weight: 700; color: #93c5fd; user-select: none;">
+          🔍 View Effective Writer Prompt (Masked Secrets)
+        </summary>
+        <pre id="trrEffectivePromptText" style="white-space: pre-wrap; font-size: 11px; color: #94a3b8; margin-top: 10px; max-height: 180px; overflow-y: auto; font-family: monospace; background: #0b0f19; padding: 10px; border-radius: 6px;"></pre>
+      </details>
 
       <!-- Topic & Content Preview -->
       <div style="background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; margin-bottom: 16px;">

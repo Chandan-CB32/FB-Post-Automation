@@ -53,9 +53,37 @@ const BORING_GREETINGS = [
 /**
  * Counts words by splitting on whitespace.
  */
-function getWordCount(text: string): number {
+export function getWordCount(text: string): number {
   if (!text || typeof text !== 'string') return 0;
   return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+export const countWords = getWordCount;
+
+/**
+ * Splits prose into clean, mobile-friendly paragraphs adhering to the
+ * requirement of max N sentences per paragraph (default 3).
+ */
+export function formatParagraphs(text: string, maxSentences = 3): string {
+  if (!text || typeof text !== 'string') return '';
+  const rawParagraphs = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  const formattedParagraphs: string[] = [];
+
+  for (const p of rawParagraphs) {
+    const sentences = p.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g);
+    if (!sentences || sentences.length <= maxSentences) {
+      formattedParagraphs.push(p);
+      continue;
+    }
+    for (let i = 0; i < sentences.length; i += maxSentences) {
+      const group = sentences.slice(i, i + maxSentences).join('').trim();
+      if (group) {
+        formattedParagraphs.push(group);
+      }
+    }
+  }
+
+  return formattedParagraphs.join('\n\n');
 }
 
 /**

@@ -141,6 +141,11 @@ export interface StoredPage {
   settings_updated_at?: string;
   test_run_verified?: boolean;
   test_run_report?: any;
+  qa_pass_threshold?: number;
+  max_sentences_per_paragraph?: number;
+  min_words?: number;
+  target_words?: number;
+  max_words?: number;
   first_comment_enabled?: boolean;
   first_comment_prompt?: string;
   overrides?: Record<string, any>;
@@ -260,6 +265,18 @@ export function parseRawKeysInput(input: string): string[] {
   }
 
   return keys;
+}
+
+export function generateProfileSlug(name: string, niche?: string): string {
+  if (niche && typeof niche === 'string' && niche.trim().length > 0) {
+    return niche.toLowerCase().trim().replace(/_/g, '-');
+  }
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 export class SystemStore {
@@ -726,6 +743,11 @@ export class SystemStore {
       settings_updated_at: row.settings_updated_at || row.updated_at,
       test_run_verified: Boolean(row.test_run_verified),
       test_run_report: row.test_run_report || null,
+      qa_pass_threshold: row.qa_pass_threshold !== undefined && row.qa_pass_threshold !== null ? Number(row.qa_pass_threshold) : 80,
+      max_sentences_per_paragraph: row.max_sentences_per_paragraph !== undefined && row.max_sentences_per_paragraph !== null ? Number(row.max_sentences_per_paragraph) : 3,
+      min_words: row.min_words !== undefined && row.min_words !== null ? Number(row.min_words) : undefined,
+      target_words: row.target_words !== undefined && row.target_words !== null ? Number(row.target_words) : undefined,
+      max_words: row.max_words !== undefined && row.max_words !== null ? Number(row.max_words) : undefined,
       first_comment_enabled: row.first_comment_enabled !== false,
       first_comment_prompt: row.first_comment_prompt || '',
       overrides: row.overrides || {},
@@ -789,6 +811,11 @@ export class SystemStore {
       settings_updated_at: data.settings_updated_at || data.updated_at,
       test_run_verified: Boolean(data.test_run_verified),
       test_run_report: data.test_run_report || null,
+      qa_pass_threshold: data.qa_pass_threshold !== undefined && data.qa_pass_threshold !== null ? Number(data.qa_pass_threshold) : 80,
+      max_sentences_per_paragraph: data.max_sentences_per_paragraph !== undefined && data.max_sentences_per_paragraph !== null ? Number(data.max_sentences_per_paragraph) : 3,
+      min_words: data.min_words !== undefined && data.min_words !== null ? Number(data.min_words) : undefined,
+      target_words: data.target_words !== undefined && data.target_words !== null ? Number(data.target_words) : undefined,
+      max_words: data.max_words !== undefined && data.max_words !== null ? Number(data.max_words) : undefined,
       first_comment_enabled: data.first_comment_enabled !== false,
       first_comment_prompt: data.first_comment_prompt || '',
       overrides: data.overrides || {},
@@ -832,6 +859,11 @@ export class SystemStore {
     first_comment_enabled?: boolean;
     first_comment_prompt?: string;
     overrides?: Record<string, any>;
+    qa_pass_threshold?: number;
+    max_sentences_per_paragraph?: number;
+    min_words?: number | null;
+    target_words?: number | null;
+    max_words?: number | null;
     connected_at?: string;
     last_synced_at?: string;
   }): Promise<StoredPage> {
@@ -910,6 +942,11 @@ export class SystemStore {
         custom_caption_prompt_mode: input.custom_caption_prompt_mode || 'append',
         custom_image_prompt: input.custom_image_prompt || '',
         custom_image_prompt_mode: input.custom_image_prompt_mode || 'append',
+        qa_pass_threshold: input.qa_pass_threshold !== undefined ? input.qa_pass_threshold : 80,
+        max_sentences_per_paragraph: input.max_sentences_per_paragraph !== undefined ? input.max_sentences_per_paragraph : 3,
+        min_words: input.min_words !== undefined ? input.min_words : null,
+        target_words: input.target_words !== undefined ? input.target_words : null,
+        max_words: input.max_words !== undefined ? input.max_words : null,
         first_comment_enabled: input.first_comment_enabled !== false,
         first_comment_prompt: input.first_comment_prompt !== undefined ? input.first_comment_prompt : 'What do you think? Share your thoughts in the comments below!',
         overrides: input.overrides || {},
@@ -963,6 +1000,11 @@ export class SystemStore {
       custom_caption_prompt_mode: input.custom_caption_prompt_mode || 'append',
       custom_image_prompt: input.custom_image_prompt || '',
       custom_image_prompt_mode: input.custom_image_prompt_mode || 'append',
+      qa_pass_threshold: input.qa_pass_threshold !== undefined ? input.qa_pass_threshold : 80,
+      max_sentences_per_paragraph: input.max_sentences_per_paragraph !== undefined ? input.max_sentences_per_paragraph : 3,
+      min_words: input.min_words !== undefined ? input.min_words : null,
+      target_words: input.target_words !== undefined ? input.target_words : null,
+      max_words: input.max_words !== undefined ? input.max_words : null,
       first_comment_enabled: input.first_comment_enabled !== false,
       first_comment_prompt: input.first_comment_prompt !== undefined ? input.first_comment_prompt : 'What do you think? Share your thoughts in the comments below!',
       overrides: input.overrides || {},
@@ -1087,6 +1129,8 @@ export class SystemStore {
           const err = new Error('Selected profile no longer exists. Please choose a valid profile or switch to Custom niche.');
           (err as any).field = 'profile_id';
           (err as any).statusCode = 400;
+          (err as any).missingId = updates.profile_id;
+          (err as any).table = 'content_profiles';
           throw err;
         }
       }
@@ -1348,6 +1392,11 @@ export class SystemStore {
     if (updates.checklist_status !== undefined) updatePayload.checklist_status = updates.checklist_status;
     if (updates.test_run_verified !== undefined) updatePayload.test_run_verified = updates.test_run_verified;
     if (updates.test_run_report !== undefined) updatePayload.test_run_report = updates.test_run_report;
+    if ((updates as any).qa_pass_threshold !== undefined) updatePayload.qa_pass_threshold = (updates as any).qa_pass_threshold;
+    if ((updates as any).max_sentences_per_paragraph !== undefined) updatePayload.max_sentences_per_paragraph = (updates as any).max_sentences_per_paragraph;
+    if ((updates as any).min_words !== undefined) updatePayload.min_words = (updates as any).min_words;
+    if ((updates as any).target_words !== undefined) updatePayload.target_words = (updates as any).target_words;
+    if ((updates as any).max_words !== undefined) updatePayload.max_words = (updates as any).max_words;
     if (updates.custom_caption_prompt !== undefined) updatePayload.custom_caption_prompt = updates.custom_caption_prompt;
     if (updates.custom_caption_prompt_mode) updatePayload.custom_caption_prompt_mode = updates.custom_caption_prompt_mode;
     if (updates.custom_image_prompt !== undefined) updatePayload.custom_image_prompt = updates.custom_image_prompt;
@@ -1390,6 +1439,11 @@ export class SystemStore {
       delete updatePayload.settings_updated_at;
       delete updatePayload.test_run_verified;
       delete updatePayload.test_run_report;
+      delete updatePayload.qa_pass_threshold;
+      delete updatePayload.max_sentences_per_paragraph;
+      delete updatePayload.min_words;
+      delete updatePayload.target_words;
+      delete updatePayload.max_words;
       if (updatePayload.token_status === 'cannot_publish' || updatePayload.token_status === 'inaccessible') {
         updatePayload.token_status = 'revoked';
       }
@@ -2299,6 +2353,24 @@ export class SystemStore {
     }));
   }
 
+  public async invalidateAllPagesTestRun(): Promise<void> {
+    if (isTestEnv() && !this.client) {
+      for (const page of this.memoryPages.values()) {
+        page.test_run_verified = false;
+        page.last_test_run_at = null;
+        page.test_run_report = null;
+      }
+      return;
+    }
+    try {
+      await this.getClient().from('pages').update({
+        test_run_verified: false,
+        last_test_run_at: null,
+        test_run_report: null,
+      }).neq('id', '00000000-0000-0000-0000-000000000000');
+    } catch (_) {}
+  }
+
   public async addProviderKey(input: {
     provider_id: string;
     raw_key: string;
@@ -2380,6 +2452,7 @@ export class SystemStore {
       throw new Error(`Failed to insert provider key in Supabase: ${error.message}`);
     }
 
+    await this.invalidateAllPagesTestRun();
     return {
       id: data.id,
       provider_id: data.provider_id,
@@ -2417,7 +2490,9 @@ export class SystemStore {
 
   public async deleteProviderKey(keyId: string): Promise<boolean> {
     if (isTestEnv() && !this.client) {
-      return this.memoryProviderKeys.delete(keyId);
+      const res = this.memoryProviderKeys.delete(keyId);
+      await this.invalidateAllPagesTestRun();
+      return res;
     }
 
     const { error } = await this.getClient().from('provider_keys').delete().eq('id', keyId);
@@ -2425,6 +2500,7 @@ export class SystemStore {
       console.error('[SystemStore] Delete provider key error:', error.message);
       return false;
     }
+    await this.invalidateAllPagesTestRun();
     return true;
   }
 
@@ -2743,22 +2819,26 @@ export class SystemStore {
     return data?.length || 0;
   }
 
-  // --- Starter Profiles Catalog Importer ---
+  // --- Starter Profiles Catalog Importer (Idempotent UPSERT Keyed by Stable Slug) ---
   public async importStarterProfiles(): Promise<{
     success: boolean;
     count: number;
     importedCount: number;
     skippedCount: number;
+    updatedCount: number;
     profiles: any[];
   }> {
     const starters = getAllNicheProfiles();
     const imported: any[] = [];
     let importedCount = 0;
     let skippedCount = 0;
+    let updatedCount = 0;
 
     for (const p of starters) {
-      const payload = {
+      const slug = generateProfileSlug(p.name, (p as any).customVariables?.niche || (p as any).niche);
+      const payload: Record<string, any> = {
         name: p.name,
+        slug,
         description: p.description || '',
         type: p.type || 'factual',
         language: p.language || 'en',
@@ -2773,14 +2853,26 @@ export class SystemStore {
         research_source_ids: (p as any).researchSourceIds || [],
         custom_variables: p.customVariables || {},
         is_system: true,
+        is_customized: false,
         version: 1,
       };
 
       if (isTestEnv() && !this.client) {
-        const existing = Array.from(this.memoryContentProfiles.values()).find((cp) => cp.name === p.name);
+        const existing = Array.from(this.memoryContentProfiles.values()).find(
+          (cp) => cp.slug === slug || cp.name === p.name
+        );
         if (existing) {
-          skippedCount++;
-          imported.push(existing);
+          const isCustomized = Boolean(existing.is_customized || (existing.version && existing.version > 1) || existing.is_system === false);
+          const isIdentical = (existing.slug === slug || !existing.slug) && existing.name === p.name && existing.master_prompt === payload.master_prompt;
+          if (isCustomized || isIdentical) {
+            skippedCount++;
+            imported.push(existing);
+          } else {
+            updatedCount++;
+            const updated = { ...existing, ...payload, id: existing.id, slug: existing.slug || slug };
+            this.memoryContentProfiles.set(existing.id, updated as any);
+            imported.push(updated);
+          }
           continue;
         }
         importedCount++;
@@ -2791,46 +2883,83 @@ export class SystemStore {
         continue;
       }
 
-      // Check if already in Supabase
-      const { data: existing } = await this.getClient()
+      // Check if already in Supabase by name or stable slug
+      let existing: any = null;
+      const { data: byName } = await this.getClient()
         .from('content_profiles')
-        .select('id')
+        .select('*')
         .eq('name', p.name)
         .maybeSingle();
 
-      if (existing) {
-        skippedCount++;
-        let { data: updated, error: updErr } = await this.getClient()
+      if (byName) {
+        existing = byName;
+      } else {
+        const { data: bySlug } = await this.getClient()
           .from('content_profiles')
-          .update(payload)
-          .eq('id', existing.id)
-          .select()
-          .single();
-        if (updErr && (updErr.message.includes('column') || updErr.message.includes('schema cache'))) {
-          delete (payload as any).is_system;
-          delete (payload as any).version;
-          const retry = await this.getClient()
+          .select('*')
+          .eq('slug', slug)
+          .maybeSingle();
+        existing = bySlug;
+      }
+
+      if (existing) {
+        const isCustomized = Boolean(
+          existing.is_customized ||
+          (existing.version && existing.version > 1) ||
+          existing.is_system === false
+        );
+        const isIdentical = (existing.slug === slug || !existing.slug) && existing.name === p.name && existing.master_prompt === payload.master_prompt;
+
+        if (isCustomized || isIdentical) {
+          skippedCount++;
+          imported.push(existing);
+        } else {
+          updatedCount++;
+          const updatePayload: Record<string, any> = {
+            ...payload,
+            slug: existing.slug || slug,
+          };
+          let { data: updated, error: updErr } = await this.getClient()
             .from('content_profiles')
-            .update(payload)
+            .update(updatePayload)
             .eq('id', existing.id)
             .select()
             .single();
-          updated = retry.data;
+
+          if (updErr && (updErr.message.includes('column') || updErr.message.includes('schema cache'))) {
+            delete updatePayload.is_system;
+            delete updatePayload.is_customized;
+            delete updatePayload.version;
+            delete updatePayload.slug;
+            const retry = await this.getClient()
+              .from('content_profiles')
+              .update(updatePayload)
+              .eq('id', existing.id)
+              .select()
+              .single();
+            updated = retry.data;
+          }
+          imported.push(updated || existing);
         }
-        if (updated) imported.push(updated);
       } else {
         importedCount++;
+        const insertPayload: Record<string, any> = {
+          ...payload,
+        };
         let { data: created, error: insErr } = await this.getClient()
           .from('content_profiles')
-          .insert(payload)
+          .insert(insertPayload)
           .select()
           .single();
+
         if (insErr && (insErr.message.includes('column') || insErr.message.includes('schema cache'))) {
-          delete (payload as any).is_system;
-          delete (payload as any).version;
+          delete insertPayload.is_system;
+          delete insertPayload.is_customized;
+          delete insertPayload.version;
+          delete insertPayload.slug;
           const retry = await this.getClient()
             .from('content_profiles')
-            .insert(payload)
+            .insert(insertPayload)
             .select()
             .single();
           created = retry.data;
@@ -2844,6 +2973,7 @@ export class SystemStore {
       count: imported.length,
       importedCount,
       skippedCount,
+      updatedCount,
       profiles: imported,
     };
   }

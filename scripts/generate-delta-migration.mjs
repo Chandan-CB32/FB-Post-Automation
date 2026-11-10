@@ -13,6 +13,18 @@ function escJson(obj) {
   return "'" + JSON.stringify(obj).replace(/'/g, "''") + "'::jsonb";
 }
 
+function generateProfileSlug(name, niche) {
+  if (niche && typeof niche === 'string' && niche.trim().length > 0) {
+    return niche.toLowerCase().trim().replace(/_/g, '-');
+  }
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 let sql = `-- ============================================================================
 -- Supabase Delta Migration: 2026-11-10
 -- Complete Production Fixes, Schema Alignment & Starter Profiles Seeding
@@ -113,7 +125,57 @@ BEGIN
         ALTER TABLE public.pages ADD COLUMN test_run_report JSONB DEFAULT NULL;
     END IF;
 
-    -- 2. Ensure version and system flags exist on public.content_profiles
+    -- QA configuration and editorial word limits on public.pages
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'qa_pass_threshold'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN qa_pass_threshold INTEGER DEFAULT 80;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'max_sentences_per_paragraph'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN max_sentences_per_paragraph INTEGER DEFAULT 3;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'min_words'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN min_words INTEGER DEFAULT NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'target_words'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN target_words INTEGER DEFAULT NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'max_words'
+    ) THEN
+        ALTER TABLE public.pages ADD COLUMN max_words INTEGER DEFAULT NULL;
+    END IF;
+
+    -- 2. Ensure version, slug, customization and system flags exist on public.content_profiles
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'slug'
+    ) THEN
+        ALTER TABLE public.content_profiles ADD COLUMN slug TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'is_customized'
+    ) THEN
+        ALTER TABLE public.content_profiles ADD COLUMN is_customized BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
         WHERE table_schema = 'public' AND table_name = 'content_profiles' AND column_name = 'version'
@@ -170,24 +232,46 @@ CREATE INDEX IF NOT EXISTS idx_provider_keys_active ON public.provider_keys (pro
 CREATE UNIQUE INDEX IF NOT EXISTS idx_content_profiles_name ON public.content_profiles (name);
 CREATE INDEX IF NOT EXISTS idx_pages_settings_version ON public.pages (settings_version);
 
--- 7. Seed Starter & Extended Content Profiles (27 Viral Niches)
+-- 7. Content Profiles Slug Backfill & Unique Index
+UPDATE public.content_profiles 
+SET slug = lower(trim(regexp_replace(regexp_replace(name, '&', '', 'g'), '[^a-zA-Z0-9]+', '-', 'g'), '-'))
+WHERE slug IS NULL OR slug = '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_content_profiles_slug ON public.content_profiles (slug);
+
+-- 8. Resilient Foreign Key & Orphan Cleanup
+-- Clean up orphaned profile references (stale profile IDs)
+UPDATE public.pages 
+SET profile_id = NULL 
+WHERE profile_id IS NOT NULL 
+  AND profile_id NOT IN (SELECT id FROM public.content_profiles);
+
+-- Recreate foreign key with ON DELETE SET NULL to ensure deleting a profile never cascades or errors
+ALTER TABLE public.pages DROP CONSTRAINT IF EXISTS pages_profile_id_fkey;
+ALTER TABLE public.pages 
+ADD CONSTRAINT pages_profile_id_fkey 
+FOREIGN KEY (profile_id) REFERENCES public.content_profiles(id) ON DELETE SET NULL;
+
+-- 9. Seed Starter & Extended Content Profiles (27 Viral Niches) Keyed by Stable Slug
 `;
 
 for (const p of profiles) {
+  const slug = generateProfileSlug(p.name, p.customVariables?.niche || p.niche);
   sql += `INSERT INTO public.content_profiles (
-    name, description, type, language, audience, master_prompt,
+    slug, name, description, type, language, audience, master_prompt,
     templates, caption_settings, hashtag_settings, disclosure_settings,
     image_settings, topic_settings, research_source_ids, custom_variables,
-    is_system, version
+    is_system, is_customized, version
 ) VALUES (
-    ${esc(p.name)}, ${esc(p.description)}, ${esc(p.type)}, ${esc(p.language || 'en')},
+    ${esc(slug)}, ${esc(p.name)}, ${esc(p.description)}, ${esc(p.type)}, ${esc(p.language || 'en')},
     ${esc(p.audience || 'General audience')}, ${esc(p.masterPrompt)},
     ${escJson(p.templates)}, ${escJson(p.captionSettings)}, ${escJson(p.hashtagSettings)},
     ${escJson(p.disclosureSettings)}, ${escJson(p.imageSettings)}, ${escJson(p.topicSettings)},
     ${escJson(p.researchSourceIds || [])}, ${escJson(p.customVariables || {})},
-    true, 1
+    true, false, 1
 )
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
     type = EXCLUDED.type,
     language = EXCLUDED.language,
@@ -202,10 +286,15 @@ ON CONFLICT (name) DO UPDATE SET
     research_source_ids = EXCLUDED.research_source_ids,
     custom_variables = EXCLUDED.custom_variables,
     is_system = true,
-    updated_at = timezone('utc'::text, now());
+    updated_at = timezone('utc'::text, now())
+WHERE public.content_profiles.is_customized = false;
 
 `;
 }
+
+fs.writeFileSync('supabase/delta_20261110.sql', sql, 'utf8');
+console.log('Successfully wrote supabase/delta_20261110.sql (' + sql.length + ' bytes)');
+
 
 fs.writeFileSync('supabase/delta_20261110.sql', sql, 'utf8');
 console.log('Successfully wrote supabase/delta_20261110.sql (' + sql.length + ' bytes)');
