@@ -144,3 +144,4 @@ ON CONFLICT (name) DO UPDATE SET
 
 fs.writeFileSync('supabase/delta_20261110.sql', sql, 'utf8');
 console.log('Successfully wrote supabase/delta_20261110.sql (' + sql.length + ' bytes)');
+
