@@ -795,59 +795,80 @@
   }
 
   async function savePagePromptsAction() {
-    const pageId = document.getElementById('studioPageSelect').value;
+    const pageId = document.getElementById('studioPageSelect') ? document.getElementById('studioPageSelect').value : null;
     const page = pagesData.find(function (p) { return p.id === pageId; });
-    if (!page) return;
-
-    const profile_id = document.getElementById('editProfileSelect').value;
-    const custom_niche_name = document.getElementById('editCustomNicheName') ? document.getElementById('editCustomNicheName').value.trim() : '';
-
-    if (profile_id === '__custom__' && !custom_niche_name) {
-      alert('Please enter a name for your custom niche!');
+    if (!page) {
+      showToast('Please select a Facebook Page first.', 'warning');
       return;
     }
 
-    const custom_caption_prompt = document.getElementById('editCaptionPrompt').value;
-    const custom_caption_prompt_mode = document.getElementById('editCaptionMode').value;
-    const custom_image_prompt = document.getElementById('editImagePrompt').value;
-    const custom_image_prompt_mode = document.getElementById('editImageMode').value;
-    const first_comment_enabled = document.getElementById('editFirstCommentEnabled').checked;
-    const first_comment_prompt = document.getElementById('editFirstCommentPrompt').value;
+    const saveBtn = document.querySelector('button[onclick="savePagePromptsAction()"]');
+    const origText = saveBtn ? saveBtn.innerText : 'Save Page Prompts';
 
-    const overrides = Object.assign({}, page.overrides || {}, {
-      'caption.min': parseInt(document.getElementById('editMinWords').value, 10),
-      'caption.target': parseInt(document.getElementById('editTargetWords').value, 10),
-      'caption.max': parseInt(document.getElementById('editMaxWords').value, 10),
-      'image.aspectRatio': document.getElementById('editAspectRatio').value,
-      'image.headlinePanel.enabled': document.getElementById('editPanelEnabled').checked,
-      'image.headlinePanel.heightPercent': parseInt(document.getElementById('editPanelHeight').value, 10),
-      'image.headlinePanel.backgroundColor': document.getElementById('editPanelColor').value,
-    });
+    try {
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerText = 'Saving...';
+      }
 
-    const res = await fetch('/api/pages', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: pageId,
-        profile_id: profile_id,
-        custom_niche_name: custom_niche_name,
-        custom_caption_prompt: custom_caption_prompt,
-        custom_caption_prompt_mode: custom_caption_prompt_mode,
-        custom_image_prompt: custom_image_prompt,
-        custom_image_prompt_mode: custom_image_prompt_mode,
-        first_comment_enabled: first_comment_enabled,
-        first_comment_prompt: first_comment_prompt,
-        overrides: overrides,
-      }),
-    });
+      const profile_id = document.getElementById('editProfileSelect').value;
+      const custom_niche_name = document.getElementById('editCustomNicheName') ? document.getElementById('editCustomNicheName').value.trim() : '';
 
-    if (res.ok) {
-      alert('Custom prompts and settings for this Page successfully saved!');
-      const updated = await res.json();
-      const idx = pagesData.findIndex(function (p) { return p.id === pageId; });
-      if (idx !== -1) pagesData[idx] = updated.page;
-    } else {
-      alert('Error saving page prompts.');
+      if (profile_id === '__custom__' && !custom_niche_name) {
+        showToast('Please enter a name for your custom niche!', 'warning');
+        return;
+      }
+
+      const custom_caption_prompt = document.getElementById('editCaptionPrompt').value;
+      const custom_caption_prompt_mode = document.getElementById('editCaptionMode').value;
+      const custom_image_prompt = document.getElementById('editImagePrompt').value;
+      const custom_image_prompt_mode = document.getElementById('editImageMode').value;
+      const first_comment_enabled = document.getElementById('editFirstCommentEnabled').checked;
+      const first_comment_prompt = document.getElementById('editFirstCommentPrompt').value;
+
+      const overrides = Object.assign({}, page.overrides || {}, {
+        'caption.min': parseInt(document.getElementById('editMinWords').value, 10),
+        'caption.target': parseInt(document.getElementById('editTargetWords').value, 10),
+        'caption.max': parseInt(document.getElementById('editMaxWords').value, 10),
+        'image.aspectRatio': document.getElementById('editAspectRatio').value,
+        'image.headlinePanel.enabled': document.getElementById('editPanelEnabled').checked,
+        'image.headlinePanel.heightPercent': parseInt(document.getElementById('editPanelHeight').value, 10),
+        'image.headlinePanel.backgroundColor': document.getElementById('editPanelColor').value || '#000000',
+      });
+
+      const res = await fetch('/api/pages', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: pageId,
+          profile_id: profile_id,
+          custom_niche_name: custom_niche_name,
+          custom_niche_text: custom_niche_name,
+          custom_caption_prompt: custom_caption_prompt,
+          custom_caption_prompt_mode: custom_caption_prompt_mode,
+          custom_image_prompt: custom_image_prompt,
+          custom_image_prompt_mode: custom_image_prompt_mode,
+          first_comment_enabled: first_comment_enabled,
+          first_comment_prompt: first_comment_prompt,
+          overrides: overrides,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('✅ Custom prompts and settings for this Page successfully saved!', 'success');
+        const idx = pagesData.findIndex(function (p) { return p.id === pageId; });
+        if (idx !== -1 && data.page) pagesData[idx] = data.page;
+      } else {
+        showToast('Error saving page prompts: ' + (data.error || 'Server error'), 'error');
+      }
+    } catch (err) {
+      showToast('Network error saving prompts: ' + err.message, 'error');
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.innerText = origText;
+      }
     }
   }
 
@@ -1845,7 +1866,7 @@
       document.body.appendChild(container);
     }
     var toast = document.createElement('div');
-    var bg = type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#10b981';
+    var bg = type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : type === 'info' ? '#3b82f6' : '#10b981';
     toast.style.cssText = 'background: ' + bg + '; color: #ffffff; padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); pointer-events: auto; display: flex; align-items: center; gap: 8px; transition: opacity 0.3s ease; opacity: 1;';
     toast.innerText = message;
     container.appendChild(toast);
@@ -2021,13 +2042,18 @@
     var isLive = Boolean(page.active || page.is_live);
     updateBigSwitchUI(isLive);
 
-    // Step 1: Profile Select
+    // Step 1: Profile Select & Custom Niche
     var profSelect = document.getElementById('psmProfileSelect');
     if (profSelect) {
       profSelect.value = page.profile_id || '__custom__';
     }
-    var cardCheck1 = document.getElementById('psmCardCheck1');
-    if (cardCheck1) cardCheck1.innerText = (page.profile_id && page.profile_id !== '__custom__') ? '✅' : '⭕';
+    var customNicheText = document.getElementById('psmCustomNicheText');
+    if (customNicheText) {
+      customNicheText.value = page.custom_niche_text || '';
+      var countEl = document.getElementById('psmCustomNicheCharCount');
+      if (countEl) countEl.innerText = (page.custom_niche_text ? page.custom_niche_text.length : 0) + ' / 1000 characters';
+    }
+    handleModalProfileChange(page.profile_id || '__custom__', true);
 
     // Niche suggestion box
     var suggestionBox = document.getElementById('psmNicheSuggestionBox');
@@ -2100,7 +2126,11 @@
 
   function updateModalChecklistDisplay(page) {
     var sched = page.schedule || {};
-    var profileChosen = Boolean(page.profile_id && page.profile_id !== 'default-niche' && page.profile_id !== '__custom__');
+    var customText = page.custom_niche_text || (document.getElementById('psmCustomNicheText') ? document.getElementById('psmCustomNicheText').value.trim() : '');
+    var profileChosen = Boolean(
+      (page.profile_id && page.profile_id !== 'default-niche' && page.profile_id !== '__custom__') ||
+      (page.profile_id === '__custom__' && customText.length > 0)
+    );
     var scheduleSet = Boolean(sched.postsPerDay && sched.postsPerDay > 0);
     var modeChosen = Boolean(page.publishing_mode);
     var testDone = Boolean(page.last_test_run_at);
@@ -2133,6 +2163,28 @@
       } else {
         progressElem.innerText = (4 - totalDone) + ' Step(s) Incomplete before Live';
         progressElem.style.color = '#f59e0b';
+      }
+    }
+
+    var bigBtn = document.getElementById('psmBigSwitchBtn');
+    if (bigBtn) {
+      if (!isLive) {
+        var canActivate = (totalDone === 4);
+        bigBtn.disabled = !canActivate;
+        if (!canActivate) {
+          bigBtn.title = 'Complete all 4 checklist steps and verify before taking page live.';
+          bigBtn.style.opacity = '0.5';
+          bigBtn.style.cursor = 'not-allowed';
+        } else {
+          bigBtn.title = 'All steps complete. Click to activate auto-posting.';
+          bigBtn.style.opacity = '1';
+          bigBtn.style.cursor = 'pointer';
+        }
+      } else {
+        bigBtn.disabled = false;
+        bigBtn.title = 'Click to stop auto-posting.';
+        bigBtn.style.opacity = '1';
+        bigBtn.style.cursor = 'pointer';
       }
     }
   }
@@ -2176,6 +2228,19 @@
       warning.style.display = postsPerDay > 5 ? 'block' : 'none';
     }
 
+    var tzSelect = document.getElementById('psmTimezone');
+    var tzVal = tzSelect ? tzSelect.value : 'America/New_York';
+
+    // Overnight warning (00:00 - 05:59)
+    var hasOvernight = fixedTimes.some(function (t) {
+      var h = parseInt(t.split(':')[0], 10);
+      return !isNaN(h) && h >= 0 && h <= 5;
+    });
+    var overnightEl = document.getElementById('psmOvernightWarning');
+    var overnightTzEl = document.getElementById('psmOvernightTzName');
+    if (overnightTzEl) overnightTzEl.innerText = tzVal;
+    if (overnightEl) overnightEl.style.display = hasOvernight ? 'block' : 'none';
+
     // Update Step 2 Card Check
     var cardCheck2 = document.getElementById('psmCardCheck2');
     if (cardCheck2) cardCheck2.innerText = postsPerDay > 0 ? '✅' : '⭕';
@@ -2188,7 +2253,6 @@
     }
 
     // Update Audience Timezone current time display
-    var tzSelect = document.getElementById('psmTimezone');
     var tzDisplay = document.getElementById('psmCurrentTzTime');
     if (tzSelect && tzDisplay) {
       try {
@@ -2208,6 +2272,19 @@
 
     if (previewDebounceTimer) clearTimeout(previewDebounceTimer);
     previewDebounceTimer = setTimeout(updateLiveSchedulePreview, 250);
+  }
+
+  function applyUsPrimeTimeSuggestions() {
+    var list = document.getElementById('psmFixedTimesList');
+    if (!list) return;
+    list.innerHTML = '';
+    var primeTimes = ['09:00', '13:00', '18:00', '21:00'];
+    primeTimes.forEach(function (t) {
+      addFixedTimePicker(t);
+    });
+    handleScheduleInputChange();
+    markFormModified();
+    showToast('Applied US prime-time schedule (09:00, 13:00, 18:00, 21:00)!', 'success');
   }
 
   function applyQuickSchedule(count) {
@@ -2264,22 +2341,45 @@
     markFormModified();
   }
 
-  function handleModalProfileChange(val) {
+  function handleModalProfileChange(val, silent) {
+    var isCustom = (val === '__custom__');
+    var customBox = document.getElementById('psmCustomNicheBox');
+    if (customBox) {
+      customBox.style.display = isCustom ? 'block' : 'none';
+    }
+    var customText = document.getElementById('psmCustomNicheText') ? document.getElementById('psmCustomNicheText').value.trim() : '';
+    var isChosen = Boolean((val && val !== '__custom__') || (isCustom && customText.length > 0));
+
     var cardCheck1 = document.getElementById('psmCardCheck1');
     if (cardCheck1) {
-      cardCheck1.innerText = (val && val !== '__custom__') ? '✅' : '⭕';
+      cardCheck1.innerText = isChosen ? '✅' : '⭕';
     }
     var stepProfile = document.getElementById('psmStepProfile');
     if (stepProfile) {
-      var isChosen = Boolean(val && val !== '__custom__');
       stepProfile.querySelector('.psm-step-icon').innerText = isChosen ? '✅' : '⭕';
       stepProfile.querySelector('.psm-step-status').innerText = isChosen ? 'Chosen' : 'Not Chosen';
       stepProfile.querySelector('.psm-step-status').style.color = isChosen ? '#34d399' : '#f87171';
     }
-    if (val === '__custom__') {
-      openPagePromptStudioFromModal();
+    if (!silent) markFormModified();
+  }
+
+  function handleCustomNicheTextInput(val) {
+    var countEl = document.getElementById('psmCustomNicheCharCount');
+    if (countEl) {
+      countEl.innerText = (val ? val.length : 0) + ' / 1000 characters';
     }
-    markFormModified();
+    var profVal = document.getElementById('psmProfileSelect') ? document.getElementById('psmProfileSelect').value : '';
+    if (profVal === '__custom__') {
+      var isChosen = Boolean(val && val.trim().length > 0);
+      var cardCheck1 = document.getElementById('psmCardCheck1');
+      if (cardCheck1) cardCheck1.innerText = isChosen ? '✅' : '⭕';
+      var stepProfile = document.getElementById('psmStepProfile');
+      if (stepProfile) {
+        stepProfile.querySelector('.psm-step-icon').innerText = isChosen ? '✅' : '⭕';
+        stepProfile.querySelector('.psm-step-status').innerText = isChosen ? 'Chosen' : 'Not Chosen';
+        stepProfile.querySelector('.psm-step-status').style.color = isChosen ? '#34d399' : '#f87171';
+      }
+    }
   }
 
   function getSchedulePayloadFromModal() {
@@ -2333,22 +2433,27 @@
         return;
       }
 
-      if (!data.preview || data.preview.length === 0) {
+      var slots = data.slots || (Array.isArray(data.preview) ? data.preview : (data.preview && data.preview.slots ? data.preview.slots : []));
+
+      if (!slots || slots.length === 0) {
         tableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 12px; color: var(--text-muted);">No slots scheduled in the next 7 days for current settings.</td></tr>';
         if (badge) badge.innerText = '0 slots';
         return;
       }
 
-      if (badge) badge.innerText = data.preview.length + ' slots planned over next 7 days';
+      if (badge) badge.innerText = slots.length + ' slots planned over next 7 days';
 
       var html = '';
-      data.preview.forEach(function (slot) {
+      slots.forEach(function (slot) {
+        var dayLabel = escapeHtml(slot.dayOfWeekName || slot.dayOfWeek || '') + ' (' + escapeHtml(slot.date || slot.audienceDate || '') + ')';
+        var audTz = escapeHtml(slot.audienceTimezone || slot.timezone || '');
+        var locTz = escapeHtml(slot.localTimezone || 'IST');
         html += '<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">' +
-          '<td style="padding: 6px 8px; font-weight: 600; color: #f3f4f6;">' + escapeHtml(slot.dayOfWeek) + ' (' + escapeHtml(slot.audienceDate) + ')</td>' +
-          '<td style="padding: 6px 8px; color: var(--text-muted);">' + slot.slotIndex + '</td>' +
-          '<td style="padding: 6px 8px; color: #34d399; font-weight: 700;">' + escapeHtml(slot.audienceTime) + ' <small style="color: var(--text-muted); font-weight: normal;">' + escapeHtml(slot.timezone) + '</small></td>' +
-          '<td style="padding: 6px 8px; color: #93c5fd; font-weight: 700;">' + escapeHtml(slot.localTime) + ' <small style="color: var(--text-muted); font-weight: normal;">IST</small></td>' +
-          '<td style="padding: 6px 8px; text-transform: uppercase; font-size: 10px; color: #a78bfa;">' + escapeHtml(slot.mode) + '</td>' +
+          '<td style="padding: 6px 8px; font-weight: 600; color: #f3f4f6;">' + dayLabel + '</td>' +
+          '<td style="padding: 6px 8px; color: var(--text-muted);">' + (slot.slotIndex || 1) + '</td>' +
+          '<td style="padding: 6px 8px; color: #34d399; font-weight: 700;">' + escapeHtml(slot.audienceTime) + ' <small style="color: var(--text-muted); font-weight: normal;">' + audTz + '</small></td>' +
+          '<td style="padding: 6px 8px; color: #93c5fd; font-weight: 700;">' + escapeHtml(slot.localTime) + ' <small style="color: var(--text-muted); font-weight: normal;">' + locTz + '</small></td>' +
+          '<td style="padding: 6px 8px; text-transform: uppercase; font-size: 10px; color: #a78bfa;">' + escapeHtml(slot.mode || 'fixed') + '</td>' +
         '</tr>';
       });
       tableBody.innerHTML = html;
@@ -2362,28 +2467,32 @@
     if (!currentSettingsPageId) return;
 
     var saveBtn = document.getElementById('psmSaveBtn');
-    var origText = saveBtn ? saveBtn.innerText : '';
-    if (saveBtn) {
-      saveBtn.disabled = true;
-      saveBtn.innerText = '💾 Saving & Verifying...';
-    }
-
-    var sched = getSchedulePayloadFromModal();
-    var payload = {
-      pageId: currentSettingsPageId,
-      profile_id: document.getElementById('psmProfileSelect').value,
-      publishing_mode: document.getElementById('psmPublishingMode').value,
-      hybrid_min_score: Number(document.getElementById('psmHybridScore').value) || 80,
-      daily_cap: Number(document.getElementById('psmDailyCap').value) || 3,
-      schedule: sched,
-      ai_disclosure_enabled: document.getElementById('psmAiDisclosureToggle').checked,
-      ai_disclosure_text: document.getElementById('psmAiDisclosureText').value,
-      source_attribution_enabled: document.getElementById('psmSourceLineToggle').checked,
-      expected_updated_at: currentExpectedUpdatedAt,
-      expected_version: currentExpectedVersion,
-    };
+    var origText = saveBtn ? saveBtn.innerText : '💾 Save Settings to Supabase';
 
     try {
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerText = '💾 Saving & Verifying...';
+      }
+
+      var sched = getSchedulePayloadFromModal();
+      var customNicheText = document.getElementById('psmCustomNicheText') ? document.getElementById('psmCustomNicheText').value.trim() : '';
+
+      var payload = {
+        pageId: currentSettingsPageId,
+        profile_id: document.getElementById('psmProfileSelect').value,
+        custom_niche_text: customNicheText,
+        publishing_mode: document.getElementById('psmPublishingMode').value,
+        hybrid_min_score: Number(document.getElementById('psmHybridScore').value) || 80,
+        daily_cap: Number(document.getElementById('psmDailyCap').value) || 3,
+        schedule: sched,
+        ai_disclosure_enabled: document.getElementById('psmAiDisclosureToggle').checked,
+        ai_disclosure_text: document.getElementById('psmAiDisclosureText').value,
+        source_attribution_enabled: document.getElementById('psmSourceLineToggle').checked,
+        expected_updated_at: currentExpectedUpdatedAt,
+        expected_version: currentExpectedVersion,
+      };
+
       var res = await fetch('/api/pages/update-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2392,12 +2501,12 @@
       var data = await res.json();
 
       if (res.status === 409) {
-        alert('⚠️ Concurrency Conflict:\n\nThese Page settings were updated in another session or window.\nPlease close this modal, refresh the page, and re-apply your changes.');
+        showToast('⚠️ Concurrency Conflict: Settings were modified elsewhere. Please refresh to see latest.', 'error');
         return;
       }
 
       if (!res.ok || data.error) {
-        alert('Failed to save settings: ' + (data.error || 'Unknown error'));
+        showToast('Failed to save settings: ' + (data.error || 'Unknown error'), 'error');
         return;
       }
 
@@ -2422,7 +2531,7 @@
         updateModalChecklistDisplay(data.page);
       }
     } catch (err) {
-      alert('Network error while saving settings: ' + err.message);
+      showToast('Network error while saving settings: ' + err.message, 'error');
     } finally {
       if (saveBtn) {
         saveBtn.disabled = false;
@@ -2442,18 +2551,21 @@
     } else {
       var sched = getSchedulePayloadFromModal();
       var profileId = document.getElementById('psmProfileSelect') ? document.getElementById('psmProfileSelect').value : page.profile_id;
-      var hasProfile = Boolean(profileId && profileId !== '__custom__');
+      var customText = document.getElementById('psmCustomNicheText') ? document.getElementById('psmCustomNicheText').value.trim() : (page.custom_niche_text || '');
+      var hasProfile = Boolean((profileId && profileId !== '__custom__') || (profileId === '__custom__' && customText.length > 0));
       var hasSchedule = Boolean(sched.postsPerDay && sched.postsPerDay > 0 && sched.postingTimes && sched.postingTimes.length > 0);
       var hasMode = Boolean(document.getElementById('psmPublishingMode') ? document.getElementById('psmPublishingMode').value : page.publishing_mode);
+      var hasTestRun = Boolean(page.last_test_run_at);
 
       var missing = [];
-      if (!hasProfile) missing.push('Step 1: Choose a Content Profile (not Custom)');
+      if (!hasProfile) missing.push('Step 1: Choose a Content Profile or specify a Custom Niche');
       if (!hasSchedule) missing.push('Step 2: Set daily cadence and posting times');
       if (!hasMode) missing.push('Step 3: Select a publishing mode');
+      if (!hasTestRun) missing.push('Step 4: Run at least one Test Run to verify prompts');
 
       if (missing.length > 0) {
-        var force = confirm('⚠️ Setup Checklist Incomplete:\n\n' + missing.map(function (m, i) { return (i + 1) + '. ' + m; }).join('\n') + '\n\nDo you want to FORCE taking this page live anyway?');
-        if (!force) return;
+        showToast('⚠️ Checklist incomplete: ' + missing.join(' • '), 'warning');
+        return;
       }
 
       var bigBtn = document.getElementById('psmBigSwitchBtn');
@@ -2463,11 +2575,11 @@
         var res = await fetch('/api/pages/toggle-live', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pageId: currentSettingsPageId, active: true, force: true }),
+          body: JSON.stringify({ pageId: currentSettingsPageId, active: true }),
         });
         var data = await res.json();
         if (!res.ok || data.error) {
-          alert('Failed to activate: ' + (data.error || 'Unknown error'));
+          showToast('Failed to activate: ' + (data.error || 'Unknown error'), 'error');
           return;
         }
 
@@ -2477,7 +2589,7 @@
         updateModalChecklistDisplay(page);
         showToast('🚀 Autonomous posting is now LIVE for ' + page.name + '!', 'success');
       } catch (err) {
-        alert('Network error activating page: ' + err.message);
+        showToast('Network error activating page: ' + err.message, 'error');
       } finally {
         if (bigBtn) bigBtn.disabled = false;
       }
@@ -2560,18 +2672,19 @@
       });
       var data = await res.json();
       if (res.ok && data.success) {
-        showToast('⚡ Simulation Succeeded! Step 4 marked verified.', 'success');
+        showToast('⚡ Test Run Succeeded! Step 4 marked verified.', 'success');
         var p = pagesData.find(function (x) { return x.id === pageId; });
         if (p) {
+          p.last_test_run_at = new Date().toISOString();
           p.test_run_completed = true;
           if (currentSettingsPageId === pageId) updateModalChecklistDisplay(p);
         }
         fetchPagesTab();
       } else {
-        showToast('Simulation notice: ' + (data.error || 'Failed to run test'), 'error');
+        showToast('Test run error: ' + (data.error || 'Failed to run test'), 'error');
       }
     } catch (err) {
-      alert('Error executing test run: ' + err.message);
+      showToast('Error executing test run: ' + err.message, 'error');
     }
   }
 
@@ -2662,10 +2775,10 @@
         if (page) page.profile_id = profileId;
         fetchPagesTab();
       } else {
-        alert('Notice: ' + (data.error || 'Failed to apply niche profile'));
+        showToast('Notice: ' + (data.error || 'Failed to apply niche profile'), 'error');
       }
     } catch (err) {
-      alert('Error applying niche: ' + err.message);
+      showToast('Error applying niche: ' + err.message, 'error');
     }
   }
 
@@ -2685,17 +2798,17 @@
           if (profSelect) {
             var opt = document.createElement('option');
             opt.value = data.profile.id;
-            opt.innerText = data.profile.name + ' (' + data.profile.niche + ')';
+            opt.innerText = data.profile.name + ' (' + (data.profile.niche || data.profile.type || 'profile') + ')';
             profSelect.insertBefore(opt, profSelect.lastElementChild);
             profSelect.value = data.profile.id;
           }
         }
         fetchPagesTab();
       } else {
-        alert('Failed: ' + (data.error || 'Could not generate profile'));
+        showToast('Failed: ' + (data.error || 'Could not generate profile'), 'error');
       }
     } catch (err) {
-      alert('Error creating profile: ' + err.message);
+      showToast('Error creating profile: ' + err.message, 'error');
     }
   }
 
@@ -2704,14 +2817,15 @@
       var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
       var data = await res.json();
       if (res.ok && data.success) {
-        showToast('📦 Imported ' + data.importedCount + ' starter profiles!', 'success');
+        var count = data.importedCount !== undefined ? data.importedCount : (data.count || (data.profiles ? data.profiles.length : 0));
+        showToast('📦 Imported ' + count + ' starter profiles!', 'success');
         var profSelect = document.getElementById('psmProfileSelect');
         if (profSelect && data.profiles) {
           profSelect.innerHTML = '';
           data.profiles.forEach(function (prof) {
             var opt = document.createElement('option');
             opt.value = prof.id;
-            opt.innerText = prof.name + ' (' + prof.niche + ')';
+            opt.innerText = prof.name + ' (' + (prof.niche || prof.type || 'profile') + ')';
             profSelect.appendChild(opt);
           });
           var customOpt = document.createElement('option');
@@ -2720,10 +2834,10 @@
           profSelect.appendChild(customOpt);
         }
       } else {
-        alert('Notice: ' + (data.error || 'Failed to import starter profiles'));
+        showToast('Notice: ' + (data.error || 'Failed to import starter profiles'), 'error');
       }
     } catch (err) {
-      alert('Network error importing starter profiles: ' + err.message);
+      showToast('Network error importing starter profiles: ' + err.message, 'error');
     }
   }
 
@@ -2738,13 +2852,14 @@
       var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
       var data = await res.json();
       if (res.ok && data.success) {
-        showToast('📦 Imported ' + data.importedCount + ' starter profiles to Supabase!', 'success');
+        var count = data.importedCount !== undefined ? data.importedCount : (data.count || (data.profiles ? data.profiles.length : 0));
+        showToast('📦 Imported ' + count + ' starter profiles to Supabase!', 'success');
         fetchPagesTab();
       } else {
-        alert('Notice: ' + (data.error || 'Failed to import starter profiles'));
+        showToast('Notice: ' + (data.error || 'Failed to import starter profiles'), 'error');
       }
     } catch (err) {
-      alert('Network error importing starter profiles: ' + err.message);
+      showToast('Network error importing starter profiles: ' + err.message, 'error');
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -2928,6 +3043,8 @@
   window.applyQuickSchedule = applyQuickSchedule;
   window.selectPublishingMode = selectPublishingMode;
   window.handleModalProfileChange = handleModalProfileChange;
+  window.handleCustomNicheTextInput = handleCustomNicheTextInput;
+  window.applyUsPrimeTimeSuggestions = applyUsPrimeTimeSuggestions;
   window.handleScheduleInputChange = handleScheduleInputChange;
   window.handleSavePageSettings = handleSavePageSettings;
   window.revertModalChanges = revertModalChanges;

@@ -3,6 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ContentProfile } from '../validation/schemas.js';
 import { importMasterPrompt } from './importer.js';
+import {
+  HISTORICAL_PHOTOS_MASTER_PROMPT_PROMPT,
+  REAL_LIFE_PHOTOGRAPHY_MASTER_PROMPT_PROMPT,
+  SCIENCE_SPACE_MASTER_PROMPT_PROMPT,
+  VINTAGE_CARS_MASTER_PROMPT_PROMPT,
+} from './bundled-prompt-texts.js';
 
 export function createHorrorStoryProfile(): ContentProfile {
   return {
@@ -269,31 +275,45 @@ export function getSeedProfiles(promptsDir?: string): ContentProfile[] {
       name: 'Historical Photos',
       niche: 'historical_photos',
       headlinePanel: false,
+      fallback: HISTORICAL_PHOTOS_MASTER_PROMPT_PROMPT,
     },
     {
       file: 'real_life_photography_master_prompt.md',
       name: 'Real-Life Photography',
       niche: 'real_life_photography',
       headlinePanel: false,
+      fallback: REAL_LIFE_PHOTOGRAPHY_MASTER_PROMPT_PROMPT,
     },
     {
       file: 'science_space_master_prompt.md',
       name: 'Science & Space',
       niche: 'science_space',
       headlinePanel: true,
+      fallback: SCIENCE_SPACE_MASTER_PROMPT_PROMPT,
     },
     {
       file: 'vintage_cars_master_prompt.md',
       name: 'Vintage Cars',
       niche: 'vintage_cars',
       headlinePanel: false,
+      fallback: VINTAGE_CARS_MASTER_PROMPT_PROMPT,
     },
   ];
 
   for (const item of promptFiles) {
+    let content = '';
     const fullPath = path.resolve(dir, item.file);
-    if (fs.existsSync(/* turbopackIgnore: true */ fullPath)) {
-      const content = fs.readFileSync(/* turbopackIgnore: true */ fullPath, 'utf8');
+    try {
+      if (fs.existsSync(/* turbopackIgnore: true */ fullPath)) {
+        content = fs.readFileSync(/* turbopackIgnore: true */ fullPath, 'utf8');
+      }
+    } catch {
+      // In serverless, filesystem access may fail; rely on bundled fallback
+    }
+    if (!content) {
+      content = item.fallback;
+    }
+    if (content) {
       const profile = importMasterPrompt(content, {
         name: item.name,
         niche: item.niche,

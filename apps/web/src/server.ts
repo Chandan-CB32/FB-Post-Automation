@@ -104,6 +104,25 @@ function renderNicheSelectOptions(allProfiles: ContentProfile[], selectedId?: st
   return html;
 }
 
+function resolvePageProfile(page?: StoredPage | null): ContentProfile {
+  if (!page) return seedProfiles[0] || createCustomNicheProfile('Science & Space');
+  const profileId = page.profile_id || '';
+  const customNiche = (page as any).custom_niche_text || '';
+  if (profileId && profileId !== '__custom__') {
+    const matched = seedProfiles.find(
+      (p) =>
+        p.id === profileId ||
+        p.name.toLowerCase() === profileId.toLowerCase() ||
+        p.name.toLowerCase().includes(profileId.toLowerCase())
+    );
+    if (matched) return matched;
+  }
+  if (customNiche) {
+    return createCustomNicheProfile(customNiche);
+  }
+  return seedProfiles[0] || createCustomNicheProfile('Science & Space');
+}
+
 
 // ----------------------------------------------------------------------------
 // Supabase Authentication & Session Management (30-Day Resilient Persistence)
@@ -1630,10 +1649,17 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               });
               seedProfiles.unshift(customProfile);
               data.profile_id = customProfile.id;
+              data.custom_niche_text = customNicheName;
+            }
+
+            if (data.overrides?.['image.headlinePanel.backgroundColor'] === '') {
+              data.overrides['image.headlinePanel.backgroundColor'] = '#000000';
             }
 
             const updated = await store.updatePage(data.id, data);
-            return sendJson({ success: true, page: updated });
+            const checklist = evaluatePageChecklist(updated);
+            await store.updatePage(data.id, { checklist_status: checklist });
+            return sendJson({ success: true, page: updated, savedAt: new Date().toISOString() });
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
           }
@@ -1848,13 +1874,15 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const preview = generateLiveSchedulePreview(
             data.schedule,
             new Date(),
-            data.countDays || 7,
-            data.userTimezone || 'Asia/Kolkata'
+            data.userTimezone || 'Asia/Kolkata',
+            data.countDays || 7
           );
 
           return sendJson({
             success: true,
-            preview,
+            slots: preview.slots,
+            preview: preview.slots,
+            count: preview.slots.length,
             warnings: validation.warnings,
             resolvedPostingTimes: validation.resolvedPostingTimes,
           });
@@ -2002,13 +2030,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         return sendJson({ error: 'Page not found' }, 404);
       }
 
-      const profile =
-        seedProfiles.find(
-          (p) =>
-            p.id === page.profile_id ||
-            p.name.toLowerCase().includes(page.profile_id.toLowerCase()) ||
-            page.profile_id.toLowerCase().includes(p.name.toLowerCase())
-        ) || createCustomNicheProfile(page.profile_id);
+      const profile = resolvePageProfile(page);
 
       const resolved = resolveSettings({
         profile,
@@ -2106,14 +2128,24 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           if (!page) {
             return sendJson({ error: 'No Facebook Page found. Please connect a page first in the Pages tab.' }, 400);
           }
-          const profile =
-            seedProfiles.find(
-              (p) =>
-                page &&
-                (p.id === page.profile_id ||
-                  p.name.toLowerCase().includes(page.profile_id.toLowerCase()) ||
-                  page.profile_id.toLowerCase().includes(p.name.toLowerCase()))
-            ) || (page ? createCustomNicheProfile(page.profile_id) : seedProfiles[0]);
+          const profileId = page?.profile_id || '';
+          const customNiche = (page as any)?.custom_niche_text || '';
+          let profile: ContentProfile | null = null;
+          if (profileId && profileId !== '__custom__') {
+            profile =
+              seedProfiles.find(
+                (p) =>
+                  p.id === profileId ||
+                  p.name.toLowerCase() === profileId.toLowerCase() ||
+                  p.name.toLowerCase().includes(profileId.toLowerCase())
+              ) || null;
+          }
+          if (!profile && customNiche) {
+            profile = createCustomNicheProfile(customNiche);
+          }
+          if (!profile) {
+            profile = seedProfiles[0] || createCustomNicheProfile('Science & Space');
+          }
 
           const isHorror = profile.name.toLowerCase().includes('horror');
           const isScience =
@@ -2147,17 +2179,27 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             generatedCaption = `Astrophysicists analyzing spectroscopic transmission data from the James Webb Space Telescope have detected atmospheric methane and carbon dioxide in the habitable zone exoplanet K2-18b.\n\nThis finding supports the hypothesis that K2-18b could be a Hycean world—an ocean-covered planet beneath a hydrogen-rich atmosphere.\n\nDo you believe ocean worlds are our best chance of discovering microbial life outside the solar system?${captionPromptCustom}\n\n#space #astronomy #science #jwst #discovery`;
           }
 
+          const stages = [
+            { stage: 'topic_research', name: 'Topic Research', status: 'completed', durationMs: 45 },
+            { stage: 'content_generation', name: 'Content Generation', status: 'completed', durationMs: 120 },
+            { stage: 'qa_review', name: 'Quality Assurance (QA)', status: 'passed', score: 95, durationMs: 35 },
+            { stage: 'image_composition', name: 'Image Composition', status: 'completed', durationMs: 90 },
+          ];
+
           const simOutput = {
             success: true,
+            testedAt: new Date().toISOString(),
             simulatedAt: new Date().toISOString(),
             pageName: page?.name || 'Default Page',
             baseProfile: profile.name,
             publishingMode: page?.publishing_mode || 'hybrid',
+            stages,
             topic: {
               title: topicTitle,
               category: topicCategory,
             },
             caption: generatedCaption,
+            imagePrompt: keyScene,
             wordCount: generatedCaption.trim().split(/\s+/).length,
             qaScore: 95,
             keySceneExtracted: keyScene,
@@ -2169,6 +2211,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             },
             tokensUsed: 1380,
             estimatedCost: '$0.0016',
+            latencyMs: 290,
           };
 
           if (page) {
@@ -2738,13 +2781,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       }
 
       const account = (await store.getAccounts()).find((a) => a.id === page.fb_account_id);
-      const profile =
-        seedProfiles.find(
-          (p) =>
-            p.id === page.profile_id ||
-            p.name.toLowerCase().includes(page.profile_id.toLowerCase()) ||
-            page.profile_id.toLowerCase().includes(p.name.toLowerCase())
-        ) || createCustomNicheProfile(page.profile_id);
+      const profile = resolvePageProfile(page);
 
       const resolved = resolveSettings({
         profile,
@@ -4840,6 +4877,21 @@ async function generateDashboardHtml(
             </small>
           </div>
 
+          <!-- Custom Niche Inline Editor -->
+          <div id="psmCustomNicheBox" style="display: none; margin-bottom: 12px; background: rgba(59, 130, 246, 0.08); border: 1px dashed #3b82f6; border-radius: 8px; padding: 12px;">
+            <label for="psmCustomNicheText" style="font-size: 12px; color: #93c5fd; font-weight: 600; display: block; margin-bottom: 4px;">
+              Custom Niche Description & Focus Areas <span style="color: #ef4444;">*</span>
+            </label>
+            <textarea id="psmCustomNicheText" class="form-control" rows="3" maxlength="1000"
+              placeholder="e.g. Deep space exploration, James Webb telescope findings, exoplanets, and astrophysicist theories."
+              style="font-size: 13px; width: 100%; box-sizing: border-box; resize: vertical;"
+              oninput="handleCustomNicheTextInput(this.value); markFormModified();"></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+              <small style="color: var(--text-muted); font-size: 11px;">Describe the themes, subjects, and tone for this page.</small>
+              <span id="psmCustomNicheCharCount" style="font-size: 11px; color: var(--text-muted);">0 / 1000 characters</span>
+            </div>
+          </div>
+
           <!-- Niche Recommendation Card -->
           <div id="psmNicheSuggestionBox" style="display: none; background: #0f172a; border: 1px solid #3b82f6; border-radius: 8px; padding: 14px; margin-top: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
@@ -4926,6 +4978,14 @@ async function generateDashboardHtml(
             <div id="psmFixedTimesList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
             <div id="psmHighCadenceWarning" style="display: none; color: #fbbf24; font-size: 11px; margin-top: 8px; padding: 6px 10px; background: rgba(251, 191, 36, 0.1); border-radius: 4px;">
               ⚠️ Warning: Facebook algorithm may penalize organic reach for pages posting over 5 times per day.
+            </div>
+            <div id="psmOvernightWarning" style="display: none; color: #fbbf24; font-size: 11px; margin-top: 8px; padding: 8px 12px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span>⚠️ Overnight hours in <span id="psmOvernightTzName">selected timezone</span> (00:00–05:59), usually poor reach.</span>
+                <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 3px 8px; background: #b45309; color: #fff; border: none; cursor: pointer;" onclick="applyUsPrimeTimeSuggestions()">
+                  ⚡ Use US prime-time suggestions
+                </button>
+              </div>
             </div>
           </div>
 
@@ -5432,13 +5492,7 @@ async function generateStandalonePageDetailsHtml(pageId: string): Promise<string
   }
 
   const account = (await store.getAccounts()).find((a) => a.id === page.fb_account_id);
-  const profile =
-    seedProfiles.find(
-      (p) =>
-        p.id === page.profile_id ||
-        p.name.toLowerCase().includes(page.profile_id.toLowerCase()) ||
-        page.profile_id.toLowerCase().includes(p.name.toLowerCase())
-    ) || createCustomNicheProfile(page.profile_id);
+  const profile = resolvePageProfile(page);
 
   const posts = (await store.getPosts()).filter((p) => p.page_id === page.id || p.page_id === page.fb_page_id);
   const publishedPosts = posts.filter((p) => p.status === 'published');

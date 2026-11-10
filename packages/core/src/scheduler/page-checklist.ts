@@ -25,6 +25,7 @@ export interface PageOnboardingInput {
   active: boolean;
   profile_id?: string | null;
   profile_name?: string | null;
+  custom_niche_text?: string | null;
   publishing_mode: 'auto' | 'review' | 'hybrid' | string;
   schedule?: Partial<PageSchedule> | null;
   last_test_run_at?: string | null;
@@ -53,10 +54,11 @@ export function evaluatePageChecklist(page: PageOnboardingInput): PageChecklistS
 
   // Step 1: Content Profile
   const profileChosen = Boolean(
-    page.profile_id &&
-    page.profile_id.trim() &&
-    page.profile_id !== 'default-niche' &&
-    page.profile_id !== '__custom__'
+    (page.profile_id &&
+      page.profile_id.trim() &&
+      page.profile_id !== 'default-niche' &&
+      page.profile_id !== '__custom__') ||
+    (page.profile_id === '__custom__' && page.custom_niche_text && page.custom_niche_text.trim().length > 0)
   );
   if (!profileChosen) {
     missingSteps.push('Select a Content Profile or run Automatic Niche Detection');

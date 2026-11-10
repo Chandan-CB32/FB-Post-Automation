@@ -130,6 +130,7 @@ export interface StoredPage {
   custom_caption_prompt_mode?: 'append' | 'replace';
   custom_image_prompt?: string;
   custom_image_prompt_mode?: 'append' | 'replace';
+  custom_niche_text?: string;
   first_comment_enabled?: boolean;
   first_comment_prompt?: string;
   overrides?: Record<string, any>;
@@ -956,13 +957,32 @@ export class SystemStore {
     }
 
     // Optimistic concurrency check in Supabase
-    const { data: existingRow, error: checkErr } = await this.getClient()
+    let existingRow: any = null;
+    let hasVersionCol = true;
+    const { data: rowWithVersion, error: checkErrWithVersion } = await this.getClient()
       .from('pages')
       .select('id, updated_at, version')
       .eq('id', id)
       .maybeSingle();
 
-    if (checkErr || !existingRow) throw new Error(`Page ${id} not found.`);
+    if (checkErrWithVersion) {
+      hasVersionCol = false;
+      const { data: rowBasic, error: checkErrBasic } = await this.getClient()
+        .from('pages')
+        .select('id, updated_at')
+        .eq('id', id)
+        .maybeSingle();
+      if (checkErrBasic) {
+        throw new Error(`Database error querying page ${id}: ${checkErrBasic.message}`);
+      }
+      existingRow = rowBasic;
+    } else {
+      existingRow = rowWithVersion;
+    }
+
+    if (!existingRow) {
+      throw new Error(`Page ${id} not found in database.`);
+    }
 
     if (options?.expectedUpdatedAt && existingRow.updated_at && existingRow.updated_at !== options.expectedUpdatedAt) {
       throw new Error(
@@ -977,8 +997,10 @@ export class SystemStore {
 
     const updatePayload: Record<string, any> = {
       updated_at: new Date().toISOString(),
-      version: (existingRow.version || 1) + 1,
     };
+    if (hasVersionCol && existingRow.version !== undefined) {
+      updatePayload.version = (existingRow.version || 1) + 1;
+    }
 
     if (updates.name) updatePayload.name = updates.name;
     if (updates.fb_page_id) updatePayload.fb_page_id = updates.fb_page_id;
@@ -1005,6 +1027,9 @@ export class SystemStore {
     }
     if (updates.auto_posting_stopped_action) {
       updatePayload.auto_posting_stopped_action = updates.auto_posting_stopped_action;
+    }
+    if (updates.custom_niche_text !== undefined) {
+      updatePayload.custom_niche_text = updates.custom_niche_text;
     }
 
     if (updates.schedule) updatePayload.schedule = updates.schedule;
@@ -1046,6 +1071,7 @@ export class SystemStore {
       delete updatePayload.is_live;
       delete updatePayload.version;
       delete updatePayload.auto_posting_stopped_action;
+      delete updatePayload.custom_niche_text;
       if (updatePayload.token_status === 'cannot_publish' || updatePayload.token_status === 'inaccessible') {
         updatePayload.token_status = 'revoked';
       }
@@ -2429,19 +2455,40 @@ export class SystemStore {
         .maybeSingle();
 
       if (existing) {
-        const { data: updated } = await this.getClient()
+        let { data: updated, error: updErr } = await this.getClient()
           .from('content_profiles')
           .update(payload)
           .eq('id', existing.id)
           .select()
           .single();
+        if (updErr && (updErr.message.includes('column') || updErr.message.includes('schema cache'))) {
+          delete (payload as any).is_system;
+          delete (payload as any).version;
+          const retry = await this.getClient()
+            .from('content_profiles')
+            .update(payload)
+            .eq('id', existing.id)
+            .select()
+            .single();
+          updated = retry.data;
+        }
         if (updated) imported.push(updated);
       } else {
-        const { data: created } = await this.getClient()
+        let { data: created, error: insErr } = await this.getClient()
           .from('content_profiles')
           .insert(payload)
           .select()
           .single();
+        if (insErr && (insErr.message.includes('column') || insErr.message.includes('schema cache'))) {
+          delete (payload as any).is_system;
+          delete (payload as any).version;
+          const retry = await this.getClient()
+            .from('content_profiles')
+            .insert(payload)
+            .select()
+            .single();
+          created = retry.data;
+        }
         if (created) imported.push(created);
       }
     }
