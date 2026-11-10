@@ -47,6 +47,10 @@ export * from './adapters/custom-http.js';
 // Validation Schemas & Caption Validator
 export * from './validation/schemas.js';
 export * from './validation/caption-validator.js';
+export * from './validation/claim-verifier.js';
+
+// Unified Generation Pipeline
+export * from './pipeline/generation-pipeline.js';
 
 // Facebook Graph API & Tokens
 export * from './facebook/constants.js';

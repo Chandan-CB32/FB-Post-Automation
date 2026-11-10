@@ -18,6 +18,9 @@ export interface ExecutePublishStageInput {
   hybridMinScore?: number;
   sensitiveFlags?: string[];
   mustHoldForReview?: boolean;
+  requiresHumanReview?: boolean;
+  emergencyReformatApplied?: boolean;
+  reviewReason?: string;
   publisher?: FacebookPublisher;
 }
 
@@ -41,13 +44,16 @@ export async function executePublishStage(
 ): Promise<ExecutePublishStageResult> {
   const contentHash = computePostContentHash(input.caption, input.imagePhash);
 
-  // 1. Mandatory safety hold check (sensitive content flag)
-  if (input.mustHoldForReview) {
+  // 1. Mandatory safety hold check (sensitive content flag, emergency reformat, or human review required)
+  if (input.mustHoldForReview || input.requiresHumanReview || input.emergencyReformatApplied) {
     return {
       action: 'held_for_review',
       status: 'pending_review',
       contentHash,
-      holdReason: 'Mandatory hold: sensitive content flag detected by safety audit.',
+      holdReason:
+        input.emergencyReformatApplied
+          ? 'Mandatory hold: Emergency reformat pass was applied, human review required.'
+          : (input.reviewReason || 'Mandatory hold: Human review required.'),
     };
   }
 

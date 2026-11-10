@@ -48,6 +48,9 @@ import {
   validateCaption,
   formatParagraphs,
   countWords,
+  trimToWordLimit as coreTrimToWordLimit,
+  runGenerationPipeline,
+  generateCompositePreviewSvg,
   generateLiveSchedulePreview,
   evaluatePageChecklist,
   fetchPageProfileData,
@@ -148,47 +151,7 @@ export function maskSecretsInPrompt(text: string): string {
     .replace(/([0-9a-fA-F]{32,64})/g, (m) => m.slice(0, 4) + '...' + m.slice(-4));
 }
 
-export function trimToWordLimit(text: string, maxWords: number): string {
-  if (!text || typeof text !== 'string') return '';
-  const parts = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length === 0) return '';
-  let tags = '';
-  const lastPart = parts[parts.length - 1] || '';
-  if (lastPart.startsWith('#')) {
-    tags = parts.pop() || '';
-  }
-  const currentWords = countWords(parts.join('\n\n'));
-  if (currentWords <= maxWords) {
-    return [...parts, ...(tags ? [tags] : [])].join('\n\n');
-  }
-  const resultParagraphs: string[] = [];
-  let accumulatedWords = countWords(tags);
-  for (const p of parts) {
-    const pWords = countWords(p);
-    if (accumulatedWords + pWords <= maxWords) {
-      resultParagraphs.push(p);
-      accumulatedWords += pWords;
-    } else {
-      const sentences = p.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) || [p];
-      const addedSentences: string[] = [];
-      for (const s of sentences) {
-        const sWords = countWords(s);
-        if (accumulatedWords + sWords <= maxWords) {
-          addedSentences.push(s.trim());
-          accumulatedWords += sWords;
-        } else {
-          break;
-        }
-      }
-      if (addedSentences.length > 0) {
-        resultParagraphs.push(addedSentences.join(' '));
-      }
-      break;
-    }
-  }
-  if (tags) resultParagraphs.push(tags);
-  return resultParagraphs.join('\n\n');
-}
+export const trimToWordLimit = coreTrimToWordLimit;
 
 
 // ----------------------------------------------------------------------------
@@ -2309,7 +2272,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       return sendJson({ success: true, killSwitchActive: updated });
     }
 
-    // 8. API: Test Run for a Specific Page
+    // 8. API: Test Run for a Specific Page (Runs Unified Generation Pipeline)
     if (req.method === 'POST' && url.pathname === '/api/test-run') {
       let body = '';
       req.on('data', (chunk) => (body += chunk));
@@ -2322,33 +2285,21 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             return sendJson({ error: 'No Facebook Page found. Please connect a page first in the Pages tab.' }, 400);
           }
 
-          const stages: Array<{
-            stage: string;
-            name: string;
-            status: 'completed' | 'passed' | 'failed';
-            durationMs: number;
-            error?: string;
-            score?: number;
-          }> = [];
-          const startTime = Date.now();
-
-          // Stage 1: Topic Research
-          const s1Start = Date.now();
           const profile: ContentProfile = resolvePageProfile(page);
-
           if (!profile) {
-            stages.push({
-              stage: 'topic_research',
-              name: 'Topic Research',
-              status: 'failed',
-              durationMs: Date.now() - s1Start,
-              error: 'No valid Content Profile or Custom Niche configured. Select a profile or configure custom niche first.',
-            });
             const report = {
               success: false,
               testedAt: new Date().toISOString(),
               pageName: page.name,
-              stages,
+              stages: [
+                {
+                  stage: 'research',
+                  name: 'Research & Source Discovery',
+                  status: 'failed' as const,
+                  durationMs: 0,
+                  error: 'No valid Content Profile or Custom Niche configured. Select a profile or configure custom niche first.',
+                },
+              ],
               attempts: [],
               error: 'No valid Content Profile or Custom Niche configured.',
             };
@@ -2370,91 +2321,6 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             return sendJson({ success: false, error: report.error, test_run_report: report, checklist: cleanChecklist }, 400);
           }
 
-          let topicTitle = `${profile.name}: The Groundbreaking Discovery`;
-          let topicCategory = profile.topicSettings?.categories?.[0]?.name || `${profile.name} Highlights`;
-          stages.push({
-            stage: 'topic_research',
-            name: 'Topic Research',
-            status: 'completed',
-            durationMs: Date.now() - s1Start,
-          });
-
-          // Stage 2: Editorial & Structure Settings (Strict Alignment with QA)
-          const isHorror = profile.name.toLowerCase().includes('horror');
-          const isScience =
-            profile.name.toLowerCase().includes('science') ||
-            profile.name.toLowerCase().includes('space') ||
-            profile.name.toLowerCase().includes('astronomy');
-
-          let keyScene = `High-detail visual exploring ${profile.name}, showcasing key elements with dramatic atmospheric lighting and cinematic framing.`;
-          let headline = `${profile.name.toUpperCase()}: THE UNSEEN REVELATION`;
-          const fixedTags = (profile.hashtagSettings?.fixedHashtags || []).slice(0, 5).join(' ') || `#${profile.name.replace(/\s+/g, '')}`;
-
-          const captionSettings = profile.captionSettings || {
-            unit: 'words' as const,
-            min: 50,
-            target: 120,
-            max: 220,
-            hookRule: true,
-            maxSentencesPerParagraph: 3,
-            voice: {
-              tone: 'informative',
-              pov: 'third_person',
-              emojiPolicy: 'minimal' as const,
-              bannedPhrases: [],
-              requiredPhrases: [],
-            },
-            endingStyle: 'question' as const,
-            includeQuestion: true,
-            formatSourceLine: false,
-          };
-
-          const minWords = Number(page.min_words) || captionSettings.min || 50;
-          const targetWords = Number(page.target_words) || captionSettings.target || 120;
-          const maxWords = Number(page.max_words) || captionSettings.max || 220;
-          const maxSentencesPerParagraph = Number(page.max_sentences_per_paragraph) || captionSettings.maxSentencesPerParagraph || 3;
-          const minRequiredScore = Number(page.qa_pass_threshold) || Number(page.hybrid_min_score) || 80;
-
-          const effectiveCaptionSettings = {
-            ...captionSettings,
-            min: minWords,
-            target: targetWords,
-            max: maxWords,
-            maxSentencesPerParagraph,
-          };
-
-          // Compose Effective Writer Prompt (Masked for Security & Report Visibility)
-          let basePrompt = profile.masterPrompt || `Create an engaging, viral Facebook post for ${profile.name}.`;
-          if (page.custom_niche && page.custom_niche.trim()) {
-            basePrompt = `Create an engaging Facebook post for a page focused on "${page.custom_niche.trim()}".`;
-          }
-
-          let customPromptSection = '';
-          if (page.custom_caption_prompt && page.custom_caption_prompt.trim()) {
-            if (page.custom_caption_prompt_mode === 'replace') {
-              customPromptSection = `Primary Writer Instructions:\n${page.custom_caption_prompt.trim()}`;
-            } else {
-              customPromptSection = `Additional Style & Framing Instructions:\n${page.custom_caption_prompt.trim()}`;
-            }
-          }
-
-          const structureRulesPrompt = `MANDATORY EDITORIAL & STRUCTURE RULES (STRICT COMPLIANCE REQUIRED):
-- Total Word Count: MUST BE strictly between ${minWords} and ${maxWords} words (Target: ${targetWords} words).
-- Paragraph Structure: Maximum of ${maxSentencesPerParagraph} sentences per paragraph. NEVER write wall-of-text paragraphs. Always separate each paragraph with a blank line (double newline).
-- Hook: Begin with an attention-grabbing first sentence.
-- Conclusion: Conclude with an open-ended engagement question asking readers for their thoughts.
-- Hashtags: End with 3 to 5 relevant hashtags on their own final line.
-- Policies: Zero links or URLs. Minimal emojis (1-2 maximum).`;
-
-          const rawEffectivePrompt = [
-            basePrompt,
-            customPromptSection,
-            structureRulesPrompt,
-          ].filter(Boolean).join('\n\n');
-
-          const effectivePrompt = maskSecretsInPrompt(rawEffectivePrompt);
-
-          // Find active providers in chain
           const allProviders = await store.getProviders();
           const allKeys = await store.getProviderKeys();
           const activeProviders = allProviders
@@ -2464,257 +2330,22 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             allKeys.some((k) => k.provider_id === p.id && k.is_active)
           );
 
-          // Revision Loop: Multi-attempt generation with failover and feedback
-          const attempts: Array<{
-            attempt: number;
-            stage: string;
-            provider: string;
-            model: string;
-            durationMs: number;
-            caption: string;
-            qaScore: number;
-            violations: string[];
-            status: 'passed' | 'failed';
-          }> = [];
-
-          let bestDraft = '';
-          let bestScore = -1;
-          let bestViolations: string[] = [];
-          let finalPassed = false;
-          let activeProviderName = 'simulated-ai-writer';
-          let activeModelName = 'gemini-1.5-pro';
-
-          const s2Start = Date.now();
-
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            const attemptStart = Date.now();
-            let provName = 'simulated-ai-writer';
-            let modelName = 'gemini-1.5-pro';
-
-            if (activeProvidersWithKeys.length > 0) {
-              const selectedProv = activeProvidersWithKeys[(attempt - 1) % activeProvidersWithKeys.length];
-              provName = selectedProv.name;
-              modelName = selectedProv.model_name || 'default-model';
-            }
-            activeProviderName = provName;
-            activeModelName = modelName;
-
-            let draft = '';
-            if (isHorror) {
-              topicTitle = 'The Whispering Clock of Hemlock Manor';
-              topicCategory = 'Haunted Relics';
-              keyScene = 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.';
-              headline = 'THE CLOCK THAT TICKED WITHOUT TIME';
-              if (attempt === 1) {
-                draft = `The grandfather clock in the study of Hemlock Manor had not been wound since 1894, yet every night at 3:17 AM, its brass pendulum swung into motion.\n\nLocal legend claimed that the clock did not mark the passage of hours, but the distance between our world and the darkness beneath the cellar stairs. Caretakers who spent the night reported hearing faint whispers echoing between each metallic tick.\n\nWhen restoration experts examined the casing decades later, they found no internal gears or mechanical springs—only an intricate series of Latin carvings warning anyone from stopping the chime.\n\nWhat would you do if a broken clock in your house suddenly started chiming in the middle of the night?\n\n#horror #spooky #creepypasta #mystery #ghoststory`;
-              } else {
-                draft = `The antique grandfather clock at Hemlock Manor began chiming at precisely 3:17 AM every night, despite having its internal gears removed in 1894.\n\nCaretakers reported cold drafts and whispered warnings whenever the pendulum moved on its own. Strange symbols carved inside the casing cautioned anyone against opening the glass face.\n\nWould you stay overnight in a house with a clock that refused to stay silent?\n\n#horror #ghoststory #mystery #spooky #creepy`;
-              }
-            } else if (isScience) {
-              topicTitle = 'Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b';
-              topicCategory = 'Exoplanet Atmospheres';
-              keyScene = 'A vibrant turquoise ocean planet viewed from low orbit with a luminous atmosphere glowing in infrared star light.';
-              headline = 'WEBB TELESCOPE FINDS WATER VAPOR ON EXOPLANET';
-              if (attempt === 1) {
-                draft = `Astrophysicists analyzing spectroscopic transmission data from the James Webb Space Telescope have detected atmospheric methane and carbon dioxide in the habitable zone exoplanet K2-18b, located approximately 124 light-years away in the constellation Leo.\n\nThis crucial discovery supports the hypothesis that K2-18b could be a Hycean world—an ocean-covered planet possessing a hydrogen-rich atmosphere. Observations also revealed potential traces of dimethyl sulfide, an organic molecule on Earth primarily produced by living phytoplankton in marine environments.\n\nWhile further deep-space spectroscopic observations are required to confirm biological origin, this marks an unprecedented milestone in the quest to identify habitable environments beyond our solar system. The universe continues to astound researchers with its cosmic complexity.\n\nDo you believe ocean worlds are humanity's best chance of discovering microbial life outside our solar system?\n\n#space #astronomy #science #jwst #discovery`;
-              } else {
-                draft = `Astronomers using the James Webb Space Telescope have identified carbon molecules and methane in the atmosphere of exoplanet K2-18b, located 124 light-years away in the constellation Leo.\n\nThe findings strongly suggest this exoplanet may be a Hycean world with a planet-wide liquid water ocean under a hydrogen-rich sky. Traces of dimethyl sulfide provide tantalizing hints of potential biological activity.\n\nDo you think we will find definitive proof of extraterrestrial life within the next decade?\n\n#space #astronomy #science #discovery #jwst`;
-              }
-            } else {
-              if (attempt === 1) {
-                draft = `In the world of ${profile.name}, groundbreaking insights continue to challenge everything we thought we knew about our reality and environment.\n\nFrom unprecedented technical precision to stunning real-world revelations, these remarkable developments are captivating researchers and enthusiasts across the globe. Each new perspective uncovers layers of hidden complexity that inspire deeper questions.\n\nAs our collective understanding grows, the possibilities for innovation and creative expression continue to expand in ways we are only beginning to appreciate.\n\nWhat do you think is the most fascinating aspect of ${profile.name}?\n\n${fixedTags}`;
-              } else {
-                draft = `Remarkable breakthroughs in ${profile.name} are completely reshaping how experts and enthusiasts understand this fascinating field.\n\nRecent discoveries showcase unprecedented patterns and practical innovations that were previously thought impossible. Every new milestone reveals fresh perspectives and exciting opportunities for exploration.\n\nWhat excites you the most about the recent developments in ${profile.name}?\n\n${fixedTags}`;
-              }
-            }
-
-            const qaResult = validateCaption(draft, effectiveCaptionSettings);
-            const qaScore = Math.max(0, qaResult.score);
-            const passed = qaResult.valid && qaScore >= minRequiredScore;
-            const violations = qaResult.violations.map((v) => v.message);
-
-            attempts.push({
-              attempt,
-              stage: 'content_generation',
-              provider: provName,
-              model: modelName,
-              durationMs: Date.now() - attemptStart,
-              caption: draft,
-              qaScore,
-              violations,
-              status: passed ? 'passed' : 'failed',
-            });
-
-            if (qaScore > bestScore) {
-              bestScore = qaScore;
-              bestDraft = draft;
-              bestViolations = violations;
-            }
-
-            if (passed) {
-              finalPassed = true;
-              break;
-            }
-          }
-
-          // Last Resort Fallback: Dedicated Shorten & Reformat Pass
-          if (!finalPassed && bestDraft) {
-            const reformatStart = Date.now();
-            const reformatted = formatParagraphs(bestDraft, maxSentencesPerParagraph);
-            const trimmed = trimToWordLimit(reformatted, maxWords);
-            const reformatQa = validateCaption(trimmed, effectiveCaptionSettings);
-            const reformatScore = Math.max(0, reformatQa.score);
-            const reformatPassed = reformatQa.valid && reformatScore >= minRequiredScore;
-            const reformatViolations = reformatQa.violations.map((v) => v.message);
-
-            attempts.push({
-              attempt: 4,
-              stage: 'emergency_reformat',
-              provider: 'system-formatter',
-              model: 'paragraph-shortener-v1',
-              durationMs: Date.now() - reformatStart,
-              caption: trimmed,
-              qaScore: reformatScore,
-              violations: reformatViolations,
-              status: reformatPassed ? 'passed' : 'failed',
-            });
-
-            if (reformatPassed || reformatScore >= bestScore) {
-              bestDraft = trimmed;
-              bestScore = reformatScore;
-              bestViolations = reformatViolations;
-            }
-            if (reformatPassed) {
-              finalPassed = true;
-            }
-          }
-
-          stages.push({
-            stage: 'content_generation',
-            name: 'Content Generation',
-            status: finalPassed ? 'completed' : 'failed',
-            durationMs: Date.now() - s2Start,
-            error: finalPassed ? undefined : `Failed after ${attempts.length} generation & revision attempts.`,
+          // Invoke the unified generation pipeline (shared with worker)
+          const pipelineResult = await runGenerationPipeline({
+            page,
+            profile,
+            activeProviders: activeProvidersWithKeys,
+            userTopic: parsed.userTopic,
+            isTestRun: true,
           });
 
-          // Stage 3: Quality Assurance (QA) Review
-          const s3Start = Date.now();
-          if (!finalPassed) {
-            stages.push({
-              stage: 'qa_review',
-              name: 'Quality Assurance (QA)',
-              status: 'failed',
-              score: bestScore,
-              durationMs: Date.now() - s3Start,
-              error: `Caption failed QA validation (score ${bestScore} < required ${minRequiredScore}): ${bestViolations.join('; ')}`,
-            });
-
-            const report = {
-              success: false,
-              testedAt: new Date().toISOString(),
-              pageName: page.name,
-              stages,
-              attempts,
-              effectivePrompt,
-              structureRules: {
-                minWords,
-                targetWords,
-                maxWords,
-                maxSentencesPerParagraph,
-                passThreshold: minRequiredScore,
-              },
-              error: stages[stages.length - 1].error,
-            };
-
-            const updatedPage = await store.updatePage(
-              page.id,
-              {
-                test_run_verified: false,
-                last_test_run_at: new Date().toISOString(),
-                test_run_report: report,
-              },
-              { isOperational: true }
-            );
-            const checklist = evaluatePageChecklist(updatedPage);
-            const cleanChecklist = {
-              ...checklist,
-              testRunReport: null,
-            };
-            await store.updatePage(page.id, { checklist_status: cleanChecklist }, { isOperational: true });
-            return sendJson({ success: false, error: report.error, test_run_report: report, checklist: cleanChecklist }, 400);
-          }
-
-          stages.push({
-            stage: 'qa_review',
-            name: 'Quality Assurance (QA)',
-            status: 'passed',
-            score: bestScore,
-            durationMs: Date.now() - s3Start,
-          });
-
-          // Stage 4: Image Composition
-          const s4Start = Date.now();
-          if (page.custom_image_prompt && page.custom_image_prompt.trim()) {
-            if (page.custom_image_prompt_mode === 'replace') {
-              keyScene = page.custom_image_prompt.trim();
-            } else {
-              keyScene = `${keyScene} -- ${page.custom_image_prompt.trim()}`;
-            }
-          }
-          stages.push({
-            stage: 'image_composition',
-            name: 'Image Composition',
-            status: 'completed',
-            durationMs: Date.now() - s4Start,
-          });
-
-          const totalLatency = Date.now() - startTime;
-          const words = countWords(bestDraft);
-          const nowIso = new Date().toISOString();
-
-          const testRunReport = {
-            success: true,
-            testedAt: nowIso,
-            simulatedAt: nowIso,
-            pageName: page.name,
-            baseProfile: profile.name,
-            publishingMode: page.publishing_mode || 'review',
-            stages,
-            attempts,
-            effectivePrompt,
-            structureRules: {
-              minWords,
-              targetWords,
-              maxWords,
-              maxSentencesPerParagraph,
-              passThreshold: minRequiredScore,
-            },
-            topic: {
-              title: topicTitle,
-              category: topicCategory,
-            },
-            caption: bestDraft,
-            imagePrompt: keyScene,
-            wordCount: words,
-            qaScore: bestScore,
-            keySceneExtracted: keyScene,
-            imageDimensions: page.overrides?.['image.aspectRatio'] === '1:1' ? '1080x1080 (1:1 Square)' : '1080x1350 (4:5 Portrait)',
-            headlinePanel: {
-              enabled: page.overrides?.['image.headlinePanel.enabled'] !== false,
-              headlineText: headline,
-              backgroundColor: page.overrides?.['image.headlinePanel.backgroundColor'] || '#050b14',
-            },
-            tokensUsed: 1240,
-            estimatedCost: '$0.0012',
-            latencyMs: totalLatency,
-          };
-
+          // Update page with test run results & checklist status
           const updatedPage = await store.updatePage(
             page.id,
             {
-              test_run_verified: true,
-              last_test_run_at: nowIso,
-              test_run_report: testRunReport,
+              test_run_verified: pipelineResult.success,
+              last_test_run_at: pipelineResult.testedAt,
+              test_run_report: pipelineResult,
             },
             { isOperational: true }
           );
@@ -2726,8 +2357,20 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           };
           await store.updatePage(page.id, { checklist_status: cleanChecklist }, { isOperational: true });
 
+          if (!pipelineResult.success) {
+            return sendJson(
+              {
+                success: false,
+                error: pipelineResult.error,
+                test_run_report: pipelineResult,
+                checklist: cleanChecklist,
+              },
+              400
+            );
+          }
+
           return sendJson({
-            ...testRunReport,
+            ...pipelineResult,
             checklist: cleanChecklist,
           });
         } catch (e: any) {
@@ -6101,6 +5744,21 @@ async function generateDashboardHtml(
         </div>
       </div>
 
+      <!-- Research Sources (Factual Posts) -->
+      <div id="trrResearchSection" style="display: none; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+        <div style="font-size: 12px; font-weight: 700; color: #38bdf8; text-transform: uppercase; margin-bottom: 8px;">🔬 Verified Research Sources & Evidence URLs</div>
+        <div id="trrResearchSourcesContainer" style="display: flex; flex-direction: column; gap: 6px;"></div>
+      </div>
+
+      <!-- Claim-by-Claim Factual Verification Audit -->
+      <div id="trrClaimsSection" style="display: none; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <div style="font-size: 12px; font-weight: 700; color: #34d399; text-transform: uppercase;">🛡️ Claim-by-Claim Factual Verification Audit</div>
+          <span id="trrClaimsBadge" class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; font-size: 11px;">100% GROUNDED</span>
+        </div>
+        <div id="trrClaimsContainer" style="display: flex; flex-direction: column; gap: 8px;"></div>
+      </div>
+
       <!-- Multi-Provider Revision & Failover Log -->
       <div id="trrAttemptsSection" style="display: none; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
         <div style="font-size: 12px; font-weight: 700; color: #f59e0b; text-transform: uppercase; margin-bottom: 8px;">🔄 Multi-Provider Revision & Failover History</div>
@@ -6135,6 +5793,16 @@ async function generateDashboardHtml(
         </div>
         <div style="font-size: 12px; color: #cbd5e1;">
           <strong>Headline Overlay:</strong> <span id="trrHeadlineText">-</span> • <span id="trrAspectDim">-</span>
+        </div>
+        <div id="trrPreviewImagesRow" style="display: none; margin-top: 14px; gap: 14px; align-items: flex-start; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 180px;">
+            <div style="font-size: 11px; color: #94a3b8; margin-bottom: 6px; font-weight: 600;">Thumbnail Preview:</div>
+            <img id="trrThumbnailImg" src="" alt="Thumbnail" style="width: 100%; max-height: 200px; object-fit: contain; border-radius: 6px; border: 1px solid #1e293b; background: #000;" />
+          </div>
+          <div style="flex: 2; min-width: 240px;">
+            <div style="font-size: 11px; color: #94a3b8; margin-bottom: 6px; font-weight: 600;">1080x1350 Composed Image Preview:</div>
+            <img id="trrCompositeImg" src="" alt="Composite Preview" style="width: 100%; max-height: 280px; object-fit: contain; border-radius: 6px; border: 1px solid #1e293b; background: #000;" />
+          </div>
         </div>
       </div>
 

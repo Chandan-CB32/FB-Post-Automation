@@ -61,6 +61,122 @@ export function getWordCount(text: string): number {
 export const countWords = getWordCount;
 
 /**
+ * Trims a caption strictly at sentence boundaries, NEVER cutting mid-sentence.
+ * Preserves the hook (first paragraph / opening sentence), concluding question
+ * (ending with ?), and hashtags line.
+ * Trims middle narrative sentence-by-sentence until the total words <= maxWords.
+ */
+export function trimToWordLimit(text: string, maxWords: number): string {
+  if (!text || typeof text !== 'string') return '';
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+
+  const totalWords = countWords(trimmed);
+  if (totalWords <= maxWords) {
+    return trimmed;
+  }
+
+  // Split into raw paragraphs
+  const rawParts = trimmed.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  if (rawParts.length === 0) return '';
+
+  // Extract hashtags (final paragraph if it starts with # or contains hashtags)
+  let hashtags = '';
+  const lastPart = rawParts[rawParts.length - 1];
+  if (lastPart.startsWith('#') || lastPart.split(/\s+/).every((w) => w.startsWith('#'))) {
+    hashtags = rawParts.pop() || '';
+  }
+
+  if (rawParts.length === 0) {
+    return hashtags;
+  }
+
+  // Helper to split a block into complete sentences ending with [.!?]
+  const extractCompleteSentences = (p: string): string[] => {
+    const matches = p.match(/[^.!?]+[.!?]+(?:\s+|$)/g);
+    if (!matches) {
+      const cleaned = p.trim();
+      return cleaned
+        ? [cleaned.endsWith('.') || cleaned.endsWith('!') || cleaned.endsWith('?') ? cleaned : `${cleaned}.`]
+        : [];
+    }
+    return matches.map((s) => s.trim()).filter(Boolean);
+  };
+
+  // Identify Hook (first paragraph)
+  const hookParagraph = rawParts[0];
+  const hookSentences = extractCompleteSentences(hookParagraph);
+
+  // Identify Ending Question / Conclusion
+  let questionParagraph = '';
+  if (rawParts.length > 1) {
+    questionParagraph = rawParts[rawParts.length - 1];
+  }
+  const questionSentences = questionParagraph ? extractCompleteSentences(questionParagraph) : [];
+
+  // Middle paragraphs between hook and ending question
+  const middleParagraphs = rawParts.length > 2 ? rawParts.slice(1, rawParts.length - 1) : [];
+  const middleSentences: string[] = [];
+  for (const mid of middleParagraphs) {
+    middleSentences.push(...extractCompleteSentences(mid));
+  }
+
+  const hashtagsWords = countWords(hashtags);
+  const primaryHook = hookSentences[0] || hookParagraph;
+  const primaryQuestion =
+    questionSentences.length > 0
+      ? questionSentences.find((s) => s.includes('?')) || questionSentences[questionSentences.length - 1]
+      : '';
+
+  let keptHook = [...hookSentences];
+  let keptMiddle: string[] = [];
+  let keptQuestion = questionSentences.length > 0 ? [...questionSentences] : [];
+
+  const calcWords = (h: string[], m: string[], q: string[]) => {
+    return countWords(h.join(' ')) + countWords(m.join(' ')) + countWords(q.join(' ')) + hashtagsWords;
+  };
+
+  // If full hook + full question + hashtags already exceeds maxWords,
+  // shrink hook and question to primary single sentences
+  if (calcWords(keptHook, [], keptQuestion) > maxWords) {
+    keptHook = [primaryHook];
+    if (primaryQuestion) {
+      keptQuestion = [primaryQuestion];
+    }
+  }
+
+  // Add middle sentences one by one strictly at sentence boundaries
+  for (const s of middleSentences) {
+    const candidateMiddle = [...keptMiddle, s];
+    if (calcWords(keptHook, candidateMiddle, keptQuestion) <= maxWords) {
+      keptMiddle.push(s);
+    } else {
+      break;
+    }
+  }
+
+  // Build final paragraphs with clean double newline spacing
+  const resultParagraphs: string[] = [];
+  if (keptHook.length > 0) {
+    resultParagraphs.push(keptHook.join(' '));
+  }
+  if (keptMiddle.length > 0) {
+    // Group middle sentences into paragraphs of at most 3 sentences
+    for (let i = 0; i < keptMiddle.length; i += 3) {
+      resultParagraphs.push(keptMiddle.slice(i, i + 3).join(' '));
+    }
+  }
+  if (keptQuestion.length > 0) {
+    resultParagraphs.push(keptQuestion.join(' '));
+  }
+  if (hashtags) {
+    resultParagraphs.push(hashtags);
+  }
+
+  return resultParagraphs.join('\n\n');
+}
+
+/**
  * Splits prose into clean, mobile-friendly paragraphs adhering to the
  * requirement of max N sentences per paragraph (default 3).
  */

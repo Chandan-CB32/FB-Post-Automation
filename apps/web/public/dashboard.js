@@ -2958,13 +2958,68 @@
         const isPassed = s.status === 'completed' || s.status === 'passed';
         const color = isPassed ? '#34d399' : '#f87171';
         const icon = isPassed ? '✅' : '❌';
+        const provInfo = s.provider ? (escapeHtml(s.provider) + (s.model ? ' / ' + escapeHtml(s.model) : '')) : '';
+        const tokenInfo = s.tokens && s.tokens.totalTokens ? (s.tokens.totalTokens + ' tokens') : '';
+        const metaLine = [provInfo, tokenInfo].filter(Boolean).join(' • ');
+
         return '<div style="background: #020617; border: 1px solid ' + (isPassed ? '#1e293b' : '#7f1d1d') + '; border-radius: 6px; padding: 10px;">' +
           '<div style="font-size: 11px; color: #94a3b8; margin-bottom: 2px;">' + icon + ' ' + escapeHtml(s.name) + '</div>' +
           '<div style="font-size: 13px; font-weight: 700; color: ' + color + ';">' + escapeHtml(s.status.toUpperCase()) + (s.score ? (' (' + s.score + ')') : '') + '</div>' +
           '<div style="font-size: 11px; color: #64748b;">' + (s.durationMs || 0) + 'ms</div>' +
+          (metaLine ? ('<div style="font-size: 10px; color: #475569; margin-top: 2px;">' + metaLine + '</div>') : '') +
           (s.error ? ('<div style="font-size: 11px; color: #fca5a5; margin-top: 4px;">' + escapeHtml(s.error) + '</div>') : '') +
           '</div>';
       }).join('');
+    }
+
+    // Research Sources (Factual Posts)
+    const researchSection = document.getElementById('trrResearchSection');
+    const researchContainer = document.getElementById('trrResearchSourcesContainer');
+    if (researchSection && researchContainer) {
+      if (report.researchSources && report.researchSources.length > 0) {
+        researchContainer.innerHTML = report.researchSources.map(function (url) {
+          return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; font-size: 12px; text-decoration: underline; display: flex; align-items: center; gap: 6px;">' +
+            '<span>🔗</span> <span>' + escapeHtml(url) + '</span>' +
+          '</a>';
+        }).join('');
+        researchSection.style.display = 'block';
+      } else {
+        researchSection.style.display = 'none';
+      }
+    }
+
+    // Claim-by-Claim Factual Verification Audit
+    const claimsSection = document.getElementById('trrClaimsSection');
+    const claimsContainer = document.getElementById('trrClaimsContainer');
+    const claimsBadge = document.getElementById('trrClaimsBadge');
+    if (claimsSection && claimsContainer) {
+      if (report.claimVerification && report.claimVerification.length > 0) {
+        const unverified = report.claimVerification.filter(function (c) { return !c.verified; });
+        if (claimsBadge) {
+          if (unverified.length === 0) {
+            claimsBadge.innerText = '100% GROUNDED';
+            claimsBadge.style.background = 'rgba(16,185,129,0.2)';
+            claimsBadge.style.color = '#34d399';
+          } else {
+            claimsBadge.innerText = unverified.length + ' UNVERIFIED CLAIM(S)';
+            claimsBadge.style.background = 'rgba(239,68,68,0.2)';
+            claimsBadge.style.color = '#f87171';
+          }
+        }
+        claimsContainer.innerHTML = report.claimVerification.map(function (c) {
+          const ok = c.verified;
+          const icon = ok ? '✅' : '❌';
+          return '<div style="background: #0b0f19; border: 1px solid ' + (ok ? '#1e293b' : 'rgba(239,68,68,0.4)') + '; border-radius: 6px; padding: 8px 10px;">' +
+            '<div style="font-size: 12px; color: ' + (ok ? '#e2e8f0' : '#fca5a5') + ';">' + icon + ' ' + escapeHtml(c.claim) + '</div>' +
+            (c.sourceUrl
+              ? ('<div style="font-size: 11px; color: #38bdf8; margin-top: 3px;"><strong>Evidence Source:</strong> ' + escapeHtml(c.sourceUrl) + '</div>')
+              : ('<div style="font-size: 11px; color: #f87171; margin-top: 3px;"><strong>Audit Warning:</strong> Factual claim lacks verified research source URL</div>')) +
+          '</div>';
+        }).join('');
+        claimsSection.style.display = 'block';
+      } else {
+        claimsSection.style.display = 'none';
+      }
     }
 
     // Rules Badges
@@ -3047,6 +3102,22 @@
     const aspectDimEl = document.getElementById('trrAspectDim');
     if (aspectDimEl) {
       aspectDimEl.innerText = report.imageDimensions || '1080x1350 (4:5 Portrait)';
+    }
+
+    // Visual Previews (Thumbnail & 1080x1350 Composite)
+    const previewRow = document.getElementById('trrPreviewImagesRow');
+    const thumbImg = document.getElementById('trrThumbnailImg');
+    const compImg = document.getElementById('trrCompositeImg');
+    if (previewRow && (report.compositeImageUrl || report.thumbnailUrl)) {
+      if (thumbImg && report.thumbnailUrl) {
+        thumbImg.src = report.thumbnailUrl;
+      }
+      if (compImg && report.compositeImageUrl) {
+        compImg.src = report.compositeImageUrl;
+      }
+      previewRow.style.display = 'flex';
+    } else if (previewRow) {
+      previewRow.style.display = 'none';
     }
 
     modal.style.display = 'flex';

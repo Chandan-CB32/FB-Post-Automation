@@ -212,7 +212,7 @@ describe('Production Critical Bugs & Fixes Suite (fbauto247.vercel.app)', () => 
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.stages).toBeDefined();
-    expect(data.stages.length).toBe(4);
+    expect(data.stages.length).toBeGreaterThanOrEqual(4);
     expect(data.qaScore).toBeGreaterThanOrEqual(90);
     expect(data.topic.title).toBeDefined();
     expect(data.caption).toBeDefined();
