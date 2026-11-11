@@ -124,3 +124,4 @@ describe('Autonomous Worker Cycle & 30-Minute Pre-Generation Window', () => {
     expect(result.generatedPosts[0].pageName).toBe('Beyond the Known');
   });
 });
+
