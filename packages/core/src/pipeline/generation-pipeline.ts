@@ -106,7 +106,7 @@ export interface GenerationPipelineOptions {
     hybrid_min_score?: number | null;
     overrides?: Record<string, any> | null;
   };
-  profile: ContentProfile;
+  profile?: ContentProfile | null;
   activeProviders?: Array<{
     id: string;
     name: string;

@@ -466,7 +466,7 @@ export function calculateNextScheduledSlots(
     schedule.daysOfWeek && schedule.daysOfWeek.length > 0 ? schedule.daysOfWeek : [1, 2, 3, 4, 5, 6, 7]
   );
   const minGapMs = (schedule.minGapMinutes ?? 60) * 60 * 1000;
-  const leadTimeMs = (schedule.leadTimeHours ?? 24) * 3600 * 1000;
+  const leadTimeMs = (schedule.leadTimeHours ?? 168) * 3600 * 1000;
   const maxFutureTime = fromDate.getTime() + leadTimeMs;
 
   const tzFormatter = new Intl.DateTimeFormat('en-US', {
@@ -526,3 +526,6 @@ export function calculateNextScheduledSlots(
 
   return slots;
 }
+
+export type PageScheduleConfig = Partial<PageSchedule> & { active?: boolean; is_live?: boolean };
+export const calculateNextSlots = calculateNextScheduledSlots;

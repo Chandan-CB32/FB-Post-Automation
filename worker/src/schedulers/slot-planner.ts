@@ -44,7 +44,8 @@ export function calculateNextSlots(
   slotCount = 10
 ): Date[] {
   // Safe default & live gating: Inactive or unconfigured pages generate 0 slots
-  if (config.active === false || config.is_live === false || config.postsPerDay === 0) {
+  const isExplicitlyDisabled = config.active === false || (config.is_live === false && config.active !== true);
+  if (isExplicitlyDisabled || config.postsPerDay === 0) {
     return [];
   }
 

@@ -64,6 +64,8 @@ export * from './facebook/niche-detector.js';
 // Scheduler & Checklist Engine
 export * from './scheduler/slot-planner.js';
 export * from './scheduler/page-checklist.js';
+export * from './scheduler/reconciler.js';
+export * from './scheduler/autonomous-cycle.js';
 
 // Review Inbox State Machine
 export * from './review/inbox-manager.js';

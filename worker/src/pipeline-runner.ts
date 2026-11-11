@@ -37,9 +37,12 @@ export async function executeWorkerPipelinePost(
   }
 
   // 3. Worker Publishing / Holding via Stage 7
+  const resolvedFbPageId = options.fbPageId || (options.page as any).fb_page_id || options.page.id || 'unknown_page';
+  const resolvedPageToken = options.pageToken || (options.page as any).fb_page_token || '';
+
   const publishResult = await executePublishStage({
-    pageId: options.fbPageId || options.page.id || 'unknown_page',
-    pageToken: options.pageToken || '',
+    pageId: resolvedFbPageId,
+    pageToken: resolvedPageToken,
     caption: pipelineResult.caption,
     imageUrl: pipelineResult.thumbnailUrl || undefined,
     publishingMode: (options.page.publishing_mode as any) || 'review',

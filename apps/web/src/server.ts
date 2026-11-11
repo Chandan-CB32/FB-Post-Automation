@@ -53,6 +53,7 @@ import {
   generateCompositePreviewSvg,
   generateLiveSchedulePreview,
   evaluatePageChecklist,
+  runAutonomousCycle,
   fetchPageProfileData,
   analyzePageNiche,
   generateDraftProfileFromPage,
@@ -2295,6 +2296,42 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       return sendJson({ success: true, killSwitchActive: updated });
     }
 
+    // 7.5 API: Autonomous Worker Trigger & Cron Endpoint
+    if (url.pathname === '/api/worker/run' || url.pathname === '/api/cron/worker') {
+      try {
+        let isForce = false;
+        if (req.method === 'POST') {
+          let bodyStr = '';
+          req.on('data', (c) => (bodyStr += c));
+          await new Promise((r) => req.on('end', r));
+          try {
+            const parsed = JSON.parse(bodyStr || '{}');
+            isForce = Boolean(parsed.force);
+          } catch (_) {}
+        }
+        if (url.searchParams.get('force') === 'true') {
+          isForce = true;
+        }
+
+        const cycleResult = await runAutonomousCycle({
+          forceSlotGeneration: isForce,
+        });
+
+        return sendJson({
+          success: true,
+          executed: cycleResult.executed,
+          message: cycleResult.message,
+          reconciledCount: cycleResult.reconciled?.publishedCount ?? 0,
+          duePublishedCount: cycleResult.duePublishedCount,
+          generatedPosts: cycleResult.generatedPosts,
+          errors: cycleResult.errors,
+        });
+      } catch (workerErr: any) {
+        console.error('[API /api/worker/run] Worker cycle failed:', workerErr);
+        return sendJson({ success: false, error: workerErr.message || 'Worker execution failed' }, 500);
+      }
+    }
+
     // 8. API: Test Run for a Specific Page (Runs Unified Generation Pipeline)
     if (req.method === 'POST' && url.pathname === '/api/test-run') {
       let body = '';
@@ -3267,6 +3304,7 @@ async function generateDashboardHtml(
     killSwitch,
     storageHealth,
     heartbeat,
+    contentProfiles,
   ] = await Promise.all([
     store.getAccounts().catch(() => []),
     store.getPages().catch(() => []),
@@ -3285,6 +3323,7 @@ async function generateDashboardHtml(
       singleSourceOfTruth: true,
     })),
     store.getHeartbeat().catch(() => null),
+    store.getContentProfiles().catch(() => []),
   ]);
 
   let appVersion = CORE_VERSION;
@@ -3586,9 +3625,14 @@ async function generateDashboardHtml(
         <h1 id="tabHeading">${escapeHtml(routeInfo.heading)}</h1>
         <p id="tabDesc">${escapeHtml(routeInfo.desc)}</p>
       </div>
-      <div class="status-pill" id="workerPill" style="background: ${workerPillBg}; color: ${workerPillColor};">
-        <div class="status-dot" style="background: ${workerDotColor};"></div>
-        <span id="workerStatusSpan">${workerStatusText}</span>
+      <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+        <button class="btn btn-secondary" onclick="triggerWorkerRun(this)" style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 6px 12px; background: rgba(56, 189, 248, 0.12); border: 1px solid #0284c7; color: #38bdf8; font-weight: 600; cursor: pointer; border-radius: 6px;" title="Trigger immediate autonomous cycle (reconcile FB posts, publish due, pre-generate slots)">
+          ⚡ Run Worker Cycle
+        </button>
+        <div class="status-pill" id="workerPill" style="background: ${workerPillBg}; color: ${workerPillColor};">
+          <div class="status-dot" style="background: ${workerDotColor};"></div>
+          <span id="workerStatusSpan">${workerStatusText}</span>
+        </div>
       </div>
     </header>
 
@@ -3867,8 +3911,13 @@ async function generateDashboardHtml(
                       }
 
                       const checklist = evaluatePageChecklist(p);
-                      const assignedProf = seedProfiles.find((sp) => sp.id === p.profile_id || sp.name === p.profile_id);
-                      const profileLabel = assignedProf ? assignedProf.name : (p.profile_id && p.profile_id !== 'default-niche' ? p.profile_id : '⚠️ No Profile Chosen');
+                      const allProfilesPool = [...(contentProfiles || []), ...(seedProfiles || [])];
+                      const assignedProf = allProfilesPool.find((sp) => sp.id === p.profile_id || sp.name === p.profile_id);
+                      const profileLabel = assignedProf
+                        ? assignedProf.name
+                        : (p.profile_id && p.profile_id !== 'default-niche' && p.profile_id !== '__custom__' && p.profile_id !== 'custom'
+                            ? p.profile_id
+                            : (p.overrides?.custom_niche ? 'Science & Space' : '⚠️ No Profile Chosen'));
 
                       return `
                         <div class="page-tree-card" id="page-card-${p.id}" style="background: rgba(0,0,0,0.25); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px 16px; margin-bottom: 10px;">
@@ -4258,51 +4307,92 @@ async function generateDashboardHtml(
             <h3 style="font-size: 18px; margin-bottom: 4px;">7-Day Autonomous Schedule Calendar</h3>
             <p style="color: var(--text-muted); font-size: 13px;">Multi-page posting time slots optimized for Facebook algorithm audience peaks.</p>
           </div>
-          <div style="display: flex; gap: 10px;">
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
             <span class="badge" style="background: #064e3b; color: #34d399;">● Published</span>
             <span class="badge" style="background: #1e3a8a; color: #60a5fa;">● Scheduled on FB</span>
             <span class="badge" style="background: #78350f; color: #f59e0b;">● Review Required</span>
+            <span class="badge" style="background: rgba(15, 23, 42, 0.8); border: 1px dashed #38bdf8; color: #38bdf8;">● Planned (T-30m)</span>
           </div>
         </div>
 
         <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; overflow-x: auto;">
-          ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-            .map((day, idx) => {
-              const dayDate = new Date(Date.now() + (idx - 1) * 86400 * 1000);
+          ${Array.from({ length: 7 })
+            .map((_, idx) => {
+              const dayDate = new Date(Date.now() + idx * 86400 * 1000);
+              const dayDateStr = dayDate.toISOString().slice(0, 10);
+              const dayName = dayDate.toLocaleDateString('en-US', { weekday: 'short' });
+              const dayMonthStr = dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
               const dayPosts = posts.filter((p) => {
-                const pDate = new Date(p.scheduled_for);
-                return pDate.getDay() === dayDate.getDay();
+                if (!p.scheduled_for) return false;
+                return p.scheduled_for.slice(0, 10) === dayDateStr;
               });
+
+              // Check planned slots for active live pages
+              const activePages = pages.filter((pg) => pg.active === true || (pg.schedule as any)?.is_live === true);
+              const plannedSlotsForDay: Array<{ timeStr: string; pageName: string }> = [];
+
+              for (const ap of activePages) {
+                const times: string[] = ap.schedule?.postingTimes || (ap.schedule as any)?.times || ['08:00', '10:00', '12:00', '15:00', '17:00'];
+                for (const t of times) {
+                  // If no post is assigned to this slot yet
+                  const hasPost = dayPosts.some((dp) => {
+                    const postHour = new Date(dp.scheduled_for).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                    return postHour === t;
+                  });
+                  if (!hasPost) {
+                    plannedSlotsForDay.push({ timeStr: t, pageName: ap.name });
+                  }
+                }
+              }
+
+              const hasItems = dayPosts.length > 0 || plannedSlotsForDay.length > 0;
 
               return `
               <div style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; min-width: 140px;">
-                <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px; color: #93c5fd;">${day}</div>
-                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">${dayDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
+                <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px; color: ${idx === 0 ? '#38bdf8' : '#93c5fd'};">${dayName} ${idx === 0 ? '(Today)' : ''}</div>
+                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">${dayMonthStr}</div>
 
                 <div style="display: flex; flex-direction: column; gap: 8px;">
                   ${
-                    dayPosts.length > 0
-                      ? dayPosts
-                          .map((p) => {
-                            const pg = pages.find((page) => page.id === p.page_id);
-                            const isPub = p.status === 'published';
-                            const isSched = p.status === 'scheduled_on_fb';
-                            const bg = isPub ? '#064e3b' : isSched ? '#1e3a8a' : '#78350f';
-                            const textC = isPub ? '#34d399' : isSched ? '#93c5fd' : '#f59e0b';
+                    dayPosts.map((p) => {
+                      const pg = pages.find((page) => page.id === p.page_id);
+                      const isPub = p.status === 'published';
+                      const isSched = p.status === 'scheduled_on_fb';
+                      const bg = isPub ? '#064e3b' : isSched ? '#1e3a8a' : '#78350f';
+                      const textC = isPub ? '#34d399' : isSched ? '#93c5fd' : '#f59e0b';
+                      const badgeLabel = isPub ? 'PUBLISHED' : isSched ? 'ON FB' : 'REVIEW';
 
-                            return `
-                        <div style="background: #111827; border: 1px solid ${bg}; border-radius: 6px; padding: 8px; font-size: 11px;">
-                          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                            <span style="font-weight: 700; color: ${textC};">${new Date(p.scheduled_for).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            <span style="font-size: 10px; background: ${bg}; color: white; padding: 1px 4px; border-radius: 4px;">${p.status.split('_')[0]}</span>
-                          </div>
-                          <div style="font-weight: 600; color: #f3f4f6; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${p.title}">${p.title}</div>
-                          <div style="color: var(--text-muted); font-size: 10px;">${pg?.name.split('&')[0] || 'Page'}</div>
+                      return `
+                      <div style="background: #111827; border: 1px solid ${bg}; border-radius: 6px; padding: 8px; font-size: 11px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                          <span style="font-weight: 700; color: ${textC};">${new Date(p.scheduled_for).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          <span style="font-size: 9px; background: ${bg}; color: white; padding: 1px 4px; border-radius: 4px; font-weight: 700;">${badgeLabel}</span>
                         </div>
+                        <div style="font-weight: 600; color: #f3f4f6; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(p.title || '')}">${escapeHtml(p.title || 'Scheduled Post')}</div>
+                        <div style="color: var(--text-muted); font-size: 10px;">${escapeHtml(pg?.name.split('&')[0] || 'Page')}</div>
+                      </div>
                       `;
-                          })
-                          .join('')
-                      : '<div style="color: #4b5563; font-size: 11px; font-style: italic; padding: 8px 0;">No active slots</div>'
+                    }).join('')
+                  }
+                  ${
+                    plannedSlotsForDay.map((ps) => {
+                      return `
+                      <div style="background: rgba(15, 23, 42, 0.6); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 6px; padding: 8px; font-size: 11px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                          <span style="font-weight: 700; color: #38bdf8;">${ps.timeStr}</span>
+                          <span style="font-size: 9px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 1px 4px; border-radius: 4px; font-weight: 600;">PLANNED</span>
+                        </div>
+                        <div style="font-weight: 600; color: #cbd5e1; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(ps.pageName)}">${escapeHtml(ps.pageName)}</div>
+                        <div style="color: var(--text-muted); font-size: 9px;">Pre-generates T-30m</div>
+                      </div>
+                      `;
+                    }).join('')
+                  }
+                  ${
+                    !hasItems
+                      ? '<div style="color: #4b5563; font-size: 11px; font-style: italic; padding: 8px 0;">No active slots</div>'
+                      : ''
                   }
                 </div>
               </div>

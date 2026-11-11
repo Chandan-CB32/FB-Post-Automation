@@ -132,9 +132,24 @@ export class FacebookPublisher {
   ): Promise<PublishPostResult> {
     let photoId: string | undefined;
 
-    // Step 1: Upload photo if provided
+    // Step 1: Upload photo if provided (supports public http URLs or raster image buffers)
     if (options.photo && (options.photo.buffer || options.photo.url)) {
-      photoId = await this.uploadUnpublishedPhoto(pageId, pageToken, options.photo);
+      try {
+        if (options.photo.url && (options.photo.url.startsWith('http://') || options.photo.url.startsWith('https://'))) {
+          photoId = await this.uploadUnpublishedPhoto(pageId, pageToken, options.photo);
+        } else if (options.photo.buffer) {
+          photoId = await this.uploadUnpublishedPhoto(pageId, pageToken, options.photo);
+        } else if (options.photo.url && options.photo.url.startsWith('data:image/') && !options.photo.url.includes('svg')) {
+          const parts = options.photo.url.split(',');
+          const isBase64 = parts[0].includes(';base64');
+          const buffer = isBase64
+            ? Buffer.from(parts[1], 'base64')
+            : Buffer.from(decodeURIComponent(parts[1]), 'utf-8');
+          photoId = await this.uploadUnpublishedPhoto(pageId, pageToken, { buffer, filename: 'post.jpg' });
+        }
+      } catch (photoErr: any) {
+        console.warn(`[FacebookPublisher] Photo upload skipped or failed (${photoErr?.message}), proceeding with feed post.`);
+      }
     }
 
     const payload: Record<string, any> = {
@@ -152,12 +167,23 @@ export class FacebookPublisher {
     if (options.scheduledPublishTime && options.published !== true) {
       const windowValidation = validateSchedulingWindow(options.scheduledPublishTime);
       if (!windowValidation.valid) {
-        throw new Error(`Scheduling window validation failed: ${windowValidation.error}`);
+        // If scheduled time is in the past or under 10 minutes away, publish immediately
+        const schedMs =
+          typeof options.scheduledPublishTime === 'number'
+            ? (options.scheduledPublishTime > 1e11 ? options.scheduledPublishTime : options.scheduledPublishTime * 1000)
+            : options.scheduledPublishTime.getTime();
+        if (schedMs <= Date.now() + 600 * 1000) {
+          payload.published = true;
+          isScheduled = false;
+        } else {
+          throw new Error(`Scheduling window validation failed: ${windowValidation.error}`);
+        }
+      } else {
+        scheduledSeconds = windowValidation.scheduledTimeSeconds;
+        payload.published = false;
+        payload.scheduled_publish_time = scheduledSeconds;
+        isScheduled = true;
       }
-      scheduledSeconds = windowValidation.scheduledTimeSeconds;
-      payload.published = false;
-      payload.scheduled_publish_time = scheduledSeconds;
-      isScheduled = true;
     } else {
       payload.published = true;
     }

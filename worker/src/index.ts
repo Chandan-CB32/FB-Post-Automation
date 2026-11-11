@@ -4,6 +4,7 @@ import {
   decryptPageToken,
   encryptPageToken,
   discoverFacebookPages,
+  runAutonomousCycle,
 } from '@fb-auto/core';
 import { workerState, startHealthServer, stopHealthServer } from './server.js';
 import { createTimeBudgetTracker, type TimeBudgetTracker } from './time-budget.js';
@@ -102,11 +103,18 @@ export async function runWorkerCycle(): Promise<{ executed: boolean; message: st
   workerState.status = 'running';
   await runHeartbeat();
 
-  // In later milestones, pipeline stages (slot planning, research, write, post) run here.
-  // Currently verifies skeleton heartbeat.
+  // Run autonomous cycle: reconcile FB posts, publish due posts, and generate posts ~30m ahead of schedule slots
+  let cycleSummary = 'Heartbeat updated';
+  try {
+    const cycleRes = await runAutonomousCycle();
+    cycleSummary = cycleRes.message;
+  } catch (err: any) {
+    console.error('[Worker] Autonomous cycle execution failed:', err?.message || err);
+    cycleSummary = `Error: ${err?.message || 'Cycle failed'}`;
+  }
 
   workerState.status = 'idle';
-  return { executed: true, message: `Completed cycle #${workerState.loopCount}` };
+  return { executed: true, message: `Completed cycle #${workerState.loopCount} (${cycleSummary})` };
 }
 
 export interface OneShotOptions {

@@ -1164,6 +1164,38 @@
     }
   }
 
+  async function triggerWorkerRun(btn) {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⚡ Running Cycle...';
+    }
+    try {
+      var res = await fetch('/api/worker/run?force=true', { method: 'POST' });
+      var data = await res.json();
+      if (data.success) {
+        var genCount = data.generatedPosts ? data.generatedPosts.length : 0;
+        var msg = '🎉 Worker Cycle Completed!\n' + (data.message || '') + '\n\nReconciled Facebook posts: ' + (data.reconciledCount || 0) + '\nDue published: ' + (data.duePublishedCount || 0) + '\nGenerated & Scheduled: ' + genCount;
+        if (genCount > 0) {
+          msg += '\n\nPosts:';
+          data.generatedPosts.forEach(function (gp) {
+            msg += '\n• ' + gp.pageName + ': ' + gp.title + ' (' + gp.status + ')';
+          });
+        }
+        alert(msg);
+        if (typeof renderOverviewStats === 'function') renderOverviewStats();
+      } else {
+        alert('Worker Notice: ' + (data.error || data.message || 'Worker finished.'));
+      }
+    } catch (e) {
+      alert('Failed to trigger worker: ' + e.message);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '⚡ Run Worker Cycle';
+      }
+    }
+  }
+
   // --- Provider Modal & Actions ---
   function openAddProviderModal() {
     const modal = document.getElementById('addProviderModal');
@@ -1846,6 +1878,7 @@
   window.rejectPostAction = rejectPostAction;
   window.editCaptionPrompt = editCaptionPrompt;
   window.toggleKillSwitch = toggleKillSwitch;
+  window.triggerWorkerRun = triggerWorkerRun;
   window.openAddProviderModal = openAddProviderModal;
   window.closeAddProviderModal = closeAddProviderModal;
   window.toggleQuickKeyVisibility = toggleQuickKeyVisibility;
