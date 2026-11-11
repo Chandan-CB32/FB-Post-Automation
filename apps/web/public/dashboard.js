@@ -9,6 +9,7 @@
   // In-memory client state initialized from <script id="initial-data" type="application/json">
   let accountsData = [];
   let pagesData = [];
+  let postsData = [];
   let providersData = [];
   let providerKeysData = [];
   let auditLogsData = [];
@@ -24,6 +25,7 @@
         const parsed = JSON.parse(dataElem.textContent);
         if (parsed.accounts) accountsData = parsed.accounts;
         if (parsed.pages) pagesData = parsed.pages;
+        if (parsed.posts) postsData = parsed.posts;
         if (parsed.providers) providersData = parsed.providers;
         if (parsed.providerKeys) providerKeysData = parsed.providerKeys;
         if (parsed.auditLogs) auditLogsData = parsed.auditLogs;
@@ -3163,6 +3165,213 @@
     if (modal) modal.style.display = 'none';
   }
 
+  async function openPostDetailsModal(postId) {
+    const modal = document.getElementById('postDetailsModal');
+    if (!modal) return;
+
+    let post = postsData.find(function (p) { return p.id === postId; });
+
+    modal.style.display = 'flex';
+
+    if (post) {
+      populateAndShowPostDetails(post);
+    } else {
+      const titleEl = document.getElementById('pdmTitle');
+      if (titleEl) titleEl.textContent = 'Loading post details...';
+      const capEl = document.getElementById('pdmCaption');
+      if (capEl) capEl.textContent = 'Fetching post data from Supabase...';
+    }
+
+    try {
+      const res = await fetch('/api/post-details?id=' + encodeURIComponent(postId));
+      if (res.ok) {
+        const fullPost = await res.json();
+        const existingIdx = postsData.findIndex(function (p) { return p.id === fullPost.id; });
+        if (existingIdx >= 0) {
+          postsData[existingIdx] = fullPost;
+        } else {
+          postsData.push(fullPost);
+        }
+        populateAndShowPostDetails(fullPost);
+      }
+    } catch (e) {
+      console.warn('[Dashboard] Could not fetch fresh post details:', e);
+    }
+  }
+
+  function populateAndShowPostDetails(post) {
+    const statusBadge = document.getElementById('pdmStatusBadge');
+    const catBadge = document.getElementById('pdmCategoryBadge');
+    const qaBadge = document.getElementById('pdmQaScoreBadge');
+    const titleEl = document.getElementById('pdmTitle');
+    const pageNameEl = document.getElementById('pdmPageName');
+    const idEl = document.getElementById('pdmId');
+    const audTimeEl = document.getElementById('pdmAudienceTime');
+    const audTzEl = document.getElementById('pdmAudienceTz');
+    const locTimeEl = document.getElementById('pdmLocalTime');
+    const locTzEl = document.getElementById('pdmLocalTz');
+    const fbStatusEl = document.getElementById('pdmFbStatusText');
+    const fbPostIdEl = document.getElementById('pdmFbPostId');
+    const fbLinkBtn = document.getElementById('pdmFbLinkBtn');
+    const wordCountBadge = document.getElementById('pdmWordCountBadge');
+    const hashtagsBadge = document.getElementById('pdmHashtagsBadge');
+    const captionEl = document.getElementById('pdmCaption');
+    const imagePromptRow = document.getElementById('pdmImagePromptRow');
+    const imagePromptEl = document.getElementById('pdmImagePrompt');
+    const previewImg = document.getElementById('pdmPreviewImg');
+
+    if (statusBadge) {
+      if (post.status === 'published') {
+        statusBadge.style.background = '#064e3b';
+        statusBadge.style.color = '#34d399';
+        statusBadge.textContent = '● PUBLISHED';
+      } else if (post.status === 'scheduled_on_fb') {
+        statusBadge.style.background = '#1e3a8a';
+        statusBadge.style.color = '#60a5fa';
+        statusBadge.textContent = '● SCHEDULED ON FACEBOOK';
+      } else if (post.status === 'pending_review') {
+        statusBadge.style.background = '#78350f';
+        statusBadge.style.color = '#f59e0b';
+        statusBadge.textContent = '● REVIEW REQUIRED';
+      } else {
+        statusBadge.style.background = '#1e293b';
+        statusBadge.style.color = '#94a3b8';
+        statusBadge.textContent = '● ' + (post.status || 'SCHEDULED').toUpperCase();
+      }
+    }
+
+    if (catBadge) {
+      catBadge.textContent = post.category || post.topic_key || 'Science & Space';
+    }
+
+    if (qaBadge) {
+      qaBadge.textContent = 'QA: ' + (post.qa_score != null ? Math.round(Number(post.qa_score)) : 100) + '/100';
+    }
+
+    if (titleEl) {
+      titleEl.textContent = post.title || post.headline || 'Scheduled Post';
+    }
+
+    const linkedPage = pagesData.find(function (p) { return p.id === post.page_id; });
+    const pageName = post.pageName || (linkedPage ? linkedPage.name : 'Beyond the Known');
+    const pageTz = post.pageTimezone || (linkedPage && linkedPage.schedule && linkedPage.schedule.timezone) || 'America/New_York';
+
+    if (pageNameEl) pageNameEl.textContent = pageName;
+    if (idEl) idEl.textContent = post.id;
+
+    if (audTimeEl && post.scheduled_for) {
+      try {
+        const audFormatted = new Date(post.scheduled_for).toLocaleString('en-US', {
+          timeZone: pageTz,
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        });
+        audTimeEl.textContent = audFormatted + ' EST';
+      } catch (_) {
+        audTimeEl.textContent = post.scheduled_for;
+      }
+    }
+    if (audTzEl) audTzEl.textContent = pageTz + ' (Audience Cadence)';
+
+    if (locTimeEl && post.scheduled_for) {
+      try {
+        const locFormatted = new Date(post.scheduled_for).toLocaleString([], {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        });
+        locTimeEl.textContent = locFormatted;
+      } catch (_) {
+        locTimeEl.textContent = post.scheduled_for;
+      }
+    }
+    if (locTzEl) {
+      try {
+        locTzEl.textContent = (Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata') + ' (Your Browser Time)';
+      } catch (_) {
+        locTzEl.textContent = 'Local Time';
+      }
+    }
+
+    if (post.fb_post_id) {
+      if (fbStatusEl) fbStatusEl.textContent = 'Verified in Meta Graph API Queue';
+      if (fbPostIdEl) fbPostIdEl.textContent = 'FB Post ID: ' + post.fb_post_id;
+      if (fbLinkBtn) {
+        fbLinkBtn.style.display = 'inline-flex';
+        fbLinkBtn.href = post.fb_permalink || ('https://www.facebook.com/' + post.fb_post_id);
+      }
+    } else {
+      if (fbStatusEl) fbStatusEl.textContent = 'Internal Queue (Scheduled)';
+      if (fbPostIdEl) fbPostIdEl.textContent = 'Will be dispatched at scheduled time';
+      if (fbLinkBtn) fbLinkBtn.style.display = 'none';
+    }
+
+    if (captionEl) {
+      captionEl.textContent = post.caption || 'No caption available.';
+    }
+    const words = post.caption_word_count || (post.caption ? post.caption.trim().split(/\s+/).length : 0);
+    if (wordCountBadge) wordCountBadge.textContent = words + ' words';
+    const hashtags = Array.isArray(post.hashtags) ? post.hashtags.length : 0;
+    if (hashtagsBadge) hashtagsBadge.textContent = hashtags + ' hashtags';
+
+    const imageSrc = post.composed_image_path || post.raw_image_path;
+    if (previewImg) {
+      if (imageSrc) {
+        previewImg.src = imageSrc;
+        previewImg.style.display = 'block';
+      } else {
+        previewImg.style.display = 'none';
+      }
+    }
+    if (imagePromptRow && imagePromptEl) {
+      if (post.image_prompt) {
+        imagePromptEl.textContent = post.image_prompt;
+        imagePromptRow.style.display = 'block';
+      } else {
+        imagePromptRow.style.display = 'none';
+      }
+    }
+  }
+
+  function closePostDetailsModal() {
+    const modal = document.getElementById('postDetailsModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  function copyPostCaptionToClipboard() {
+    const capEl = document.getElementById('pdmCaption');
+    if (!capEl) return;
+    const text = capEl.textContent || '';
+    if (!text) return;
+
+    const copyBtns = [
+      document.getElementById('pdmCopyCaptionBtn'),
+      document.querySelector('#postDetailsModal .btn-primary')
+    ];
+
+    navigator.clipboard.writeText(text).then(function () {
+      copyBtns.forEach(function (btn) {
+        if (btn) {
+          const originalText = btn.innerHTML;
+          btn.innerHTML = '✅ Copied!';
+          setTimeout(function () {
+            btn.innerHTML = originalText;
+          }, 2000);
+        }
+      });
+      showToast('📋 Caption copied to clipboard!', 'success');
+    }).catch(function () {
+      prompt('Copy caption text:', text);
+    });
+  }
+
   async function toggleAutoPostingFromSwitch() {
     if (!currentSettingsPageId) return;
     var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
@@ -3707,6 +3916,9 @@
   window.resolveConflictMerge = resolveConflictMerge;
   window.viewTestRunReport = viewTestRunReport;
   window.closeTestRunReportModal = closeTestRunReportModal;
+  window.openPostDetailsModal = openPostDetailsModal;
+  window.closePostDetailsModal = closePostDetailsModal;
+  window.copyPostCaptionToClipboard = copyPostCaptionToClipboard;
   window.confirmModeChange = confirmModeChange;
   window.cancelModeConfirmation = cancelModeConfirmation;
   window.reloadProfilesAndResetToCustom = reloadProfilesAndResetToCustom;

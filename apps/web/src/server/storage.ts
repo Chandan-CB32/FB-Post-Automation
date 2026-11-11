@@ -239,6 +239,13 @@ export interface StoredPost {
   scheduled_for: string;
   created_at: string;
   qa_score?: number;
+  qa_result?: any;
+  category?: string;
+  image_prompt?: string;
+  image_provider_used?: string;
+  raw_image_path?: string;
+  composed_image_path?: string;
+  source_line?: string;
   sensitive_flags?: string[];
   image_phash?: string;
   content_hash?: string;
@@ -1989,6 +1996,13 @@ export class SystemStore {
       scheduled_for: row.scheduled_for,
       created_at: row.created_at,
       qa_score: row.qa_score ? Number(row.qa_score) : undefined,
+      qa_result: row.qa_result || null,
+      category: row.category || row.topic_key || 'General',
+      image_prompt: row.image_prompt || null,
+      image_provider_used: row.image_provider_used || null,
+      raw_image_path: row.raw_image_path || null,
+      composed_image_path: row.composed_image_path || null,
+      source_line: row.source_line || null,
       sensitive_flags: Array.isArray(row.sensitive_flags) ? row.sensitive_flags : [],
       image_phash: row.image_phash,
       content_hash: row.content_hash,
@@ -2027,6 +2041,13 @@ export class SystemStore {
       scheduled_for: data.scheduled_for,
       created_at: data.created_at,
       qa_score: data.qa_score ? Number(data.qa_score) : undefined,
+      qa_result: data.qa_result || null,
+      category: data.category || data.topic_key || 'General',
+      image_prompt: data.image_prompt || null,
+      image_provider_used: data.image_provider_used || null,
+      raw_image_path: data.raw_image_path || null,
+      composed_image_path: data.composed_image_path || null,
+      source_line: data.source_line || null,
       sensitive_flags: Array.isArray(data.sensitive_flags) ? data.sensitive_flags : [],
       image_phash: data.image_phash,
       content_hash: data.content_hash,
@@ -2098,6 +2119,12 @@ export class SystemStore {
         hashtags: input.hashtags || [],
         qa_score: input.qa_score ?? 95,
         first_comment: input.first_comment || null,
+        fb_post_id: input.fb_post_id,
+        fb_permalink: input.fb_permalink,
+        category: input.category,
+        image_prompt: input.image_prompt,
+        composed_image_path: input.composed_image_path,
+        raw_image_path: input.raw_image_path,
         analytics: input.analytics || {},
         created_at: new Date().toISOString(),
       };
