@@ -6,6 +6,7 @@ import { reconcileScheduledPosts, ReconciliationSummary } from './reconciler.js'
 import { calculateNextSlots, PageScheduleConfig } from './slot-planner.js';
 import { runGenerationPipeline } from '../pipeline/generation-pipeline.js';
 import { rasterizeHeadlineCardToJpeg } from '../pipeline/headline-renderer.js';
+import { decrypt } from '../crypto/encryption.js';
 
 export interface AutonomousCycleOptions {
   now?: Date;
@@ -250,10 +251,51 @@ export async function runAutonomousCycle(
             publishing_mode: page.publishing_mode || 'auto',
           };
 
-          // Run unified 7-stage generation pipeline
+          // Load active providers with decrypted keys for multi-provider failover
+          let activeProvidersWithKeys: any[] = [];
+          try {
+            let pQuery: any = supabase.from('providers').select('*');
+            if (typeof pQuery.order === 'function') {
+              pQuery = pQuery.order('priority', { ascending: true });
+            }
+            const { data: dbProviders } = await pQuery;
+            let kQuery: any = supabase.from('provider_keys').select('*');
+            if (typeof kQuery.eq === 'function') {
+              kQuery = kQuery.eq('status', 'active');
+            }
+            const { data: dbKeys } = await kQuery;
+
+            activeProvidersWithKeys = (dbProviders || [])
+              .filter((p: any) => p.active !== false)
+              .map((p: any) => {
+                const matchingKey = (dbKeys || []).find((k: any) => k.provider_id === p.id);
+                let decryptedKey: string | undefined;
+                if (matchingKey && matchingKey.key_encrypted) {
+                  try {
+                    decryptedKey = decrypt(matchingKey.key_encrypted);
+                  } catch (_) {}
+                }
+                return {
+                  id: p.id,
+                  name: p.name,
+                  kind: p.kind || p.adapter_kind,
+                  model_name: p.model_name,
+                  priority: p.priority || 1,
+                  base_url: p.base_url,
+                  config: p.config,
+                  apiKey: decryptedKey,
+                  keyMasked: matchingKey?.key_masked,
+                };
+              });
+          } catch (pLoadErr) {
+            console.warn('[Autonomous Worker] Could not load provider keys:', pLoadErr);
+          }
+
+          // Run unified 7-stage generation pipeline with multi-provider failover
           const pipelineResult = await runGenerationPipeline({
             page: pageWithOverrides,
             profile: profile || undefined,
+            activeProviders: activeProvidersWithKeys,
             isTestRun: false,
           });
 
@@ -439,36 +481,60 @@ export async function runAutonomousCycle(
               });
             } catch (_) {}
 
-            // Record provider daily quota usage
+            // Record provider daily quota usage dynamically based on providers actually used
             try {
               const todayStr = new Date().toISOString().slice(0, 10);
-              // Gemini (Text generation)
-              const { data: gData } = await supabase
-                .from('provider_usage_daily')
-                .select('requests_count, tokens_count')
-                .eq('provider_id', '11111111-1111-1111-1111-111111111101')
-                .eq('date', todayStr)
-                .maybeSingle();
-              await supabase.from('provider_usage_daily').upsert({
-                provider_id: '11111111-1111-1111-1111-111111111101',
-                date: todayStr,
-                requests_count: (gData?.requests_count || 0) + 1,
-                tokens_count: (gData?.tokens_count || 0) + (pipelineResult.tokensUsed || 1200),
-              }, { onConflict: 'provider_id,key_id,date' });
+              const textProvId = (pipelineResult as any).usedTextProviderId || '11111111-1111-1111-1111-111111111101';
+              const imgProvId = (pipelineResult as any).usedImageProviderId || '11111111-1111-1111-1111-111111111105';
 
-              // Pollinations (Image generation)
-              const { data: pData } = await supabase
+              // Text generation provider
+              const { data: textData } = await supabase
                 .from('provider_usage_daily')
-                .select('requests_count')
-                .eq('provider_id', '11111111-1111-1111-1111-111111111105')
+                .select('id, requests_count, tokens_count')
+                .eq('provider_id', textProvId)
                 .eq('date', todayStr)
                 .maybeSingle();
-              await supabase.from('provider_usage_daily').upsert({
-                provider_id: '11111111-1111-1111-1111-111111111105',
-                date: todayStr,
-                requests_count: (pData?.requests_count || 0) + 1,
-                tokens_count: 0,
-              }, { onConflict: 'provider_id,key_id,date' });
+
+              if (textData?.id) {
+                await supabase
+                  .from('provider_usage_daily')
+                  .update({
+                    requests_count: (textData.requests_count || 0) + 1,
+                    tokens_count: (textData.tokens_count || 0) + (pipelineResult.tokensUsed || 1200),
+                  })
+                  .eq('id', textData.id);
+              } else {
+                await supabase.from('provider_usage_daily').insert({
+                  provider_id: textProvId,
+                  date: todayStr,
+                  requests_count: 1,
+                  tokens_count: pipelineResult.tokensUsed || 1200,
+                });
+              }
+
+              // Image generation provider
+              const { data: imgData } = await supabase
+                .from('provider_usage_daily')
+                .select('id, requests_count')
+                .eq('provider_id', imgProvId)
+                .eq('date', todayStr)
+                .maybeSingle();
+
+              if (imgData?.id) {
+                await supabase
+                  .from('provider_usage_daily')
+                  .update({
+                    requests_count: (imgData.requests_count || 0) + 1,
+                  })
+                  .eq('id', imgData.id);
+              } else {
+                await supabase.from('provider_usage_daily').insert({
+                  provider_id: imgProvId,
+                  date: todayStr,
+                  requests_count: 1,
+                  tokens_count: 0,
+                });
+              }
             } catch (_) {}
 
             generatedPosts.push({

@@ -20,8 +20,18 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
     const fromExtra = (options as any)?.extraBody?.accountId || (options as any)?.accountId;
     if (fromExtra) return fromExtra;
 
+    const fromConfig = (options as any)?.config?.account_id || (options as any)?.account_id;
+    if (fromConfig) return fromConfig;
+
     if (process.env.CLOUDFLARE_ACCOUNT_ID) {
       return process.env.CLOUDFLARE_ACCOUNT_ID;
+    }
+
+    if (options.apiKey && options.apiKey.includes(':')) {
+      const parts = options.apiKey.split(':');
+      if (parts[0] && parts[0].length >= 10) {
+        return parts[0].trim();
+      }
     }
 
     // Attempt to extract from baseUrl if formatted like https://api.cloudflare.com/client/v4/accounts/{id}/ai/run
@@ -31,7 +41,7 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
     }
 
     throw new ProviderError(
-      'Cloudflare Account ID is required (set CLOUDFLARE_ACCOUNT_ID in environment or pass accountId in config).',
+      'Cloudflare Account ID is required (set CLOUDFLARE_ACCOUNT_ID in environment, or use https://api.cloudflare.com/client/v4/accounts/{your-account-id} in Base URL).',
       'auth'
     );
   }
@@ -126,12 +136,16 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
+    const bearerToken = apiKey && apiKey.includes(':') && apiKey.split(':')[0].length >= 10
+      ? apiKey.split(':')[1].trim()
+      : apiKey;
+
     let response: Response;
     try {
       response = await fetch(endpoint, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${bearerToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),

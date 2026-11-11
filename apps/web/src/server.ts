@@ -2510,10 +2510,29 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const allKeys = await store.getProviderKeys();
           const activeProviders = allProviders
             .filter((p) => p.enabled)
-            .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-          const activeProvidersWithKeys = activeProviders.filter((p) =>
-            allKeys.some((k) => k.provider_id === p.id && k.is_active)
-          );
+            .sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
+
+          const activeProvidersWithKeys = activeProviders.map((p) => {
+            const matchingKey = allKeys.find((k) => k.provider_id === p.id && k.is_active);
+            let decryptedKey: string | undefined;
+            if (matchingKey && matchingKey.encrypted_key) {
+              try {
+                decryptedKey = decrypt(matchingKey.encrypted_key);
+              } catch (_) {}
+            }
+            return {
+              id: p.id,
+              name: p.name,
+              kind: (p as any).kind || p.adapter_kind,
+              adapter_kind: p.adapter_kind,
+              model_name: p.model_name,
+              priority: p.priority ?? 1,
+              base_url: p.base_url,
+              config: (p as any).config,
+              apiKey: decryptedKey,
+              keyMasked: matchingKey?.masked_key,
+            };
+          });
 
           // Invoke the unified generation pipeline (shared with worker)
           const pipelineResult = await runGenerationPipeline({

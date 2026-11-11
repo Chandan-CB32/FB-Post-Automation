@@ -68,6 +68,7 @@ export interface ImageGenerateOptions {
   apiKey?: string;
   baseUrl?: string;
   customHeaders?: Record<string, string>;
+  extraBody?: Record<string, unknown>;
 }
 
 export interface ImageGenerateResult {

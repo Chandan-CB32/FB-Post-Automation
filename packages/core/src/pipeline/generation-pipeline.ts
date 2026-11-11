@@ -28,6 +28,10 @@ import {
   sanitizeHeadlineAccuracy,
   HeadlineSegment,
 } from './headline-highlighter.js';
+import { GeminiNativeAdapter } from '../adapters/gemini.js';
+import { OpenAIChatAdapter } from '../adapters/openai-chat.js';
+import { CloudflareWorkersAIAdapter } from '../adapters/cloudflare.js';
+import { PollinationsImageAdapter } from '../adapters/pollinations.js';
 
 export interface PipelineStageResult {
   stage: string;
@@ -107,6 +111,10 @@ export interface GenerationPipelineResult {
   requires_human_review: boolean;
   review_reason?: string;
   error?: string;
+  usedTextProviderId?: string;
+  usedTextProviderName?: string;
+  usedImageProviderId?: string;
+  usedImageProviderName?: string;
 }
 
 export interface GenerationPipelineOptions {
@@ -131,8 +139,14 @@ export interface GenerationPipelineOptions {
   activeProviders?: Array<{
     id: string;
     name: string;
+    kind?: string;
+    adapter_kind?: string;
     model_name?: string;
     priority?: number;
+    base_url?: string;
+    config?: any;
+    apiKey?: string;
+    keyMasked?: string;
   }>;
   userTopic?: string;
   isTestRun?: boolean;
@@ -451,10 +465,18 @@ export async function runGenerationPipeline(
     .join('\n\n');
   const effectivePrompt = maskSecretsInPrompt(rawEffectivePrompt);
 
-  // Active providers failover selection
-  const activeProviders = (options.activeProviders || []).sort(
-    (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
-  );
+  // Active text providers failover selection sorted by priority ascending (1 = Primary, 2 = Secondary...)
+  const textCandidates = (options.activeProviders || [])
+    .filter((p) => {
+      const k = (p.kind || p.adapter_kind || '').toLowerCase();
+      const n = (p.name || '').toLowerCase();
+      return k !== 'pollinations' && !n.includes('image');
+    })
+    .sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
+
+  let successfulTextProviderId: string | undefined;
+  let successfulTextProviderName = textCandidates[0]?.name || 'simulated-ai-writer';
+  let successfulTextModel = textCandidates[0]?.model_name || 'gemini-1.5-pro';
 
   let bestDraft = '';
   let bestScore = -1;
@@ -470,35 +492,97 @@ export async function runGenerationPipeline(
     let provName = 'simulated-ai-writer';
     let modelName = 'gemini-1.5-pro';
 
-    if (activeProviders.length > 0) {
-      const selectedProv = activeProviders[(attempt - 1) % activeProviders.length];
+    const selectedProv = textCandidates.length > 0 ? textCandidates[(attempt - 1) % textCandidates.length] : undefined;
+    if (selectedProv) {
       provName = selectedProv.name;
       modelName = selectedProv.model_name || 'default-model';
     }
 
     let draft = '';
-    if (isHorror) {
-      keyScene = 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.';
-      headline = 'THE CLOCK TICKED WITHOUT **GEARS OR SPRINGS**';
-      if (attempt === 1) {
-        draft = `The grandfather clock in the study of Hemlock Manor had not been wound since 1894, yet every night at 3:17 AM, its brass pendulum swung into motion.\n\nLocal legend claimed that the clock did not mark the passage of hours, but the distance between our world and the darkness beneath the cellar stairs. Caretakers who spent the night reported hearing faint whispers echoing between each metallic tick.\n\nWhen restoration experts examined the casing decades later, they found no internal gears or mechanical springs—only an intricate series of Latin carvings warning anyone from stopping the chime.\n\nWhat would you do if a broken clock in your house suddenly started chiming in the middle of the night?\n\n#horror #spooky #creepypasta #mystery #ghoststory`;
-      } else {
-        draft = `The antique grandfather clock at Hemlock Manor began chiming at precisely 3:17 AM every night, despite having its internal gears removed in 1894.\n\nCaretakers reported cold drafts and whispered warnings whenever the pendulum moved on its own. Strange symbols carved inside the casing cautioned anyone against opening the glass face.\n\nWould you stay overnight in a house with a clock that refused to stay silent?\n\n#horror #ghoststory #mystery #spooky #creepy`;
+
+    // Invoke real AI provider API if apiKey is present
+    if (selectedProv && selectedProv.apiKey && !isTestEnv()) {
+      try {
+        const kind = (selectedProv.kind || selectedProv.adapter_kind || '').toLowerCase();
+        if (kind === 'gemini_native' || kind === 'gemini') {
+          const adapter = new GeminiNativeAdapter();
+          const res = await adapter.generateText({
+            prompt: rawEffectivePrompt,
+            apiKey: selectedProv.apiKey,
+            model: selectedProv.model_name || 'gemini-2.5-flash',
+            baseUrl: selectedProv.base_url,
+            temperature: 0.7,
+            timeoutMs: 20000,
+          });
+          if (res.text && res.text.trim()) {
+            draft = res.text.trim();
+            successfulTextProviderId = selectedProv.id;
+            successfulTextProviderName = selectedProv.name;
+            successfulTextModel = res.modelUsed || selectedProv.model_name || 'gemini-2.5-flash';
+          }
+        } else if (kind === 'cloudflare_workers_ai') {
+          const adapter = new CloudflareWorkersAIAdapter();
+          const res = await adapter.generateText({
+            prompt: rawEffectivePrompt,
+            apiKey: selectedProv.apiKey,
+            model: selectedProv.model_name || '@cf/meta/llama-3.1-8b-instruct',
+            baseUrl: selectedProv.base_url,
+            extraBody: { accountId: selectedProv.config?.account_id || (selectedProv as any).accountId || process.env.CLOUDFLARE_ACCOUNT_ID },
+            timeoutMs: 20000,
+          });
+          if (res.text && res.text.trim()) {
+            draft = res.text.trim();
+            successfulTextProviderId = selectedProv.id;
+            successfulTextProviderName = selectedProv.name;
+            successfulTextModel = res.modelUsed || selectedProv.model_name || '@cf/meta/llama-3.1-8b-instruct';
+          }
+        } else {
+          // OpenAIChatAdapter: Groq, OpenRouter, NVIDIA NIM, Hugging Face
+          const adapter = new OpenAIChatAdapter();
+          const res = await adapter.generateText({
+            prompt: rawEffectivePrompt,
+            apiKey: selectedProv.apiKey,
+            model: selectedProv.model_name || 'llama-3.3-70b-versatile',
+            baseUrl: selectedProv.base_url,
+            temperature: 0.7,
+            timeoutMs: 20000,
+          });
+          if (res.text && res.text.trim()) {
+            draft = res.text.trim();
+            successfulTextProviderId = selectedProv.id;
+            successfulTextProviderName = selectedProv.name;
+            successfulTextModel = res.modelUsed || selectedProv.model_name || 'llama-3.3-70b-versatile';
+          }
+        }
+      } catch (provErr: any) {
+        console.warn(`[Pipeline Stage 3] Priority #${selectedProv.priority} Provider '${provName}' failed:`, provErr?.message || provErr);
       }
-    } else if (isScience) {
-      keyScene = 'A vibrant turquoise ocean planet viewed from low orbit with a luminous atmosphere glowing in infrared star light.';
-      headline = 'WEBB FINDS CLUES TO A **POSSIBLE OCEAN WORLD** ON **K2-18B**';
-      if (attempt === 1) {
-        draft = `Astrophysicists analyzing spectroscopic transmission data from the James Webb Space Telescope have detected atmospheric methane and carbon dioxide in the habitable zone exoplanet K2-18b, located approximately 124 light-years away in the constellation Leo.\n\nThis crucial discovery supports the hypothesis that K2-18b could be a Hycean world—an ocean-covered planet possessing a hydrogen-rich atmosphere. Observations also revealed potential traces of dimethyl sulfide, an organic molecule on Earth primarily produced by living phytoplankton in marine environments.\n\nWhile further deep-space spectroscopic observations are required to confirm biological origin, this marks an unprecedented milestone in the quest to identify habitable environments beyond our solar system. The universe continues to astound researchers with its cosmic complexity.\n\nDo you believe ocean worlds are humanity's best chance of discovering microbial life outside our solar system?\n\n#space #astronomy #science #jwst #discovery`;
+    }
+
+    if (!draft) {
+      if (isHorror) {
+        keyScene = 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.';
+        headline = 'THE CLOCK TICKED WITHOUT **GEARS OR SPRINGS**';
+        if (attempt === 1) {
+          draft = `The grandfather clock in the study of Hemlock Manor had not been wound since 1894, yet every night at 3:17 AM, its brass pendulum swung into motion.\n\nLocal legend claimed that the clock did not mark the passage of hours, but the distance between our world and the darkness beneath the cellar stairs. Caretakers who spent the night reported hearing faint whispers echoing between each metallic tick.\n\nWhen restoration experts examined the casing decades later, they found no internal gears or mechanical springs—only an intricate series of Latin carvings warning anyone from stopping the chime.\n\nWhat would you do if a broken clock in your house suddenly started chiming in the middle of the night?\n\n#horror #spooky #creepypasta #mystery #ghoststory`;
+        } else {
+          draft = `The antique grandfather clock at Hemlock Manor began chiming at precisely 3:17 AM every night, despite having its internal gears removed in 1894.\n\nCaretakers reported cold drafts and whispered warnings whenever the pendulum moved on its own. Strange symbols carved inside the casing cautioned anyone against opening the glass face.\n\nWould you stay overnight in a house with a clock that refused to stay silent?\n\n#horror #ghoststory #mystery #spooky #creepy`;
+        }
+      } else if (isScience) {
+        keyScene = 'A vibrant turquoise ocean planet viewed from low orbit with a luminous atmosphere glowing in infrared star light.';
+        headline = 'WEBB FINDS CLUES TO A **POSSIBLE OCEAN WORLD** ON **K2-18B**';
+        if (attempt === 1) {
+          draft = `Astrophysicists analyzing spectroscopic transmission data from the James Webb Space Telescope have detected atmospheric methane and carbon dioxide in the habitable zone exoplanet K2-18b, located approximately 124 light-years away in the constellation Leo.\n\nThis crucial discovery supports the hypothesis that K2-18b could be a Hycean world—an ocean-covered planet possessing a hydrogen-rich atmosphere. Observations also revealed potential traces of dimethyl sulfide, an organic molecule on Earth primarily produced by living phytoplankton in marine environments.\n\nWhile further deep-space spectroscopic observations are required to confirm biological origin, this marks an unprecedented milestone in the quest to identify habitable environments beyond our solar system. The universe continues to astound researchers with its cosmic complexity.\n\nDo you believe ocean worlds are humanity's best chance of discovering microbial life outside our solar system?\n\n#space #astronomy #science #jwst #discovery`;
+        } else {
+          draft = `Astronomers using the James Webb Space Telescope have identified carbon molecules and methane in the atmosphere of exoplanet K2-18b, located 124 light-years away in the constellation Leo.\n\nThe findings strongly suggest this exoplanet may be a Hycean world with a planet-wide liquid water ocean under a hydrogen-rich sky. Traces of dimethyl sulfide provide tantalizing hints of potential biological activity.\n\nDo you think we will find definitive proof of extraterrestrial life within the next decade?\n\n#space #astronomy #science #discovery #jwst`;
+        }
       } else {
-        draft = `Astronomers using the James Webb Space Telescope have identified carbon molecules and methane in the atmosphere of exoplanet K2-18b, located 124 light-years away in the constellation Leo.\n\nThe findings strongly suggest this exoplanet may be a Hycean world with a planet-wide liquid water ocean under a hydrogen-rich sky. Traces of dimethyl sulfide provide tantalizing hints of potential biological activity.\n\nDo you think we will find definitive proof of extraterrestrial life within the next decade?\n\n#space #astronomy #science #discovery #jwst`;
-      }
-    } else {
-      headline = 'ASTRONOMERS DETECT **UNEXPECTED SIGNALS** IN DEEP SPACE';
-      if (attempt === 1) {
-        draft = `In the world of ${profile?.name || 'this field'}, groundbreaking insights continue to challenge everything we thought we knew about our reality and environment.\n\nFrom unprecedented technical precision to stunning real-world revelations, these remarkable developments are captivating researchers and enthusiasts across the globe. Each new perspective uncovers layers of hidden complexity that inspire deeper questions.\n\nAs our collective understanding grows, the possibilities for innovation and creative expression continue to expand in ways we are only beginning to appreciate.\n\nWhat do you think is the most fascinating aspect of ${profile?.name || 'this niche'}?\n\n${fixedTags}`;
-      } else {
-        draft = `Remarkable breakthroughs in ${profile?.name || 'this field'} are completely reshaping how experts and enthusiasts understand this fascinating topic.\n\nRecent discoveries showcase unprecedented patterns and practical innovations that were previously thought impossible. Every new milestone reveals fresh perspectives and exciting opportunities for exploration.\n\nWhat excites you the most about the recent developments in ${profile?.name || 'this niche'}?\n\n${fixedTags}`;
+        headline = 'ASTRONOMERS DETECT **UNEXPECTED SIGNALS** IN DEEP SPACE';
+        if (attempt === 1) {
+          draft = `In the world of ${profile?.name || 'this field'}, groundbreaking insights continue to challenge everything we thought we knew about our reality and environment.\n\nFrom unprecedented technical precision to stunning real-world revelations, these remarkable developments are captivating researchers and enthusiasts across the globe. Each new perspective uncovers layers of hidden complexity that inspire deeper questions.\n\nAs our collective understanding grows, the possibilities for innovation and creative expression continue to expand in ways we are only beginning to appreciate.\n\nWhat do you think is the most fascinating aspect of ${profile?.name || 'this niche'}?\n\n${fixedTags}`;
+        } else {
+          draft = `Remarkable breakthroughs in ${profile?.name || 'this field'} are completely reshaping how experts and enthusiasts understand this fascinating topic.\n\nRecent discoveries showcase unprecedented patterns and practical innovations that were previously thought impossible. Every new milestone reveals fresh perspectives and exciting opportunities for exploration.\n\nWhat excites you the most about the recent developments in ${profile?.name || 'this niche'}?\n\n${fixedTags}`;
+        }
       }
     }
 
@@ -770,41 +854,108 @@ export async function runGenerationPipeline(
   });
 
   // --------------------------------------------------------------------------
-  // STAGE 6: Image Generation (Real AI Scene via Pollinations Flux)
+  // STAGE 6: Image Generation (Multi-Provider Priority Failover Chain)
   // --------------------------------------------------------------------------
   const s6Start = Date.now();
   let thumbnailUrl = '';
-  // Topic and scene are guaranteed in the first 350 chars
-  const polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=flux&nologo=true`;
+  let successfulImageProvider = 'Pollinations AI';
+  let successfulImageModel = 'flux';
+  let usedImageProviderId: string | undefined;
 
-  try {
-    if (typeof fetch === 'function' && !isTestEnv()) {
-      // Primary: Pollinations Flux model (20s timeout)
-      let polliRes = await fetch(polliUrl, { signal: AbortSignal.timeout(20000) });
-      if (polliRes.ok) {
-        const ab = await polliRes.arrayBuffer();
-        if (ab.byteLength > 500) {
-          thumbnailUrl = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
-        }
-      }
-      // Secondary: Fast turbo model fallback (10s timeout)
-      if (!thumbnailUrl) {
-        const turboUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=turbo&nologo=true`;
-        polliRes = await fetch(turboUrl, { signal: AbortSignal.timeout(10000) });
-        if (polliRes.ok) {
-          const ab = await polliRes.arrayBuffer();
-          if (ab.byteLength > 500) {
-            thumbnailUrl = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
+  // Filter image providers from options.activeProviders sorted by priority ascending (1 = Primary, 2 = Secondary...)
+  const imageCandidates = (options.activeProviders || [])
+    .filter((p) => {
+      const k = (p.kind || p.adapter_kind || '').toLowerCase();
+      const n = (p.name || '').toLowerCase();
+      return (
+        k === 'cloudflare_workers_ai' ||
+        k === 'pollinations' ||
+        k === 'openai_compatible_images' ||
+        n.includes('image') ||
+        n.includes('pollinations') ||
+        n.includes('cloudflare')
+      );
+    })
+    .sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
+
+  const candidateChain = imageCandidates.length > 0
+    ? imageCandidates
+    : [
+        { id: '11111111-1111-1111-1111-111111111104', name: 'Cloudflare Workers AI', kind: 'cloudflare_workers_ai', priority: 1, model_name: '@cf/black-forest-labs/flux-1-schnell' },
+        { id: '11111111-1111-1111-1111-111111111105', name: 'Pollinations AI', kind: 'pollinations', priority: 2, model_name: 'flux' },
+      ];
+
+  for (const candidate of candidateChain) {
+    if (thumbnailUrl) break;
+
+    const cKind = (candidate.kind || candidate.adapter_kind || '').toLowerCase();
+    const cName = candidate.name || 'image-provider';
+
+    // Priority 1 / Cloudflare Workers AI
+    if (cKind === 'cloudflare_workers_ai' || cName.toLowerCase().includes('cloudflare')) {
+      try {
+        const cfAdapter = new CloudflareWorkersAIAdapter();
+        const cfToken = candidate.apiKey || process.env.CLOUDFLARE_API_TOKEN;
+        const cfAccountId =
+          candidate.config?.account_id ||
+          (candidate as any).accountId ||
+          process.env.CLOUDFLARE_ACCOUNT_ID;
+
+        if (cfToken && cfAccountId && !isTestEnv()) {
+          const imgRes = await cfAdapter.generateImage({
+            prompt: visualPrompt.slice(0, 500),
+            model: candidate.model_name || '@cf/black-forest-labs/flux-1-schnell',
+            apiKey: cfToken,
+            width: 1080,
+            height: 1080,
+            extraBody: { accountId: cfAccountId },
+            timeoutMs: 25000,
+          });
+
+          if (imgRes.imageBuffer && imgRes.imageBuffer.length > 500) {
+            thumbnailUrl = `data:image/jpeg;base64,${imgRes.imageBuffer.toString('base64')}`;
+            successfulImageProvider = candidate.name;
+            successfulImageModel = candidate.model_name || '@cf/black-forest-labs/flux-1-schnell';
+            usedImageProviderId = candidate.id;
+            console.log(`[Image Generation] Successfully generated image via Priority #${candidate.priority} (${candidate.name})`);
+            break;
           }
+        } else if (!cfAccountId && !isTestEnv()) {
+          console.log(`[Image Failover] Cloudflare Workers AI missing Account ID. Cascading to Priority #${(candidate.priority || 1) + 1}...`);
         }
+      } catch (cfErr: any) {
+        console.warn(`[Image Failover] Priority #${candidate.priority} (${candidate.name}) failed:`, cfErr?.message || cfErr);
       }
     }
-  } catch (_) {}
+
+    // Priority 2 / Pollinations AI
+    if (cKind === 'pollinations' || cName.toLowerCase().includes('pollinations')) {
+      try {
+        const polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=flux&nologo=true`;
+        if (typeof fetch === 'function' && !isTestEnv()) {
+          const res = await fetch(polliUrl, { signal: AbortSignal.timeout(20000) });
+          if (res.ok) {
+            const ab = await res.arrayBuffer();
+            if (ab.byteLength > 500) {
+              thumbnailUrl = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
+              successfulImageProvider = candidate.name;
+              successfulImageModel = candidate.model_name || 'flux';
+              usedImageProviderId = candidate.id;
+              console.log(`[Image Generation] Successfully generated image via Priority #${candidate.priority} (${candidate.name})`);
+              break;
+            }
+          }
+        }
+      } catch (polliErr: any) {
+        console.warn(`[Image Failover] Priority #${candidate.priority} (${candidate.name}) failed:`, polliErr?.message || polliErr);
+      }
+    }
+  }
 
   if (!thumbnailUrl) {
     thumbnailUrl = isTestEnv()
       ? generateThumbnailSvg({ headline, themeColor: isHorror ? '#e11d48' : '#38bdf8' })
-      : polliUrl;
+      : `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=flux&nologo=true`;
   }
 
   stages.push({
@@ -812,8 +963,8 @@ export async function runGenerationPipeline(
     name: 'Image Generation',
     status: 'completed',
     durationMs: Date.now() - s6Start,
-    provider: 'pollinations-flux',
-    model: 'flux-schnell',
+    provider: successfulImageProvider,
+    model: successfulImageModel,
     tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     thumbnailUrl,
   });
@@ -912,5 +1063,9 @@ export async function runGenerationPipeline(
     needs_review: emergencyReformatNeeded,
     requires_human_review: emergencyReformatNeeded,
     review_reason: emergencyReformatNeeded ? 'emergency_reformat_applied' : undefined,
+    usedTextProviderId: successfulTextProviderId || textCandidates[0]?.id || '11111111-1111-1111-1111-111111111101',
+    usedTextProviderName: successfulTextProviderName,
+    usedImageProviderId: usedImageProviderId || candidateChain[0]?.id || '11111111-1111-1111-1111-111111111105',
+    usedImageProviderName: successfulImageProvider,
   };
 }
