@@ -1,4 +1,5 @@
 import { ContentProfile } from '../validation/schemas.js';
+import { isTestEnv } from '../security/env-guard.js';
 import {
   EffectiveSettings,
   resolveSettings,
@@ -152,6 +153,7 @@ export function generateCompositePreviewSvg(options: {
   category: string;
   sourceText?: string;
   themeColor?: string;
+  imageUrl?: string;
 }): string {
   const width = options.width || 1080;
   const height = options.height || 1350;
@@ -162,7 +164,15 @@ export function generateCompositePreviewSvg(options: {
   const source = escapeXml(options.sourceText || 'NASA / ESA / STScI');
   const theme = options.themeColor || '#38bdf8';
 
-  const svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+  const imageElem = options.imageUrl
+    ? `<!-- Real Photorealistic AI Visual Scene -->
+  <image href="${options.imageUrl}" x="0" y="0" width="${width}" height="${panelTop}" preserveAspectRatio="xMidYMid slice" />
+  <rect x="0" y="${panelTop - 80}" width="${width}" height="80" fill="url(#bgGrad)" opacity="0.7"/>`
+    : `<!-- Atmospheric Planet / Visual Elements -->
+  <circle cx="540" cy="480" r="320" fill="url(#glowGrad)"/>
+  <circle cx="540" cy="480" r="310" fill="#030712" fill-opacity="0.4"/>`;
+
+  const svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
   <defs>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#050b14"/>
@@ -176,9 +186,9 @@ export function generateCompositePreviewSvg(options: {
   </defs>
   <!-- Background Scene -->
   <rect width="${width}" height="${height}" fill="url(#bgGrad)"/>
-  <!-- Atmospheric Planet / Visual Elements -->
-  <circle cx="540" cy="480" r="320" fill="url(#glowGrad)"/>
-  <circle cx="540" cy="480" r="310" fill="#030712" fill-opacity="0.4"/>
+  
+  ${imageElem}
+
   <!-- Aspect ratio watermark -->
   <text x="540" y="80" text-anchor="middle" fill="#64748b" font-family="-apple-system, sans-serif" font-size="20" font-weight="600" letter-spacing="2">1080 × 1350 (4:5 PORTRAIT)</text>
   <!-- Contrast Divider -->
@@ -186,11 +196,12 @@ export function generateCompositePreviewSvg(options: {
   <!-- Headline Panel Background -->
   <rect x="0" y="${panelTop}" width="${width}" height="${panelHeight}" fill="#050b14"/>
   <!-- Category Badge -->
-  <text x="540" y="${panelTop + 50}" text-anchor="middle" fill="${theme}" font-family="-apple-system, sans-serif" font-size="22" font-weight="bold" letter-spacing="3">${category.toUpperCase()}</text>
+  <text x="60" y="${panelTop + 55}" fill="${theme}" font-family="-apple-system, sans-serif" font-size="22" font-weight="bold" letter-spacing="3">${category.toUpperCase()}</text>
   <!-- Headline Text -->
-  <text x="540" y="${panelTop + 140}" text-anchor="middle" fill="#f8fafc" font-family="-apple-system, sans-serif" font-size="44" font-weight="900" letter-spacing="-1">${headline}</text>
+  <text x="60" y="${panelTop + 130}" fill="#f8fafc" font-family="-apple-system, sans-serif" font-size="44" font-weight="900" letter-spacing="-1">${headline.slice(0, 36)}</text>
+  <text x="60" y="${panelTop + 185}" fill="#f8fafc" font-family="-apple-system, sans-serif" font-size="44" font-weight="900" letter-spacing="-1">${headline.slice(36, 75)}</text>
   <!-- Source Attribution -->
-  <text x="540" y="${height - 40}" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, sans-serif" font-size="18" font-weight="600" letter-spacing="2">SOURCE: ${source.toUpperCase()}</text>
+  <text x="60" y="${height - 40}" fill="#94a3b8" font-family="-apple-system, sans-serif" font-size="18" font-weight="600" letter-spacing="2">SOURCE: ${source.toUpperCase()}</text>
 </svg>`;
 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
@@ -655,13 +666,30 @@ export async function runGenerationPipeline(
   });
 
   // --------------------------------------------------------------------------
-  // STAGE 6: Image Generation (Thumbnail)
+  // STAGE 6: Image Generation (Real AI Scene via Pollinations Flux)
   // --------------------------------------------------------------------------
   const s6Start = Date.now();
-  const thumbnailUrl = generateThumbnailSvg({
-    headline,
-    themeColor: isHorror ? '#e11d48' : '#38bdf8',
-  });
+  let thumbnailUrl = '';
+  const cleanPrompt = (keyScene || headline || topicTitle || 'Astrophysics deep space discovery').slice(0, 300);
+  const polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(cleanPrompt)}?width=1080&height=1080&model=flux&nologo=true`;
+
+  try {
+    if (typeof fetch === 'function' && !isTestEnv()) {
+      const polliRes = await fetch(polliUrl, { signal: AbortSignal.timeout(12000) });
+      if (polliRes.ok) {
+        const ab = await polliRes.arrayBuffer();
+        if (ab.byteLength > 500) {
+          thumbnailUrl = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
+        }
+      }
+    }
+  } catch (_) {}
+
+  if (!thumbnailUrl) {
+    thumbnailUrl = isTestEnv()
+      ? generateThumbnailSvg({ headline, themeColor: isHorror ? '#e11d48' : '#38bdf8' })
+      : polliUrl;
+  }
 
   stages.push({
     stage: 'image_generate',
@@ -675,7 +703,7 @@ export async function runGenerationPipeline(
   });
 
   // --------------------------------------------------------------------------
-  // STAGE 7: Headline Panel Composition (1080x1350 Preview)
+  // STAGE 7: Headline Panel Composition (1080x1350 Preview with AI Image)
   // --------------------------------------------------------------------------
   const s7Start = Date.now();
   const sourceAttribution = sourceUrls.length > 0 ? sourceUrls[0].replace('https://', '').split('/')[0] : 'Beyond the Known';
@@ -686,6 +714,7 @@ export async function runGenerationPipeline(
     category: topicCategory,
     sourceText: sourceAttribution,
     themeColor: isHorror ? '#e11d48' : '#38bdf8',
+    imageUrl: thumbnailUrl,
   });
 
   stages.push({

@@ -3321,15 +3321,10 @@
     const hashtags = Array.isArray(post.hashtags) ? post.hashtags.length : 0;
     if (hashtagsBadge) hashtagsBadge.textContent = hashtags + ' hashtags';
 
-    const imageSrc = post.composed_image_path || post.raw_image_path;
-    if (previewImg) {
-      if (imageSrc) {
-        previewImg.src = imageSrc;
-        previewImg.style.display = 'block';
-      } else {
-        previewImg.style.display = 'none';
-      }
-    }
+    currentModalPost = post;
+    currentModalImageView = 'composed';
+    updateModalImageView();
+
     if (imagePromptRow && imagePromptEl) {
       if (post.image_prompt) {
         imagePromptEl.textContent = post.image_prompt;
@@ -3338,6 +3333,59 @@
         imagePromptRow.style.display = 'none';
       }
     }
+  }
+
+  let currentModalPost = null;
+  let currentModalImageView = 'composed';
+
+  function updateModalImageView() {
+    if (!currentModalPost) return;
+    const previewImg = document.getElementById('pdmPreviewImg');
+    const previewLink = document.getElementById('pdmPreviewLink');
+    const viewComposedBtn = document.getElementById('pdmViewComposedBtn');
+    const viewRawBtn = document.getElementById('pdmViewRawBtn');
+    const viewToggleRow = document.getElementById('pdmViewToggleRow');
+
+    const composed = currentModalPost.composed_image_path;
+    const raw = currentModalPost.raw_image_path;
+
+    if (viewToggleRow) {
+      viewToggleRow.style.display = (composed && raw) ? 'flex' : 'none';
+    }
+
+    const targetSrc = (currentModalImageView === 'raw' && raw) ? raw : (composed || raw);
+    if (previewImg) {
+      if (targetSrc) {
+        previewImg.src = targetSrc;
+        previewImg.style.display = 'block';
+        if (previewLink) {
+          previewLink.href = targetSrc;
+          previewLink.style.display = 'flex';
+        }
+      } else {
+        previewImg.style.display = 'none';
+        if (previewLink) previewLink.style.display = 'none';
+      }
+    }
+
+    if (viewComposedBtn && viewRawBtn) {
+      if (currentModalImageView === 'composed') {
+        viewComposedBtn.style.background = '#1e3a8a';
+        viewComposedBtn.style.color = '#60a5fa';
+        viewRawBtn.style.background = '#1e293b';
+        viewRawBtn.style.color = '#94a3b8';
+      } else {
+        viewRawBtn.style.background = '#1e3a8a';
+        viewRawBtn.style.color = '#60a5fa';
+        viewComposedBtn.style.background = '#1e293b';
+        viewComposedBtn.style.color = '#94a3b8';
+      }
+    }
+  }
+
+  function togglePostModalView(view) {
+    currentModalImageView = view;
+    updateModalImageView();
   }
 
   function closePostDetailsModal() {
@@ -3919,6 +3967,7 @@
   window.openPostDetailsModal = openPostDetailsModal;
   window.closePostDetailsModal = closePostDetailsModal;
   window.copyPostCaptionToClipboard = copyPostCaptionToClipboard;
+  window.togglePostModalView = togglePostModalView;
   window.confirmModeChange = confirmModeChange;
   window.cancelModeConfirmation = cancelModeConfirmation;
   window.reloadProfilesAndResetToCustom = reloadProfilesAndResetToCustom;

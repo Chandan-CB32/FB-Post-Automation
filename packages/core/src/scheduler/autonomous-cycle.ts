@@ -379,6 +379,38 @@ export async function runAutonomousCycle(
               });
             } catch (_) {}
 
+            // Record provider daily quota usage
+            try {
+              const todayStr = new Date().toISOString().slice(0, 10);
+              // Gemini (Text generation)
+              const { data: gData } = await supabase
+                .from('provider_usage_daily')
+                .select('requests_count, tokens_count')
+                .eq('provider_id', '11111111-1111-1111-1111-111111111101')
+                .eq('date', todayStr)
+                .maybeSingle();
+              await supabase.from('provider_usage_daily').upsert({
+                provider_id: '11111111-1111-1111-1111-111111111101',
+                date: todayStr,
+                requests_count: (gData?.requests_count || 0) + 1,
+                tokens_count: (gData?.tokens_count || 0) + (pipelineResult.tokensUsed || 1200),
+              }, { onConflict: 'provider_id,key_id,date' });
+
+              // Pollinations (Image generation)
+              const { data: pData } = await supabase
+                .from('provider_usage_daily')
+                .select('requests_count')
+                .eq('provider_id', '11111111-1111-1111-1111-111111111105')
+                .eq('date', todayStr)
+                .maybeSingle();
+              await supabase.from('provider_usage_daily').upsert({
+                provider_id: '11111111-1111-1111-1111-111111111105',
+                date: todayStr,
+                requests_count: (pData?.requests_count || 0) + 1,
+                tokens_count: 0,
+              }, { onConflict: 'provider_id,key_id,date' });
+            } catch (_) {}
+
             generatedPosts.push({
               postId: insertedPost.id,
               pageId: page.id,

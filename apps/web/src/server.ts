@@ -6086,12 +6086,21 @@ async function generateDashboardHtml(
 
       <!-- Image & Creative Panel Section -->
       <div id="pdmVisualSection" style="background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-        <div style="font-size: 12px; font-weight: 700; color: #a78bfa; text-transform: uppercase; margin-bottom: 10px;">Visual Framing & Creative Preview</div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+          <div style="font-size: 12px; font-weight: 700; color: #a78bfa; text-transform: uppercase;">Visual Framing & Creative Preview</div>
+          <div id="pdmViewToggleRow" style="display: flex; gap: 6px;">
+            <button type="button" class="btn btn-secondary" id="pdmViewComposedBtn" onclick="togglePostModalView('composed')" style="padding: 4px 10px; font-size: 11px; background: #1e3a8a; color: #60a5fa;">🖼️ Composed Card (1080×1350)</button>
+            <button type="button" class="btn btn-secondary" id="pdmViewRawBtn" onclick="togglePostModalView('raw')" style="padding: 4px 10px; font-size: 11px; background: #1e293b; color: #94a3b8;">🎨 Raw AI Photo</button>
+          </div>
+        </div>
         <div id="pdmImagePromptRow" style="font-size: 12px; color: #cbd5e1; margin-bottom: 12px; display: none;">
           <strong>Scene Prompt:</strong> <span id="pdmImagePrompt" style="color: #94a3b8; font-style: italic;">-</span>
         </div>
-        <div style="display: flex; justify-content: center;">
-          <img id="pdmPreviewImg" src="" alt="Post Visual Preview" style="max-width: 100%; max-height: 420px; object-fit: contain; border-radius: 8px; border: 1px solid #1e293b; background: #000; display: none;" />
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
+          <a id="pdmPreviewLink" href="#" target="_blank" rel="noopener noreferrer" style="display: flex; justify-content: center; width: 100%; cursor: zoom-in;" title="Click to view full resolution">
+            <img id="pdmPreviewImg" src="" alt="Post Visual Preview" style="max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 8px; border: 1px solid #1e293b; background: #000; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); display: none;" />
+          </a>
+          <div style="font-size: 11px; color: #64748b; margin-top: 6px;">(Click image to open in full high-resolution)</div>
         </div>
       </div>
 

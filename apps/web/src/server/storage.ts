@@ -2186,6 +2186,19 @@ export class SystemStore {
       return [];
     }
 
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const { data: usageRows } = await this.getClient()
+      .from('provider_usage_daily')
+      .select('provider_id, requests_count')
+      .eq('date', todayStr);
+
+    const usageMap: Record<string, number> = {};
+    if (usageRows) {
+      for (const u of usageRows) {
+        usageMap[u.provider_id] = (usageMap[u.provider_id] || 0) + (u.requests_count || 0);
+      }
+    }
+
     return (data || []).map((row) => ({
       id: row.id,
       name: row.name,
@@ -2193,7 +2206,7 @@ export class SystemStore {
       base_url: row.base_url || '',
       model_name: row.model_name || row.config?.default_text_model || row.config?.default_image_model || '',
       daily_limit: row.rpd_limit || 1000,
-      used_today: 0,
+      used_today: usageMap[row.id] || 0,
       enabled: row.active !== false,
       priority: row.priority || 1,
       health_status: row.config?.health_status || 'unknown',
@@ -2217,6 +2230,15 @@ export class SystemStore {
       .maybeSingle();
 
     if (error || !data) return undefined;
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const { data: usageRow } = await this.getClient()
+      .from('provider_usage_daily')
+      .select('requests_count')
+      .eq('provider_id', id)
+      .eq('date', todayStr)
+      .maybeSingle();
+
     return {
       id: data.id,
       name: data.name,
@@ -2224,7 +2246,7 @@ export class SystemStore {
       base_url: data.base_url || '',
       model_name: data.model_name || data.config?.default_text_model || data.config?.default_image_model || '',
       daily_limit: data.rpd_limit || 1000,
-      used_today: 0,
+      used_today: usageRow?.requests_count || 0,
       enabled: data.active !== false,
       priority: data.priority || 1,
       created_at: data.created_at,
