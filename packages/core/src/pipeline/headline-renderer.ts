@@ -163,3 +163,29 @@ export function renderHeadlineCard(
     fontFamily,
   };
 }
+
+async function getSharpInstance(): Promise<any> {
+  try {
+    const mod = await import('sharp');
+    return mod.default || mod;
+  } catch {
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
+    return req('sharp');
+  }
+}
+
+/**
+ * Asynchronously rasterizes a rendered headline card SVG into a high-quality 1080x1350 JPEG buffer.
+ * Compatible with Facebook Graph API /{page-id}/photos requirement (JPEG/PNG only).
+ */
+export async function rasterizeHeadlineCardToJpeg(
+  svgXmlOrResult: string | RenderedHeadlineResult,
+  quality = 95
+): Promise<Buffer> {
+  const sharp = await getSharpInstance();
+  const svgString = typeof svgXmlOrResult === 'string' ? svgXmlOrResult : svgXmlOrResult.svgXml;
+  return await sharp(Buffer.from(svgString))
+    .jpeg({ quality, chromaSubsampling: '4:4:4' })
+    .toBuffer();
+}

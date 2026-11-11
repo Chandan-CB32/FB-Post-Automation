@@ -1,10 +1,11 @@
 import { getSupabaseClient } from '../db/client.js';
 import { decryptPageToken } from '../facebook/tokens.js';
-import { FacebookPublisher, computePostContentHash } from '../facebook/publisher.js';
+import { FacebookPublisher, PhotoInput, computePostContentHash } from '../facebook/publisher.js';
 import { ContentProfile } from '../validation/schemas.js';
 import { reconcileScheduledPosts, ReconciliationSummary } from './reconciler.js';
 import { calculateNextSlots, PageScheduleConfig } from './slot-planner.js';
 import { runGenerationPipeline } from '../pipeline/generation-pipeline.js';
+import { rasterizeHeadlineCardToJpeg } from '../pipeline/headline-renderer.js';
 
 export interface AutonomousCycleOptions {
   now?: Date;
@@ -286,11 +287,56 @@ export async function runAutonomousCycle(
                 rawToken = decryptPageToken(rawToken);
               }
 
-              const photoInput =
-                pipelineResult.thumbnailUrl &&
-                (pipelineResult.thumbnailUrl.startsWith('http://') || pipelineResult.thumbnailUrl.startsWith('https://'))
-                  ? { url: pipelineResult.thumbnailUrl }
-                  : undefined;
+              // 1. Primary photo: 1080x1350 composed card with top photo & lower headline panel
+              let photoBuffer: Buffer | undefined = (pipelineResult as any).compositeJpegBuffer;
+
+              if (!photoBuffer && (pipelineResult as any).svgXml) {
+                try {
+                  photoBuffer = await rasterizeHeadlineCardToJpeg((pipelineResult as any).svgXml);
+                } catch (rErr) {
+                  console.warn('[Autonomous Worker] Rasterizing SVG card to JPEG buffer failed:', rErr);
+                }
+              }
+
+              // 2. Fallback photo: raw AI image (buffer or URL)
+              let fallbackBuffer: Buffer | undefined;
+              let fallbackUrl: string | undefined;
+
+              if (pipelineResult.thumbnailUrl) {
+                if (pipelineResult.thumbnailUrl.startsWith('data:image/')) {
+                  try {
+                    const parts = pipelineResult.thumbnailUrl.split(',');
+                    const isB64 = parts[0].includes(';base64');
+                    fallbackBuffer = isB64
+                      ? Buffer.from(parts[1], 'base64')
+                      : Buffer.from(decodeURIComponent(parts[1]), 'utf-8');
+                  } catch (_) {}
+                } else if (
+                  pipelineResult.thumbnailUrl.startsWith('http://') ||
+                  pipelineResult.thumbnailUrl.startsWith('https://')
+                ) {
+                  fallbackUrl = pipelineResult.thumbnailUrl;
+                }
+              }
+
+              const photoInput: PhotoInput | undefined = photoBuffer
+                ? {
+                    buffer: photoBuffer,
+                    filename: 'composed_card.jpg',
+                    fallbackBuffer,
+                    fallbackUrl,
+                  }
+                : fallbackBuffer
+                ? {
+                    buffer: fallbackBuffer,
+                    filename: 'post_photo.jpg',
+                    fallbackUrl,
+                  }
+                : fallbackUrl
+                ? {
+                    url: fallbackUrl,
+                  }
+                : undefined;
 
               const pubRes = await publisher.publishFeedPost(
                 page.fb_page_id,
@@ -306,8 +352,9 @@ export async function runAutonomousCycle(
               fbPermalink = pubRes.permalinkUrl || null;
               postStatus = pubRes.isScheduled ? 'scheduled_on_fb' : 'published';
             } catch (fbPubErr: any) {
-              console.warn(`[Autonomous Worker] Facebook schedule error, saving as DB scheduled:`, fbPubErr?.message);
-              postStatus = 'scheduled_on_fb';
+              console.error(`[Autonomous Worker] Facebook schedule/publish error:`, fbPubErr?.message || fbPubErr);
+              postStatus = 'pending_review';
+              errors.push(`Facebook publish failed: ${fbPubErr?.message || fbPubErr}`);
             }
           }
 

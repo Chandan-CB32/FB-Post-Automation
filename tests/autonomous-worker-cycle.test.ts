@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runAutonomousCycle } from '../packages/core/src/scheduler/autonomous-cycle.js';
+import { FacebookPublisher } from '../packages/core/src/facebook/publisher.js';
 import * as dbModule from '../packages/core/src/db/client.js';
 
 describe('Autonomous Worker Cycle & 30-Minute Pre-Generation Window', () => {
@@ -110,6 +111,13 @@ describe('Autonomous Worker Cycle & 30-Minute Pre-Generation Window', () => {
     };
 
     vi.spyOn(dbModule, 'getSupabaseClient').mockReturnValue(mockSupabase);
+    vi.spyOn(FacebookPublisher.prototype, 'publishFeedPost').mockResolvedValue({
+      postId: 'fb_post_mock_123',
+      photoId: 'fb_photo_mock_456',
+      scheduledPublishTime: 1794402000,
+      isScheduled: true,
+      permalinkUrl: 'https://facebook.com/123/posts/123',
+    });
 
     // Run cycle with slot 30 minutes in the future
     const now = new Date('2026-11-11T12:30:00Z'); // 30 minutes before 13:00 UTC (8:00 AM EST)

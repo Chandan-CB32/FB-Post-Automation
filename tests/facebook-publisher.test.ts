@@ -303,6 +303,126 @@ describe('Facebook Photo Scheduling & Publishing Engine (Step 9.2)', () => {
       expect(calledPageId).toBe('page_100');
       expect(calledToken).toBe(rawToken);
     });
+
+    it('converts SVG data URIs to JPEG buffers and never posts text-only if photo fails', async () => {
+      const mockCalls: { url: string; body: any }[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string, init: any) => {
+        mockCalls.push({ url, body: init.body });
+        if (url.includes('/photos')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ id: 'photo_svg_123' }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          );
+        }
+        if (url.includes('/feed')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ id: 'feed_post_999' }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          );
+        }
+        return Promise.reject(new Error('Unexpected URL'));
+      });
+
+      const client = new FacebookGraphClient({ fetchFn: mockFetch });
+      const publisher = new FacebookPublisher(client);
+
+      const svgDataUri = 'data:image/svg+xml;utf8,<svg width="1080" height="1350" xmlns="http://www.w3.org/2000/svg"><rect width="1080" height="1350" fill="#000"/></svg>';
+
+      const res = await publisher.publishFeedPost('page_test', 'token_test', {
+        message: 'Headline card post',
+        photo: { url: svgDataUri, filename: 'composed_card.jpg' },
+        published: true,
+      });
+
+      expect(res.postId).toBe('feed_post_999');
+      expect(res.photoId).toBe('photo_svg_123');
+
+      // Verify that photos endpoint was called first with multipart form-data
+      expect(mockCalls[0].url).toContain('page_test/photos');
+      expect(mockCalls[0].body).toBeInstanceOf(FormData);
+      expect(mockCalls[1].url).toContain('page_test/feed');
+
+      const feedPayload = JSON.parse(mockCalls[1].body);
+      expect(feedPayload.attached_media).toEqual([{ media_fbid: 'photo_svg_123' }]);
+    });
+
+    it('throws error and refuses to post text-only when photo upload fails and no fallback works', async () => {
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/photos')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ error: { message: 'Image upload failed due to corrupted pixels' } }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          );
+        }
+        return Promise.resolve(new Response(JSON.stringify({ id: 'bad_feed_post' }), { status: 200 }));
+      });
+
+      const client = new FacebookGraphClient({ fetchFn: mockFetch });
+      const publisher = new FacebookPublisher(client);
+
+      await expect(
+        publisher.publishFeedPost('page_test', 'token_test', {
+          message: 'Post that MUST have an image',
+          photo: { buffer: Buffer.from('bad_image'), filename: 'bad.jpg' },
+          published: true,
+        })
+      ).rejects.toThrow(/Failed to upload photo for Facebook post/);
+    });
+
+    it('successfully uses fallback photo buffer when primary photo upload fails', async () => {
+      const mockCalls: { url: string; body: any }[] = [];
+      let photoAttempt = 0;
+      const mockFetch = vi.fn().mockImplementation((url: string, init: any) => {
+        mockCalls.push({ url, body: init.body });
+        if (url.includes('/photos')) {
+          photoAttempt++;
+          if (photoAttempt === 1) {
+            return Promise.resolve(
+              new Response(JSON.stringify({ error: { message: 'Primary photo server timeout' } }), {
+                status: 500,
+                headers: { 'Content-Type': 'application/json' },
+              })
+            );
+          }
+          return Promise.resolve(
+            new Response(JSON.stringify({ id: 'photo_fallback_456' }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          );
+        }
+        if (url.includes('/feed')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ id: 'feed_post_fallback_ok' }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+          );
+        }
+        return Promise.reject(new Error('Unexpected URL'));
+      });
+
+      const client = new FacebookGraphClient({ fetchFn: mockFetch });
+      const publisher = new FacebookPublisher(client);
+
+      const res = await publisher.publishFeedPost('page_test', 'token_test', {
+        message: 'Post with fallback photo',
+        photo: {
+          buffer: Buffer.from('primary_broken'),
+          fallbackBuffer: Buffer.from('fallback_good'),
+        },
+        published: true,
+      });
+
+      expect(res.postId).toBe('feed_post_fallback_ok');
+      expect(res.photoId).toBe('photo_fallback_456');
+    });
   });
 });
 

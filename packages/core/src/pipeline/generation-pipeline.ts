@@ -19,7 +19,9 @@ import {
 } from '../validation/claim-verifier.js';
 import {
   renderHeadlineCard,
+  rasterizeHeadlineCardToJpeg,
   HeadlineRendererOptions,
+  RenderedHeadlineResult,
 } from './headline-renderer.js';
 import {
   parseHeadlineSegments,
@@ -95,6 +97,9 @@ export interface GenerationPipelineResult {
   claimVerification: Array<{ claim: string; verified: boolean; sourceUrl: string | null }>;
   thumbnailUrl: string;
   compositeImageUrl: string;
+  compositeJpegBuffer?: Buffer;
+  svgXml?: string;
+  renderedCard?: RenderedHeadlineResult;
   tokensUsed: number;
   estimatedCost: string;
   latencyMs: number;
@@ -721,11 +726,23 @@ export async function runGenerationPipeline(
 
   try {
     if (typeof fetch === 'function' && !isTestEnv()) {
-      const polliRes = await fetch(polliUrl, { signal: AbortSignal.timeout(12000) });
+      // Primary: Pollinations Flux model (20s timeout)
+      let polliRes = await fetch(polliUrl, { signal: AbortSignal.timeout(20000) });
       if (polliRes.ok) {
         const ab = await polliRes.arrayBuffer();
         if (ab.byteLength > 500) {
           thumbnailUrl = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
+        }
+      }
+      // Secondary: Fast turbo model fallback (10s timeout)
+      if (!thumbnailUrl) {
+        const turboUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt)}?width=1080&height=1080&model=turbo&nologo=true`;
+        polliRes = await fetch(turboUrl, { signal: AbortSignal.timeout(10000) });
+        if (polliRes.ok) {
+          const ab = await polliRes.arrayBuffer();
+          if (ab.byteLength > 500) {
+            thumbnailUrl = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
+          }
         }
       }
     }
@@ -765,6 +782,13 @@ export async function runGenerationPipeline(
     matchNiche: true,
   });
   const compositeImageUrl = renderedCard.svgDataUri;
+
+  let compositeJpegBuffer: Buffer | undefined;
+  try {
+    compositeJpegBuffer = await rasterizeHeadlineCardToJpeg(renderedCard.svgXml);
+  } catch (rErr) {
+    console.warn('[GenerationPipeline] Failed to rasterize composed card to JPEG:', rErr);
+  }
 
   stages.push({
     stage: 'headline_composition',
@@ -822,6 +846,9 @@ export async function runGenerationPipeline(
     claimVerification: bestClaimResult?.claims || [],
     thumbnailUrl,
     compositeImageUrl,
+    compositeJpegBuffer,
+    svgXml: renderedCard.svgXml,
+    renderedCard,
     tokensUsed: 1295,
     estimatedCost: '$0.0013',
     latencyMs: totalLatency,
