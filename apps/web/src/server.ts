@@ -196,7 +196,7 @@ function getFallbackSessionSecret(): string {
   return process.env.ENCRYPTION_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || 'fb-auto-session-secret-key-32ch';
 }
 
-function createFallbackAppSession(email: string, userId?: string): string {
+export function createFallbackAppSession(email: string, userId?: string): string {
   const payload = {
     email,
     sub: userId || 'owner',
@@ -592,7 +592,10 @@ export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <meta name="theme-color" content="#030712">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>FB Auto 247 - Admin Sign In</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -608,16 +611,17 @@ export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
       --primary-hover: #1d4ed8;
       --danger: #ef4444;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     body {
-      font-family: 'Inter', -apple-system, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
+      min-height: -webkit-fill-available;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: 16px;
     }
     .login-container {
       width: 100%;
@@ -665,6 +669,11 @@ export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
       color: var(--text-muted);
       margin-bottom: 8px;
     }
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
     .form-input {
       width: 100%;
       background: #030712;
@@ -672,13 +681,28 @@ export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
       border-radius: 10px;
       padding: 12px 14px;
       color: var(--text);
-      font-size: 14px;
+      font-size: 16px; /* 16px prevents iOS Safari from auto-zooming */
+      min-height: 48px;
       outline: none;
       transition: border-color 0.15s;
     }
     .form-input:focus {
       border-color: var(--primary);
       box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+    }
+    .pwd-toggle-btn {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 8px;
+      font-size: 18px;
+      line-height: 1;
+      border-radius: 6px;
     }
     .alert-error {
       background: rgba(239, 68, 68, 0.1);
@@ -694,17 +718,21 @@ export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
       width: 100%;
       background: var(--primary);
       color: #ffffff;
-      padding: 12px 16px;
+      padding: 14px 16px;
+      min-height: 50px;
       border-radius: 10px;
       border: none;
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background 0.15s, transform 0.1s;
       margin-top: 8px;
     }
     .btn-submit:hover {
       background: var(--primary-hover);
+    }
+    .btn-submit:active {
+      transform: scale(0.99);
     }
     .btn-submit:disabled {
       opacity: 0.6;
@@ -718,6 +746,23 @@ export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
       margin-top: 24px;
       font-size: 12px;
       color: var(--text-muted);
+    }
+    @media (max-width: 480px) {
+      body {
+        padding: 12px;
+        align-items: flex-start;
+        padding-top: 24px;
+      }
+      .login-container {
+        padding: 24px 18px;
+        border-radius: 14px;
+      }
+      .brand-title {
+        font-size: 20px;
+      }
+      .brand-sub {
+        font-size: 12px;
+      }
     }
   </style>
 </head>
@@ -735,12 +780,15 @@ export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
       <input type="hidden" id="loginNext" value="${escapeHtml(safeNext)}">
       <div class="form-group">
         <label class="form-label" for="email">Admin Email</label>
-        <input class="form-input" type="email" id="email" required placeholder="owner@example.com" autocomplete="username">
+        <input class="form-input" type="email" id="email" required placeholder="owner@example.com" autocomplete="username email" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="email">
       </div>
 
       <div class="form-group">
         <label class="form-label" for="password">Password</label>
-        <input class="form-input" type="password" id="password" required placeholder="••••••••••••" autocomplete="current-password">
+        <div class="input-wrapper">
+          <input class="form-input" type="password" id="password" required placeholder="••••••••••••" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" style="padding-right: 46px;">
+          <button type="button" class="pwd-toggle-btn" onclick="togglePasswordVisibility()" aria-label="Toggle password visibility">👁️</button>
+        </div>
       </div>
 
       <button type="submit" class="btn-submit" id="submitBtn">Sign In to Dashboard ➔</button>
@@ -753,9 +801,17 @@ export function generateLoginHtml(errorMsg?: string, nextUrl?: string): string {
   </div>
 
   <script>
+    function togglePasswordVisibility() {
+      const pwd = document.getElementById('password');
+      if (pwd) {
+        pwd.type = pwd.type === 'password' ? 'text' : 'password';
+      }
+    }
+
     async function handleLoginSubmit(e) {
       e.preventDefault();
-      const email = document.getElementById('email').value.trim();
+      const rawEmail = document.getElementById('email').value || '';
+      const email = rawEmail.trim().toLowerCase();
       const password = document.getElementById('password').value;
       const errorBox = document.getElementById('errorBox');
       const submitBtn = document.getElementById('submitBtn');
@@ -878,7 +934,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       req.on('data', (c) => (body += c));
       req.on('end', async () => {
         try {
-          const { email, password, next, redirect } = JSON.parse(body || '{}');
+          const { email: rawEmail, password, next, redirect } = JSON.parse(body || '{}');
+          const email = (rawEmail || '').trim().toLowerCase();
           const safeNext = validateSameOriginReturnTo(
             next || redirect || url.searchParams.get('next') || url.searchParams.get('redirect'),
             '/overview'
@@ -3450,7 +3507,10 @@ async function generateDashboardHtml(
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <meta name="theme-color" content="#030712">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>FB Auto 247 - ${escapeHtml(routeInfo.title)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -3642,11 +3702,229 @@ async function generateDashboardHtml(
 
     .tab-content { display: none; }
     .tab-content.active { display: block; }
+
+    /* Mobile Responsive Topbar, Drawer & Bottom Navigation */
+    .mobile-topbar {
+      display: none;
+      position: sticky;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 56px;
+      background: rgba(11, 15, 25, 0.95);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 0 14px;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 60;
+    }
+    .mobile-topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .mobile-menu-btn {
+      width: 40px;
+      height: 40px;
+      background: #1e293b;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      cursor: pointer;
+      color: var(--text);
+      padding: 0;
+      flex-shrink: 0;
+    }
+    .mobile-menu-btn span {
+      display: block;
+      width: 18px;
+      height: 2px;
+      background: #e2e8f0;
+      border-radius: 2px;
+    }
+    .mobile-topbar-title {
+      font-size: 15px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #f3f4f6;
+    }
+
+    /* Mobile Backdrop */
+    .sidebar-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
+      z-index: 70;
+    }
+    .sidebar-backdrop.active {
+      display: block;
+    }
+    .sidebar-mobile-close-row {
+      display: none;
+    }
+
+    /* Mobile Bottom Navigation Bar */
+    .mobile-bottom-nav {
+      display: none;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 60px;
+      background: rgba(11, 15, 25, 0.96);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid var(--card-border);
+      padding: 0 4px;
+      z-index: 60;
+      align-items: center;
+      justify-content: space-around;
+    }
+    .mobile-nav-btn {
+      flex: 1;
+      height: 100%;
+      background: none;
+      border: none;
+      color: #94a3b8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 4px 0;
+      transition: color 0.15s;
+    }
+    .mobile-nav-btn span.icon {
+      font-size: 18px;
+      line-height: 1;
+    }
+    .mobile-nav-btn.active, .mobile-nav-btn:hover {
+      color: #38bdf8;
+    }
+
+    /* Responsive Breakpoints for Mobile Phones & Tablets */
+    @media (max-width: 900px) {
+      body {
+        flex-direction: column;
+      }
+      .mobile-topbar {
+        display: flex;
+      }
+      .mobile-bottom-nav {
+        display: flex;
+      }
+      .sidebar-mobile-close-row {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 8px;
+      }
+      .sidebar {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: min(300px, 84vw);
+        z-index: 80;
+        transform: translateX(-100%);
+        transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.7);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .sidebar.mobile-open {
+        transform: translateX(0);
+      }
+      .main {
+        padding: 16px 12px 84px 12px;
+        max-width: 100vw;
+        overflow-x: hidden;
+      }
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .card {
+        padding: 16px 14px;
+      }
+      table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+      }
+      .modal {
+        padding: 0;
+        align-items: flex-end;
+      }
+      .modal-content {
+        max-height: 94vh;
+        border-radius: 20px 20px 0 0;
+        padding: 20px 16px 28px 16px;
+        width: 100%;
+        max-width: 100%;
+        border-bottom: none;
+      }
+      .form-control, .form-input, input, select, textarea {
+        font-size: 16px !important;
+        min-height: 44px;
+      }
+      .btn {
+        min-height: 42px;
+      }
+    }
   </style>
 </head>
 <body>
+  <!-- Mobile Responsive Topbar -->
+  <header class="mobile-topbar">
+    <div class="mobile-topbar-left">
+      <button class="mobile-menu-btn" onclick="toggleMobileSidebar()" aria-label="Toggle navigation menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="mobile-topbar-title">
+        <span id="mobileTabTitle">${escapeHtml(routeInfo.heading || 'FB Auto 247')}</span>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <button class="btn btn-secondary" onclick="triggerWorkerRun(this)" style="padding: 5px 10px; font-size: 11px; min-height: 32px; background: rgba(56, 189, 248, 0.12); border: 1px solid #0284c7; color: #38bdf8; font-weight: 600;" title="Run Worker Cycle">⚡ Run</button>
+      <div class="status-pill" id="mobileWorkerPill" style="background: ${workerPillBg}; color: ${workerPillColor}; padding: 4px 8px; font-size: 11px;">
+        <div class="status-dot" style="background: ${workerDotColor}; width: 6px; height: 6px;"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Mobile Drawer Backdrop -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeMobileSidebar()"></div>
+
   <!-- Sidebar -->
   <aside class="sidebar">
+    <div class="sidebar-mobile-close-row">
+      <button onclick="closeMobileSidebar()" aria-label="Close menu" style="background: none; border: none; color: #94a3b8; font-size: 20px; cursor: pointer; padding: 4px 8px;">✕</button>
+    </div>
     <div class="brand">
       <div class="brand-icon">247</div>
       <div>
@@ -6264,6 +6542,30 @@ async function generateDashboardHtml(
       storageHealth: storageHealth || null,
     }).replace(/</g, "\u003c")}
   </script>
+  <!-- Mobile Bottom Navigation Bar -->
+  <nav class="mobile-bottom-nav">
+    <button class="mobile-nav-btn ${routeInfo.tabId === 'overview' ? 'active' : ''}" data-mobile-tab="overview" onclick="showTab('overview', this)">
+      <span class="icon">📊</span>
+      <span>Overview</span>
+    </button>
+    <button class="mobile-nav-btn ${routeInfo.tabId === 'pages' ? 'active' : ''}" data-mobile-tab="pages" onclick="showTab('pages', this)">
+      <span class="icon">📑</span>
+      <span>Pages</span>
+    </button>
+    <button class="mobile-nav-btn ${routeInfo.tabId === 'calendar' ? 'active' : ''}" data-mobile-tab="calendar" onclick="showTab('calendar', this)">
+      <span class="icon">📅</span>
+      <span>Calendar</span>
+    </button>
+    <button class="mobile-nav-btn ${routeInfo.tabId === 'review' ? 'active' : ''}" data-mobile-tab="review" onclick="showTab('review', this)">
+      <span class="icon">📬</span>
+      <span>Review</span>
+    </button>
+    <button class="mobile-nav-btn" onclick="toggleMobileSidebar()" aria-label="Open all tabs menu">
+      <span class="icon">☰</span>
+      <span>Menu</span>
+    </button>
+  </nav>
+
   <!-- Real Static Client Script -->
   <script src="/dashboard.js" defer></script>
 </body>
@@ -6400,6 +6702,198 @@ async function generateStandalonePageDetailsHtml(pageId: string): Promise<string
     }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
+
+    /* Mobile Responsive Topbar, Drawer & Bottom Navigation */
+    .mobile-topbar {
+      display: none;
+      position: sticky;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 56px;
+      background: rgba(11, 15, 25, 0.95);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 0 14px;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 60;
+    }
+    .mobile-topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .mobile-menu-btn {
+      width: 40px;
+      height: 40px;
+      background: #1e293b;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      cursor: pointer;
+      color: var(--text);
+      padding: 0;
+      flex-shrink: 0;
+    }
+    .mobile-menu-btn span {
+      display: block;
+      width: 18px;
+      height: 2px;
+      background: #e2e8f0;
+      border-radius: 2px;
+    }
+    .mobile-topbar-title {
+      font-size: 15px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #f3f4f6;
+    }
+
+    /* Mobile Backdrop */
+    .sidebar-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
+      z-index: 70;
+    }
+    .sidebar-backdrop.active {
+      display: block;
+    }
+    .sidebar-mobile-close-row {
+      display: none;
+    }
+
+    /* Mobile Bottom Navigation Bar */
+    .mobile-bottom-nav {
+      display: none;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 60px;
+      background: rgba(11, 15, 25, 0.96);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid var(--card-border);
+      padding: 0 4px;
+      z-index: 60;
+      align-items: center;
+      justify-content: space-around;
+    }
+    .mobile-nav-btn {
+      flex: 1;
+      height: 100%;
+      background: none;
+      border: none;
+      color: #94a3b8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 4px 0;
+      transition: color 0.15s;
+    }
+    .mobile-nav-btn span.icon {
+      font-size: 18px;
+      line-height: 1;
+    }
+    .mobile-nav-btn.active, .mobile-nav-btn:hover {
+      color: #38bdf8;
+    }
+
+    /* Responsive Breakpoints for Mobile Phones & Tablets */
+    @media (max-width: 900px) {
+      body {
+        flex-direction: column;
+      }
+      .mobile-topbar {
+        display: flex;
+      }
+      .mobile-bottom-nav {
+        display: flex;
+      }
+      .sidebar-mobile-close-row {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 8px;
+      }
+      .sidebar {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: min(300px, 84vw);
+        z-index: 80;
+        transform: translateX(-100%);
+        transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.7);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .sidebar.mobile-open {
+        transform: translateX(0);
+      }
+      .main {
+        padding: 16px 12px 84px 12px;
+        max-width: 100vw;
+        overflow-x: hidden;
+      }
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .card {
+        padding: 16px 14px;
+      }
+      table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+      }
+      .modal {
+        padding: 0;
+        align-items: flex-end;
+      }
+      .modal-content {
+        max-height: 94vh;
+        border-radius: 20px 20px 0 0;
+        padding: 20px 16px 28px 16px;
+        width: 100%;
+        max-width: 100%;
+        border-bottom: none;
+      }
+      .form-control, .form-input, input, select, textarea {
+        font-size: 16px !important;
+        min-height: 44px;
+      }
+      .btn {
+        min-height: 42px;
+      }
+    }
   </style>
 </head>
 <body>

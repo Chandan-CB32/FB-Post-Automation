@@ -123,7 +123,22 @@
       if (heading) heading.innerText = TAB_TITLES[tabId][0];
       if (desc) desc.innerText = TAB_TITLES[tabId][1];
       document.title = 'FB Auto 247 - ' + TAB_TITLES[tabId][0];
+
+      const mobileHeading = document.getElementById('mobileTabTitle');
+      if (mobileHeading) mobileHeading.innerText = TAB_TITLES[tabId][0];
     }
+
+    // Close mobile drawer on navigation
+    closeMobileSidebar();
+
+    // Sync mobile bottom navigation active indicator
+    document.querySelectorAll('.mobile-bottom-nav .mobile-nav-btn').forEach(function (mb) {
+      if (mb.getAttribute('data-mobile-tab') === tabId) {
+        mb.classList.add('active');
+      } else {
+        mb.classList.remove('active');
+      }
+    });
 
     const routePath = TAB_TO_ROUTE[tabId] || '/overview';
     if (pushState && window.location.pathname !== routePath) {
@@ -144,8 +159,28 @@
     ensureTabDataLoaded(tabId);
   }
 
-  // Expose showTab immediately on window
+  function toggleMobileSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const backdrop = document.getElementById('sidebarBackdrop');
+    if (sidebar) {
+      const isOpen = sidebar.classList.toggle('mobile-open');
+      if (backdrop) backdrop.classList.toggle('active', isOpen);
+      document.body.style.overflow = isOpen ? 'hidden' : '';
+    }
+  }
+
+  function closeMobileSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const backdrop = document.getElementById('sidebarBackdrop');
+    if (sidebar) sidebar.classList.remove('mobile-open');
+    if (backdrop) backdrop.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  // Expose navigation functions immediately on window
   window.showTab = showTab;
+  window.toggleMobileSidebar = toggleMobileSidebar;
+  window.closeMobileSidebar = closeMobileSidebar;
   window.TAB_TO_ROUTE = TAB_TO_ROUTE;
   window.ROUTE_TO_TAB = ROUTE_TO_TAB;
 
