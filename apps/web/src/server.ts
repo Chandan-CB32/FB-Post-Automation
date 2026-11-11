@@ -2308,7 +2308,9 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         try {
           const payload = JSON.parse(body || '{}');
           const headline = String(payload.headline || payload.headlineText || 'THE OCTOPUS HAS **THREE HEARTS** AND **BLUE BLOOD**');
-          const fontFamily = (payload.fontFamily === 'Oswald' ? 'Oswald' : 'Roboto Condensed') as 'Roboto Condensed' | 'Oswald';
+          const fontFamily = (['Roboto', 'Open Sans', 'Oswald', 'Roboto Condensed'].includes(payload.fontFamily)
+            ? payload.fontFamily
+            : 'Roboto') as any;
           const panelColor = payload.panelColor || '#000000';
           const panelHeightMode = payload.panelHeightMode || 'auto';
           const primaryAccent = payload.primaryAccent || '#FFD21F';
@@ -4559,7 +4561,9 @@ async function generateDashboardHtml(
                 <div>
                   <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Font Family (Bundled TrueType)</label>
                   <select id="editFontFamily" class="form-control" style="padding: 6px; font-size: 12px;" onchange="updateHeadlineLivePreview()">
-                    <option value="Roboto Condensed" selected>Roboto Condensed Bold (Reference)</option>
+                    <option value="Roboto" selected>Roboto Bold (Modern Sans-Serif - Recommended)</option>
+                    <option value="Open Sans">Open Sans Bold</option>
+                    <option value="Roboto Condensed">Roboto Condensed Bold</option>
                     <option value="Oswald">Oswald Bold</option>
                   </select>
                 </div>

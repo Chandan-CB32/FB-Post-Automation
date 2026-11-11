@@ -33,7 +33,7 @@ function parseOpenTypeFont(buffer: ArrayBuffer): OpenTypeFont {
   throw new Error('opentype.parse is not available');
 }
 
-export type SupportedFontFamily = 'Roboto Condensed' | 'Oswald';
+export type SupportedFontFamily = 'Roboto' | 'Open Sans' | 'Roboto Condensed' | 'Oswald';
 
 interface LoadedFont {
   family: SupportedFontFamily;
@@ -44,6 +44,20 @@ interface LoadedFont {
 }
 
 const FONT_CACHE: Partial<Record<SupportedFontFamily, LoadedFont>> = {};
+
+function getFontFileName(family: SupportedFontFamily): string {
+  switch (family) {
+    case 'Roboto':
+      return 'Roboto-Bold.ttf';
+    case 'Open Sans':
+      return 'OpenSans-Bold.ttf';
+    case 'Oswald':
+      return 'Oswald-Bold.ttf';
+    case 'Roboto Condensed':
+    default:
+      return 'RobotoCondensed-Bold.ttf';
+  }
+}
 
 /**
  * Candidate directories to locate the bundled TrueType fonts across environments:
@@ -64,12 +78,12 @@ function getFontSearchPaths(fileName: string): string[] {
 /**
  * Loads a bundled TrueType font file, caches it in memory, and parses with opentype.js.
  */
-export function getBundledFont(family: SupportedFontFamily = 'Roboto Condensed'): LoadedFont {
+export function getBundledFont(family: SupportedFontFamily = 'Roboto'): LoadedFont {
   if (FONT_CACHE[family]) {
     return FONT_CACHE[family]!;
   }
 
-  const fileName = family === 'Oswald' ? 'Oswald-Bold.ttf' : 'RobotoCondensed-Bold.ttf';
+  const fileName = getFontFileName(family);
   const searchPaths = getFontSearchPaths(fileName);
 
   let fontBuffer: Buffer | null = null;
@@ -121,14 +135,15 @@ export function getBundledFont(family: SupportedFontFamily = 'Roboto Condensed')
 export function measureTextWidth(
   text: string,
   fontSize: number,
-  family: SupportedFontFamily = 'Roboto Condensed'
+  family: SupportedFontFamily = 'Roboto'
 ): number {
   try {
     const loaded = getBundledFont(family);
     return loaded.font.getAdvanceWidth(text, fontSize);
   } catch (e) {
-    // Fallback conservative estimation for condensed bold (averaging ~0.53 em per uppercase char)
-    return text.length * fontSize * 0.53;
+    // Fallback estimation
+    const emRatio = family === 'Roboto Condensed' ? 0.53 : 0.62;
+    return text.length * fontSize * emRatio;
   }
 }
 
@@ -136,10 +151,14 @@ export interface FontHealthReport {
   ok: boolean;
   fontsLoaded: string[];
   fonts: {
+    roboto?: boolean;
+    openSans?: boolean;
     robotoCondensed: boolean;
     oswald: boolean;
   };
   details: {
+    robotoSize?: number;
+    openSansSize?: number;
     robotoCondensedSize?: number;
     oswaldSize?: number;
     error?: string;
@@ -148,21 +167,42 @@ export interface FontHealthReport {
 
 /**
  * Startup health check for System Readiness.
- * Verifies both bundled fonts are loaded and readable.
+ * Verifies all bundled fonts are loaded and readable.
  */
 export function verifyFontLoading(): FontHealthReport {
-  let robotoOk = false;
+  let robotoBoldOk = false;
+  let openSansOk = false;
+  let robotoCondensedOk = false;
   let oswaldOk = false;
+
   let robotoSize: number | undefined;
+  let openSansSize: number | undefined;
+  let robotoCondensedSize: number | undefined;
   let oswaldSize: number | undefined;
   let errorMsg: string | undefined;
 
   try {
-    const roboto = getBundledFont('Roboto Condensed');
-    robotoOk = Boolean(roboto && roboto.buffer.length > 50000);
+    const roboto = getBundledFont('Roboto');
+    robotoBoldOk = Boolean(roboto && roboto.buffer.length > 50000);
     robotoSize = roboto.buffer.length;
   } catch (err: any) {
-    errorMsg = `Roboto Condensed load error: ${err.message}`;
+    errorMsg = `Roboto load error: ${err.message}`;
+  }
+
+  try {
+    const openSans = getBundledFont('Open Sans');
+    openSansOk = Boolean(openSans && openSans.buffer.length > 50000);
+    openSansSize = openSans.buffer.length;
+  } catch (err: any) {
+    if (!errorMsg) errorMsg = `Open Sans load error: ${err.message}`;
+  }
+
+  try {
+    const robotoCond = getBundledFont('Roboto Condensed');
+    robotoCondensedOk = Boolean(robotoCond && robotoCond.buffer.length > 50000);
+    robotoCondensedSize = robotoCond.buffer.length;
+  } catch (err: any) {
+    if (!errorMsg) errorMsg = `Roboto Condensed load error: ${err.message}`;
   }
 
   try {
@@ -174,19 +214,25 @@ export function verifyFontLoading(): FontHealthReport {
   }
 
   const fontsLoaded: string[] = [];
-  if (robotoOk) fontsLoaded.push('Roboto Condensed Bold');
+  if (robotoBoldOk) fontsLoaded.push('Roboto Bold');
+  if (openSansOk) fontsLoaded.push('Open Sans Bold');
+  if (robotoCondensedOk) fontsLoaded.push('Roboto Condensed Bold');
   if (oswaldOk) fontsLoaded.push('Oswald Bold');
 
   return {
-    ok: robotoOk && oswaldOk,
+    ok: robotoBoldOk && openSansOk && robotoCondensedOk && oswaldOk,
     fontsLoaded,
     fonts: {
-      robotoCondensed: robotoOk,
+      roboto: robotoBoldOk,
+      openSans: openSansOk,
+      robotoCondensed: robotoCondensedOk,
       oswald: oswaldOk,
     },
     details: {
-      robotoCondensedSize: robotoSize,
-      oswaldSize: oswaldSize,
+      robotoSize,
+      openSansSize,
+      robotoCondensedSize,
+      oswaldSize,
       error: errorMsg,
     },
   };

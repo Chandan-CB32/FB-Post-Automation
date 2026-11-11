@@ -169,6 +169,12 @@ function partitionTokens(tokens: HeadlineWordToken[], targetLines: number): Head
     const minWords = Math.min(...lineWordCounts);
     score -= (maxWords - minWords) * 12;
 
+    // Penalty: high variance in character length across lines (prevents one huge line)
+    const lineCharLengths = part.map((l) => l.map((t) => t.word).join(' ').length);
+    const maxChars = Math.max(...lineCharLengths);
+    const minChars = Math.min(...lineCharLengths);
+    score -= (maxChars - minChars) * 6;
+
     // Penalty: breaking inside a highlighted phrase
     for (let l = 0; l < part.length - 1; l++) {
       const lineEndToken = part[l][part[l].length - 1];
@@ -218,8 +224,8 @@ export function layoutHeadline(
   const sideMarginRatio = options.sidePaddingRatio ?? 0.07; // 7%
   const topBottomPaddingRatio = options.topBottomPaddingRatio ?? 0.06; // 6%
   const availableWidth = canvasWidth * (1 - sideMarginRatio * 2); // ~928.8px
-  const fontFamily = options.fontFamily ?? 'Roboto Condensed';
-  const minFontSize = options.minFontSize ?? 76;
+  const fontFamily = options.fontFamily ?? 'Roboto';
+  const minFontSize = options.minFontSize ?? 72;
   const maxFontSize = options.maxFontSize ?? 124;
   const lineHeightRatio = options.lineHeightRatio ?? 1.10;
   const targetFillRatio = options.targetFillRatio ?? 0.78; // 78% of available width
@@ -323,28 +329,36 @@ export function layoutHeadline(
     }
   }
 
-  // If no candidate fits within minFontSize (76px), headline needs shortening!
+  // If no candidate fits within minFontSize, headline needs shortening!
   if (candidates.length === 0) {
-    // Generate fallback layout at minFontSize with 4 lines
+    // Generate fallback layout with 4 lines
     const partition = partitionTokens(tokens, 4);
     const lineStrings = partition.map((lineTokens) => lineTokens.map((t) => t.word).join(' '));
     const { panelHeight, panelTop } = calculatePanelHeight(canvasHeight, 4, options.panelHeightMode, options.fixedPanelRatio);
-    const lh = Math.round(minFontSize * lineHeightRatio);
-    const th = 3 * lh + minFontSize;
-    const maxW = Math.max(...lineStrings.map((s) => measureTextWidth(s, minFontSize, fontFamily)));
+
+    // Step down font size until all lines fit within availableWidth to guarantee text is NEVER cut off
+    let safeFs = minFontSize;
+    let maxW = Math.max(...lineStrings.map((s) => measureTextWidth(s, safeFs, fontFamily)));
+    while (maxW > availableWidth && safeFs > 50) {
+      safeFs -= 2;
+      maxW = Math.max(...lineStrings.map((s) => measureTextWidth(s, safeFs, fontFamily)));
+    }
+
+    const lh = Math.round(safeFs * lineHeightRatio);
+    const th = 3 * lh + safeFs;
 
     const formattedLines: FormattedLine[] = partition.map((pt, idx) => ({
       text: lineStrings[idx],
       tokens: pt,
-      width: measureTextWidth(lineStrings[idx], minFontSize, fontFamily),
+      width: measureTextWidth(lineStrings[idx], safeFs, fontFamily),
     }));
 
     const centerY = panelTop + panelHeight / 2;
-    const startY = Math.round(centerY - ((formattedLines.length - 1) * lh) / 2 + minFontSize * 0.35);
+    const startY = Math.round(centerY - ((formattedLines.length - 1) * lh) / 2 + safeFs * 0.35);
 
     return {
       lines: formattedLines,
-      fontSize: minFontSize,
+      fontSize: safeFs,
       lineHeight: lh,
       panelHeight,
       panelTop,

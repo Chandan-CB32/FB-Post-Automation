@@ -53,7 +53,7 @@ export function renderHeadlineCard(
 
   const canvasWidth = mergedOptions.canvasWidth ?? 1080;
   const canvasHeight = mergedOptions.canvasHeight ?? 1350;
-  const fontFamily = mergedOptions.fontFamily ?? 'Roboto Condensed';
+  const fontFamily = (mergedOptions.fontFamily as SupportedFontFamily) || 'Roboto';
   const panelColor = mergedOptions.panelColor && mergedOptions.panelColor.trim() ? mergedOptions.panelColor.trim() : '#000000';
   const defaultTextColor = mergedOptions.textColor ?? '#FFFFFF';
 
@@ -71,46 +71,55 @@ export function renderHeadlineCard(
     maxFontSize: mergedOptions.maxFontSize,
   });
 
-  // 3. Load font buffer and generate base64 data URL for embedded @font-face
+  // 3. Load font buffer and parsed OpenType font
   const bundledFont = getBundledFont(fontFamily);
   const fontBase64 = bundledFont.base64;
+  const otFont = bundledFont.font;
+  const spaceWidth = otFont.getAdvanceWidth(' ', layout.fontSize);
 
-  // 4. Build text markup with multi-colored <tspan> elements
-  const textLinesMarkup = layout.lines
-    .map((line, idx) => {
-      const lineY = layout.startY + idx * layout.lineHeight;
+  // 4. Build pixel-perfect vector glyph paths for every line and word
+  const vectorPaths: string[] = [];
+  const accessibleTextParts: string[] = [];
 
-      // Group consecutive tokens with the same color into tspans
-      const spans: string[] = [];
-      let currentSpanText = '';
-      let currentColor = '';
+  for (let idx = 0; idx < layout.lines.length; idx++) {
+    const line = layout.lines[idx];
+    const lineY = layout.startY + idx * layout.lineHeight;
 
-      for (let i = 0; i < line.tokens.length; i++) {
-        const token = line.tokens[i];
-        const tokenColor = token.isHighlighted ? token.color || options.primaryAccent || '#FFD21F' : defaultTextColor;
-        const separator = i > 0 ? ' ' : '';
+    // Calculate exact advance width of the line from tokens and word spaces
+    let totalLineWidth = 0;
+    const tokenAdvances: number[] = [];
+    for (let t = 0; t < line.tokens.length; t++) {
+      const adv = otFont.getAdvanceWidth(line.tokens[t].word, layout.fontSize);
+      tokenAdvances.push(adv);
+      totalLineWidth += adv + (t > 0 ? spaceWidth : 0);
+    }
 
-        if (!currentColor) {
-          currentColor = tokenColor;
-          currentSpanText = token.word;
-        } else if (currentColor === tokenColor) {
-          currentSpanText += separator + token.word;
-        } else {
-          spans.push(`<tspan fill="${currentColor}">${escapeXml(currentSpanText)}</tspan>`);
-          currentColor = tokenColor;
-          currentSpanText = ' ' + token.word;
+    // Perfectly center the line within canvasWidth
+    let currentX = Math.round((canvasWidth - totalLineWidth) / 2);
+
+    for (let t = 0; t < line.tokens.length; t++) {
+      const token = line.tokens[t];
+      const tokenColor = token.isHighlighted ? token.color || options.primaryAccent || '#FFD21F' : defaultTextColor;
+
+      if (t > 0) {
+        currentX += spaceWidth;
+      }
+
+      try {
+        const glyphPath = otFont.getPath(token.word, currentX, lineY, layout.fontSize);
+        const pathData = glyphPath.toPathData(2);
+        if (pathData) {
+          vectorPaths.push(`<path d="${pathData}" fill="${tokenColor}"/>`);
         }
+      } catch (err) {
+        console.warn('[HeadlineRenderer] Vector glyph error:', token.word, err);
       }
 
-      if (currentSpanText) {
-        spans.push(`<tspan fill="${currentColor}">${escapeXml(currentSpanText)}</tspan>`);
-      }
+      currentX += tokenAdvances[t];
+    }
 
-      return `<text x="${canvasWidth / 2}" y="${lineY}" text-anchor="middle" font-family="'${fontFamily}', sans-serif" font-size="${layout.fontSize}" font-weight="700" letter-spacing="0.5px">
-      ${spans.join('')}
-    </text>`;
-    })
-    .join('\n    ');
+    accessibleTextParts.push(line.tokens.map((t) => t.word).join(' '));
+  }
 
   // 5. Visual top area: full-bleed AI image or clean fallback
   const topImageMarkup = options.imageUrl
@@ -145,9 +154,12 @@ export function renderHeadlineCard(
   <!-- Lower Pitch-Black Headline Panel (Hard Clean Edge) -->
   <rect x="0" y="${layout.panelTop}" width="${canvasWidth}" height="${layout.panelHeight}" fill="${panelColor}"/>
 
-  <!-- Centered Bold High-Impact Headline with Word-Level Accents -->
-  <g id="headline-text">
-    ${textLinesMarkup}
+  <!-- Centered Bold High-Impact Headline with Vector Glyph Paths -->
+  <g id="headline-text" font-family="'${fontFamily}', sans-serif" text-anchor="middle" aria-label="${escapeXml(parsed.plainHeadline)}">
+    <!-- Accessible text for screen readers, SEO & test assertions -->
+    <text display="none" text-anchor="middle">${escapeXml(accessibleTextParts.join(' / '))}</text>
+    <!-- Pixel-Perfect Vector Paths Rendered Directly from Bundled Font -->
+    ${vectorPaths.join('\n    ')}
   </g>
 </svg>`.trim();
 

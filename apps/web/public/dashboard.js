@@ -833,7 +833,7 @@
     const hexInput = document.getElementById('editPanelColorHex');
     if (hexInput) hexInput.value = bgColor;
 
-    const fontFamily = page.image_font_family || overrides['image.headlinePanel.fontFamily'] || 'Roboto Condensed';
+    const fontFamily = page.image_font_family || overrides['image.headlinePanel.fontFamily'] || 'Roboto';
     const panelHeightMode = page.image_panel_height_mode || overrides['image.headlinePanel.heightMode'] || 'auto';
     const minFontSize = page.image_min_font_size || overrides['image.headlinePanel.minFontSize'] || 76;
     const highlightStyle = overrides['image.headlinePanel.highlightStyle'] || 'alternating';
@@ -949,7 +949,7 @@
   function updateHeadlineLivePreview() {
     if (headlinePreviewDebounceTimer) clearTimeout(headlinePreviewDebounceTimer);
     headlinePreviewDebounceTimer = setTimeout(async function () {
-      const fontFamily = document.getElementById('editFontFamily') ? document.getElementById('editFontFamily').value : 'Roboto Condensed';
+      const fontFamily = document.getElementById('editFontFamily') ? document.getElementById('editFontFamily').value : 'Roboto';
       const panelHeightMode = document.getElementById('editPanelHeightMode') ? document.getElementById('editPanelHeightMode').value : 'auto';
       const panelColor = (document.getElementById('editPanelColorHex') ? document.getElementById('editPanelColorHex').value.trim() : '') || (document.getElementById('editPanelColor') ? document.getElementById('editPanelColor').value : '') || '#000000';
       const highlightStyle = document.getElementById('editHighlightStyle') ? document.getElementById('editHighlightStyle').value : 'alternating';
@@ -1046,7 +1046,7 @@
       const first_comment_prompt = document.getElementById('editFirstCommentPrompt').value;
 
       const panelColorVal = (document.getElementById('editPanelColorHex') ? document.getElementById('editPanelColorHex').value.trim() : '') || (document.getElementById('editPanelColor') ? document.getElementById('editPanelColor').value : '') || '#000000';
-      const fontFamilyVal = document.getElementById('editFontFamily') ? document.getElementById('editFontFamily').value : 'Roboto Condensed';
+      const fontFamilyVal = document.getElementById('editFontFamily') ? document.getElementById('editFontFamily').value : 'Roboto';
       const panelHeightModeVal = document.getElementById('editPanelHeightMode') ? document.getElementById('editPanelHeightMode').value : 'auto';
       const minFontSizeVal = document.getElementById('editMinFontSize') ? parseInt(document.getElementById('editMinFontSize').value, 10) : 76;
       const highlightStyleVal = document.getElementById('editHighlightStyle') ? document.getElementById('editHighlightStyle').value : 'alternating';

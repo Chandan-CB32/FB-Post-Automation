@@ -977,7 +977,7 @@ export async function runGenerationPipeline(
   const renderedCard = renderHeadlineCard(headline, {
     canvasWidth: 1080,
     canvasHeight: 1350,
-    fontFamily: (page.overrides?.['image.fontFamily'] as any) || 'Roboto Condensed',
+    fontFamily: (page.overrides?.['image.fontFamily'] as any) || (page.overrides?.['image.headlinePanel.fontFamily'] as any) || (page as any).image_font_family || 'Roboto',
     panelColor: (page.overrides?.['image.panelColor'] as string) || '#000000',
     panelHeightMode: (page.overrides?.['image.panelHeightMode'] as any) || 'auto',
     themeColor: isHorror ? '#e11d48' : '#38bdf8',
