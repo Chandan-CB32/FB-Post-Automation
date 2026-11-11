@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import sharp, { type Sharp } from 'sharp';
 
 export interface HeadlinePanelOptions {
   enabled: boolean;
@@ -97,18 +97,18 @@ export function buildHeadlinePanelSvg(
   canvasHeight: number,
   options: HeadlinePanelOptions
 ): Buffer {
-  const heightPercent = Math.min(Math.max(options.heightPercent ?? 25, 10), 50);
+  const heightPercent = Math.min(Math.max(options.heightPercent ?? 33, 10), 50);
   const panelHeight = Math.round(canvasHeight * (heightPercent / 100));
   const panelTop = canvasHeight - panelHeight;
   const bgColor = options.backgroundColor || '#000000';
   const textColor = options.textColor || '#FFFFFF';
-  const fontFamily = options.fontFamily || 'Arial, Helvetica, sans-serif';
+  const fontFamily = options.fontFamily || "'Impact', 'Bebas Neue', 'Anton', 'Oswald', 'League Gothic', 'Arial Black', -apple-system, sans-serif";
   const fontWeight = options.fontWeight || 'bold';
   const align = options.align || 'center';
   const paddingH = options.paddingHorizontal ?? 60;
   const paddingV = options.paddingVertical ?? 30;
 
-  const headlineRaw = (options.headlineText || '').trim();
+  const headlineRaw = (options.headlineText || '').trim().toUpperCase();
   const availableWidth = canvasWidth - paddingH * 2;
   const availableHeight = panelHeight - paddingV * 2;
 
@@ -116,14 +116,14 @@ export function buildHeadlinePanelSvg(
   let fontSize = options.fontSize;
   if (!fontSize) {
     const wordCount = headlineRaw.split(/\s+/).length;
-    if (wordCount <= 8) {
-      fontSize = 54;
-    } else if (wordCount <= 14) {
-      fontSize = 46;
-    } else if (wordCount <= 22) {
-      fontSize = 40;
+    if (wordCount <= 6) {
+      fontSize = 68;
+    } else if (wordCount <= 12) {
+      fontSize = 60;
+    } else if (wordCount <= 18) {
+      fontSize = 50;
     } else {
-      fontSize = 34;
+      fontSize = 42;
     }
   }
 
@@ -210,20 +210,46 @@ export async function composePostImage(
   const panelOptions = options.panel;
   const hasPanel = Boolean(panelOptions?.enabled && panelOptions.headlineText);
 
-  let sharpInstance = sharp(inputBuffer).resize(targetWidth, targetHeight, {
-    fit,
-    position: 'center',
-  });
+  let sharpInstance: Sharp;
 
   if (hasPanel && panelOptions) {
+    const heightPercent = Math.min(Math.max(panelOptions.heightPercent ?? 33, 10), 50);
+    const panelHeight = Math.round(targetHeight * (heightPercent / 100));
+    const topAreaHeight = targetHeight - panelHeight;
+
+    const topImageBuffer = await sharp(inputBuffer)
+      .resize(targetWidth, topAreaHeight, {
+        fit: 'cover',
+        position: 'center',
+      })
+      .toBuffer();
+
     const svgOverlay = buildHeadlinePanelSvg(targetWidth, targetHeight, panelOptions);
-    sharpInstance = sharpInstance.composite([
+
+    sharpInstance = sharp({
+      create: {
+        width: targetWidth,
+        height: targetHeight,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+      },
+    }).composite([
+      {
+        input: topImageBuffer,
+        top: 0,
+        left: 0,
+      },
       {
         input: svgOverlay,
         top: 0,
         left: 0,
       },
     ]);
+  } else {
+    sharpInstance = sharp(inputBuffer).resize(targetWidth, targetHeight, {
+      fit,
+      position: 'center',
+    });
   }
 
   const composedBuffer = await sharpInstance

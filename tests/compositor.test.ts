@@ -7,6 +7,10 @@ import {
   buildHeadlinePanelSvg,
   composePostImage,
 } from '../worker/src/image/compositor.js';
+import {
+  generateCompositePreviewSvg,
+  wrapHeadlineLines,
+} from '../packages/core/src/pipeline/generation-pipeline.js';
 
 describe('Sharp Headline Panel Renderer & Aspect Ratio Compositor (Step 8.3)', () => {
   // Helper to create a base test image buffer
@@ -176,5 +180,49 @@ describe('Sharp Headline Panel Renderer & Aspect Ratio Compositor (Step 8.3)', (
       expect(metadata.height).toBe(900);
     });
   });
+
+  describe('Viral Fact Card Format (Octopus Layout Specification)', () => {
+    it('wraps viral headlines into 2-4 clean uppercase lines', () => {
+      const headline = 'The Octopus Has Three Hearts And Blue Blood';
+      const lines = wrapHeadlineLines(headline, 18, 4);
+      expect(lines).toEqual(['THE OCTOPUS HAS', 'THREE HEARTS AND', 'BLUE BLOOD']);
+    });
+
+    it('generates composite SVG with full-bleed top image, black bottom box, and zero watermarks', () => {
+      const svgUri = generateCompositePreviewSvg({
+        width: 1080,
+        height: 1350,
+        headline: 'THE OCTOPUS HAS THREE HEARTS AND BLUE BLOOD',
+        imageUrl: 'https://example.com/octopus.jpg',
+      });
+
+      const decoded = decodeURIComponent(svgUri.replace('data:image/svg+xml;utf8,', ''));
+
+      // 1. Dimensions: 1080x1350
+      expect(decoded).toContain('viewBox="0 0 1080 1350"');
+
+      // 2. Full-bleed image occupying the upper ~67% (height 910)
+      expect(decoded).toContain('<image href="https://example.com/octopus.jpg" x="0" y="0" width="1080" height="910"');
+      expect(decoded).toContain('preserveAspectRatio="xMidYMid slice"');
+
+      // 3. Solid pitch black panel occupying the bottom ~33% (y=910 to 1350)
+      expect(decoded).toContain('<rect x="0" y="910" width="1080" height="440" fill="#000000"');
+
+      // 4. Centered, uppercase white text with high-impact font
+      expect(decoded).toContain('fill="#FFFFFF"');
+      expect(decoded).toContain('text-anchor="middle"');
+      expect(decoded).toContain('font-family="\'Impact\', \'Bebas Neue\', \'Anton\'');
+      expect(decoded).toContain('THE OCTOPUS HAS');
+      expect(decoded).toContain('THREE HEARTS AND');
+      expect(decoded).toContain('BLUE BLOOD');
+
+      // 5. Zero watermarks, zero badges, zero source attribution lines
+      expect(decoded).not.toContain('PORTRAIT');
+      expect(decoded).not.toContain('1080 × 1350');
+      expect(decoded).not.toContain('SOURCE:');
+      expect(decoded).not.toContain('url(#bgGrad)');
+    });
+  });
 });
+
 

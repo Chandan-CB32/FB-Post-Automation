@@ -144,65 +144,130 @@ export function maskSecretsInPrompt(text: string): string {
 }
 
 /**
+ * Wraps headline text into uppercase viral card lines (2-4 lines).
+ */
+export function wrapHeadlineLines(text: string, maxCharsPerLine: number = 18, maxLines: number = 4): string[] {
+  const clean = (text || '').trim().toUpperCase();
+  if (!clean) return [];
+
+  // If text already has explicit line breaks, respect them
+  if (clean.includes('\n')) {
+    const rawLines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (rawLines.length > 0 && rawLines.length <= maxLines) {
+      return rawLines;
+    }
+  }
+
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    if (!currentLine) {
+      currentLine = word;
+    } else if ((currentLine + ' ' + word).length <= maxCharsPerLine) {
+      currentLine += ' ' + word;
+    } else {
+      lines.push(currentLine);
+      currentLine = word;
+      if (lines.length === maxLines - 1) {
+        const wordIdx = words.indexOf(word);
+        const remaining = words.slice(wordIdx).join(' ');
+        lines.push(remaining);
+        return lines;
+      }
+    }
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  return lines;
+}
+
+/**
  * Generates an SVG data URI of the composed 1080x1350 image with headline panel overlay.
+ * Layout strictly matches the viral fact card specification:
+ * - Upper ~67% (0 to 910px): Full-bleed AI-generated visual scene (edge-to-edge, no borders).
+ * - Lower ~33% (910px to 1350px): Solid pitch black panel (#000000).
+ * - Text: High-impact condensed bold uppercase pure white text (#FFFFFF), centered horizontally and vertically.
+ * - Zero watermarks, zero logos, zero category pills, zero source lines.
  */
 export function generateCompositePreviewSvg(options: {
   width?: number;
   height?: number;
   headline: string;
-  category: string;
+  category?: string;
   sourceText?: string;
   themeColor?: string;
   imageUrl?: string;
 }): string {
   const width = options.width || 1080;
   const height = options.height || 1350;
-  const panelHeight = Math.round(height * 0.28);
+  // Bottom ~32.6% panel (440px on 1350px canvas)
+  const panelHeight = Math.round(height * 0.326);
   const panelTop = height - panelHeight;
-  const headline = escapeXml(options.headline || 'BREAKING DISCOVERY');
-  const category = escapeXml(options.category || 'SCIENCE & SPACE');
-  const source = escapeXml(options.sourceText || 'NASA / ESA / STScI');
-  const theme = options.themeColor || '#38bdf8';
+
+  const headlineRaw = (options.headline || 'BREAKING DISCOVERY').trim().toUpperCase();
+  const lines = wrapHeadlineLines(headlineRaw, 18, 4);
+
+  // Dynamic font sizing based on line count and line lengths
+  const maxLineLength = Math.max(...lines.map((l) => l.length), 10);
+  let fontSize = 66;
+  if (lines.length <= 2 && maxLineLength <= 18) {
+    fontSize = 72;
+  } else if (lines.length >= 4 || maxLineLength > 24) {
+    fontSize = 54;
+  } else if (maxLineLength > 20) {
+    fontSize = 60;
+  }
+
+  const lineHeight = Math.round(fontSize * 1.25);
+  const totalTextBlockHeight = (lines.length - 1) * lineHeight;
+  const centerY = panelTop + panelHeight / 2;
+  const startY = Math.round(centerY - totalTextBlockHeight / 2 + fontSize * 0.35);
+
+  const textElements = lines
+    .map((line, idx) => {
+      const y = startY + idx * lineHeight;
+      return `<text x="${width / 2}" y="${y}" text-anchor="middle" fill="#FFFFFF" font-family="'Impact', 'Bebas Neue', 'Anton', 'Oswald', 'League Gothic', 'Arial Black', -apple-system, sans-serif" font-size="${fontSize}" font-weight="900" letter-spacing="1.5px">${escapeXml(line)}</text>`;
+    })
+    .join('\n    ');
 
   const imageElem = options.imageUrl
-    ? `<!-- Real Photorealistic AI Visual Scene -->
-  <image href="${options.imageUrl}" x="0" y="0" width="${width}" height="${panelTop}" preserveAspectRatio="xMidYMid slice" />
-  <rect x="0" y="${panelTop - 80}" width="${width}" height="80" fill="url(#bgGrad)" opacity="0.7"/>`
-    : `<!-- Atmospheric Planet / Visual Elements -->
-  <circle cx="540" cy="480" r="320" fill="url(#glowGrad)"/>
-  <circle cx="540" cy="480" r="310" fill="#030712" fill-opacity="0.4"/>`;
+    ? `<!-- Full-Bleed Photorealistic AI Visual Scene (Edge-to-Edge) -->
+  <image href="${options.imageUrl}" x="0" y="0" width="${width}" height="${panelTop}" preserveAspectRatio="xMidYMid slice" />`
+    : `<!-- Rich Cosmic / Atmospheric Visual Scene Fallback -->
+  <defs>
+    <radialGradient id="spaceGlow" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="60%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+    <radialGradient id="orbGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="${options.themeColor || '#38bdf8'}" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="${width}" height="${panelTop}" fill="url(#spaceGlow)"/>
+  <circle cx="540" cy="455" r="320" fill="url(#orbGlow)"/>
+  <circle cx="540" cy="455" r="280" fill="#030712" fill-opacity="0.8"/>`;
 
   const svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#050b14"/>
-      <stop offset="50%" stop-color="#0f172a"/>
-      <stop offset="100%" stop-color="#020617"/>
-    </linearGradient>
-    <linearGradient id="glowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${theme}" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#000000" stop-opacity="0.95"/>
-    </linearGradient>
-  </defs>
-  <!-- Background Scene -->
-  <rect width="${width}" height="${height}" fill="url(#bgGrad)"/>
-  
+  <!-- Top Visual Scene Section -->
   ${imageElem}
 
-  <!-- Aspect ratio watermark -->
-  <text x="540" y="80" text-anchor="middle" fill="#64748b" font-family="-apple-system, sans-serif" font-size="20" font-weight="600" letter-spacing="2">1080 × 1350 (4:5 PORTRAIT)</text>
-  <!-- Contrast Divider -->
-  <rect x="0" y="${panelTop - 4}" width="${width}" height="4" fill="${theme}"/>
-  <!-- Headline Panel Background -->
-  <rect x="0" y="${panelTop}" width="${width}" height="${panelHeight}" fill="#050b14"/>
-  <!-- Category Badge -->
-  <text x="60" y="${panelTop + 55}" fill="${theme}" font-family="-apple-system, sans-serif" font-size="22" font-weight="bold" letter-spacing="3">${category.toUpperCase()}</text>
-  <!-- Headline Text -->
-  <text x="60" y="${panelTop + 130}" fill="#f8fafc" font-family="-apple-system, sans-serif" font-size="44" font-weight="900" letter-spacing="-1">${headline.slice(0, 36)}</text>
-  <text x="60" y="${panelTop + 185}" fill="#f8fafc" font-family="-apple-system, sans-serif" font-size="44" font-weight="900" letter-spacing="-1">${headline.slice(36, 75)}</text>
-  <!-- Source Attribution -->
-  <text x="60" y="${height - 40}" fill="#94a3b8" font-family="-apple-system, sans-serif" font-size="18" font-weight="600" letter-spacing="2">SOURCE: ${source.toUpperCase()}</text>
-</svg>`;
+  <!-- Solid Pitch Black Headline Panel (Bottom ~33%) -->
+  <rect x="0" y="${panelTop}" width="${width}" height="${panelHeight}" fill="#000000"/>
+
+  <!-- Centered Bold White High-Impact Uppercase Typography -->
+  <g id="headline-text">
+    ${textElements}
+  </g>
+</svg>`.trim();
 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
@@ -671,7 +736,8 @@ export async function runGenerationPipeline(
   const s6Start = Date.now();
   let thumbnailUrl = '';
   const cleanPrompt = (keyScene || headline || topicTitle || 'Astrophysics deep space discovery').slice(0, 300);
-  const polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(cleanPrompt)}?width=1080&height=1080&model=flux&nologo=true`;
+  const visualPrompt = `${cleanPrompt}, cinematic lighting, photorealistic, 8k, detailed photography, no text, no watermark, no logo, no subtitles, no borders`;
+  const polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt)}?width=1080&height=1080&model=flux&nologo=true`;
 
   try {
     if (typeof fetch === 'function' && !isTestEnv()) {
