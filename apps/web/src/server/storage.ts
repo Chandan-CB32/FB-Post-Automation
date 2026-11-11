@@ -22,6 +22,7 @@ import {
   type TokenInspectionResult,
   type PageDiscoveryResult,
   type DiscoveredPage,
+  verifyFontLoading,
 } from '@fb-auto/core';
 
 // In test environment, NEVER auto-load production .env
@@ -210,6 +211,13 @@ export interface StoredPage {
   max_words?: number;
   first_comment_enabled?: boolean;
   first_comment_prompt?: string;
+  image_headline_panel_enabled?: boolean;
+  image_font_family?: string;
+  image_panel_color?: string;
+  image_panel_height_mode?: 'auto' | 'fixed_30' | 'fixed_36' | 'fixed_42' | string;
+  image_min_font_size?: number;
+  image_highlight_enabled?: boolean;
+  image_highlight_colors?: string[];
   overrides?: Record<string, any>;
   niche_analysis?: any;
   ai_disclosure_enabled?: boolean;
@@ -806,6 +814,13 @@ export class SystemStore {
       max_words: row.max_words !== undefined && row.max_words !== null ? Number(row.max_words) : (ov.max_words !== undefined ? Number(ov.max_words) : undefined),
       first_comment_enabled: row.first_comment_enabled !== false,
       first_comment_prompt: row.first_comment_prompt || '',
+      image_headline_panel_enabled: row.image_headline_panel_enabled !== undefined ? Boolean(row.image_headline_panel_enabled) : (ov['image.headlinePanel.enabled'] !== undefined ? Boolean(ov['image.headlinePanel.enabled']) : true),
+      image_font_family: row.image_font_family || ov['image.headlinePanel.fontFamily'] || 'Roboto Condensed',
+      image_panel_color: row.image_panel_color || ov['image.headlinePanel.backgroundColor'] || '#000000',
+      image_panel_height_mode: row.image_panel_height_mode || ov['image.headlinePanel.heightMode'] || 'auto',
+      image_min_font_size: row.image_min_font_size ? Number(row.image_min_font_size) : (ov['image.headlinePanel.minFontSize'] ? Number(ov['image.headlinePanel.minFontSize']) : 76),
+      image_highlight_enabled: row.image_highlight_enabled !== undefined ? Boolean(row.image_highlight_enabled) : true,
+      image_highlight_colors: Array.isArray(row.image_highlight_colors) ? row.image_highlight_colors : (Array.isArray(ov['image.headlinePanel.highlightColors']) ? ov['image.headlinePanel.highlightColors'] : undefined),
       overrides: ov,
       connected_at: row.connected_at || row.created_at,
       last_synced_at: row.last_synced_at || row.updated_at,
@@ -1434,10 +1449,24 @@ export class SystemStore {
     if (updates.custom_caption_prompt_mode) updatePayload.custom_caption_prompt_mode = updates.custom_caption_prompt_mode;
     if (updates.custom_image_prompt !== undefined) updatePayload.custom_image_prompt = updates.custom_image_prompt;
     if (updates.custom_image_prompt_mode) updatePayload.custom_image_prompt_mode = updates.custom_image_prompt_mode;
+    if (updates.image_headline_panel_enabled !== undefined) updatePayload.image_headline_panel_enabled = updates.image_headline_panel_enabled;
+    if (updates.image_font_family !== undefined) updatePayload.image_font_family = updates.image_font_family;
+    if (updates.image_panel_color !== undefined) updatePayload.image_panel_color = updates.image_panel_color;
+    if (updates.image_panel_height_mode !== undefined) updatePayload.image_panel_height_mode = updates.image_panel_height_mode;
+    if (updates.image_min_font_size !== undefined) updatePayload.image_min_font_size = updates.image_min_font_size;
+    if (updates.image_highlight_enabled !== undefined) updatePayload.image_highlight_enabled = updates.image_highlight_enabled;
+    if (updates.image_highlight_colors !== undefined) updatePayload.image_highlight_colors = updates.image_highlight_colors;
     const existingOverrides = (existingRow.overrides && typeof existingRow.overrides === 'object') ? existingRow.overrides : {};
     const updatedOverrides = {
       ...existingOverrides,
       ...(updates.overrides || {}),
+      ...(updates.image_headline_panel_enabled !== undefined ? { 'image.headlinePanel.enabled': updates.image_headline_panel_enabled } : {}),
+      ...(updates.image_font_family !== undefined ? { 'image.headlinePanel.fontFamily': updates.image_font_family } : {}),
+      ...(updates.image_panel_color !== undefined ? { 'image.headlinePanel.backgroundColor': updates.image_panel_color } : {}),
+      ...(updates.image_panel_height_mode !== undefined ? { 'image.headlinePanel.heightMode': updates.image_panel_height_mode } : {}),
+      ...(updates.image_min_font_size !== undefined ? { 'image.headlinePanel.minFontSize': updates.image_min_font_size } : {}),
+      ...(updates.image_highlight_enabled !== undefined ? { 'image.headlinePanel.highlightEnabled': updates.image_highlight_enabled } : {}),
+      ...(updates.image_highlight_colors !== undefined ? { 'image.headlinePanel.highlightColors': updates.image_highlight_colors } : {}),
       ...((updates as any).qa_pass_threshold !== undefined ? { qa_pass_threshold: (updates as any).qa_pass_threshold } : {}),
       ...((updates as any).max_sentences_per_paragraph !== undefined ? { max_sentences_per_paragraph: (updates as any).max_sentences_per_paragraph } : {}),
       ...((updates as any).min_words !== undefined ? { min_words: (updates as any).min_words } : {}),
@@ -3425,6 +3454,18 @@ export class SystemStore {
         ? 'Kill switch is ARMED and READY (autonomous generation permitted)'
         : 'Kill switch is ACTIVE (all autonomous generation currently paused)',
       actionableHint: !killSwitch ? undefined : 'Deactivate Kill Switch in Settings tab before going live.',
+    });
+
+    // 12. Bundled TrueType Fonts Verification (Roboto Condensed & Oswald)
+    const fontHealth = verifyFontLoading();
+    checks.push({
+      name: 'Bundled TrueType Fonts (Roboto Condensed & Oswald)',
+      category: 'automation',
+      status: fontHealth.ok ? 'pass' : 'fail',
+      message: fontHealth.ok
+        ? `Bundled TrueType fonts verified (${fontHealth.fontsLoaded.join(', ')}) for pixel-perfect card rendering without system fallback`
+        : `Font load failure: ${fontHealth.details.error || 'Fonts missing'}`,
+      actionableHint: fontHealth.ok ? undefined : 'Ensure packages/core/assets/fonts has RobotoCondensed-Bold.ttf and Oswald-Bold.ttf',
     });
 
     const passedCount = checks.filter((c) => c.status === 'pass').length;

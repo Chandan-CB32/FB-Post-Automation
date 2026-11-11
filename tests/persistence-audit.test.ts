@@ -203,10 +203,10 @@ describe('Production Persistence, Governance & Audit Verification', () => {
     expect(restoreResult.imported.pages).toBeGreaterThanOrEqual(1);
   });
 
-  it('evaluates 11-point system readiness checks', async () => {
+  it('evaluates 12-point system readiness checks', async () => {
     const readiness = await store.getSystemReadiness();
-    expect(readiness.checks.length).toBe(11);
-    expect(readiness.score.total).toBe(11);
+    expect(readiness.checks.length).toBe(12);
+    expect(readiness.score.total).toBe(12);
 
     const checkNames = readiness.checks.map((c) => c.name);
     expect(checkNames).toContain('Database Schema Completeness');
@@ -220,6 +220,7 @@ describe('Production Persistence, Governance & Audit Verification', () => {
     expect(checkNames).toContain('Public Compliance Endpoints');
     expect(checkNames).toContain('Zero Test Data in Production');
     expect(checkNames).toContain('Global Kill Switch Status');
+    expect(checkNames).toContain('Bundled TrueType Fonts (Roboto Condensed & Oswald)');
   });
 
   it('verifies HTTP API endpoints for readiness, schema check, backup, and restore with auth', async () => {
@@ -229,7 +230,7 @@ describe('Production Persistence, Governance & Audit Verification', () => {
     const readinessRes = await fetch(`http://localhost:${serverPort}/api/settings/readiness`, { headers });
     expect(readinessRes.status).toBe(200);
     const readinessData = await readinessRes.json();
-    expect(readinessData.checks.length).toBe(11);
+    expect(readinessData.checks.length).toBe(12);
 
     // 2. GET /api/settings/schema-check
     const schemaRes = await fetch(`http://localhost:${serverPort}/api/settings/schema-check`, { headers });

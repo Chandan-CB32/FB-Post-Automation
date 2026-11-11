@@ -102,7 +102,7 @@ export function buildHeadlinePanelSvg(
   const panelTop = canvasHeight - panelHeight;
   const bgColor = options.backgroundColor || '#000000';
   const textColor = options.textColor || '#FFFFFF';
-  const fontFamily = options.fontFamily || "'Impact', 'Bebas Neue', 'Anton', 'Oswald', 'League Gothic', 'Arial Black', -apple-system, sans-serif";
+  const fontFamily = options.fontFamily || "'Roboto Condensed', sans-serif";
   const fontWeight = options.fontWeight || 'bold';
   const align = options.align || 'center';
   const paddingH = options.paddingHorizontal ?? 60;

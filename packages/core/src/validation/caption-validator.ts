@@ -482,3 +482,148 @@ export function repairCaption(
 
   return text;
 }
+
+export interface HeadlineValidationViolation {
+  rule: 'length_min' | 'length_max' | 'casing' | 'certainty_overclaiming' | 'filler_highlight' | 'too_many_highlights';
+  message: string;
+  severity: 'error' | 'warning';
+}
+
+export interface HeadlineValidationResult {
+  valid: boolean;
+  score: number;
+  wordCount: number;
+  plainHeadline: string;
+  violations: HeadlineValidationViolation[];
+  suggestedShortenedHeadline?: string;
+}
+
+/**
+ * Shortens a headline down to between 6 and 12 words (hard max 14)
+ * while preserving key nouns, numbers, and core subject matter.
+ */
+export function shortenHeadline(rawHeadline: string, targetWords = 10): string {
+  const plain = (rawHeadline || '').replace(/\*\*/g, '').trim().toUpperCase();
+  const words = plain.split(/\s+/).filter(Boolean);
+  if (words.length <= targetWords) return plain;
+
+  // Removable fluff words
+  const removableWords = new Set([
+    'BREAKING',
+    'JUST',
+    'IN',
+    'INCREDIBLE',
+    'ASTOUNDING',
+    'UNBELIEVABLE',
+    'SHOCKING',
+    'REMARKABLE',
+    'POTENTIAL',
+    'THAT',
+    'WHICH',
+    'RECENTLY',
+    'CURRENTLY',
+    'LOCATED',
+    'ALMOST',
+    'NEARLY',
+  ]);
+
+  const filtered = words.filter((w) => !removableWords.has(w));
+  if (filtered.length <= targetWords) {
+    return filtered.join(' ');
+  }
+
+  // If still too long, take the first targetWords words ensuring no trailing dangling preposition
+  let sliced = filtered.slice(0, targetWords);
+  const danglingPrepositions = ['OF', 'AND', 'IN', 'ON', 'AT', 'TO', 'FOR', 'WITH', 'BY', 'FROM'];
+  while (sliced.length > 5 && danglingPrepositions.includes(sliced[sliced.length - 1])) {
+    sliced.pop();
+  }
+
+  return sliced.join(' ');
+}
+
+/**
+ * Validates a headline against the strict viral fact card rules:
+ * - Length: 6-12 words (hard maximum 14)
+ * - ALL CAPS
+ * - Accuracy guard: flags certainty verbs (identifies, proves, confirms, discovers) unless grounded
+ */
+export function validateHeadline(
+  rawHeadline: string,
+  options: {
+    minWords?: number;
+    maxWords?: number;
+    hardMaxWords?: number;
+    verifiedFacts?: string[];
+  } = {}
+): HeadlineValidationResult {
+  const minWords = options.minWords ?? 6;
+  const maxWords = options.maxWords ?? 12;
+  const hardMaxWords = options.hardMaxWords ?? 14;
+
+  const plain = (rawHeadline || '').replace(/\*\*/g, '').trim();
+  const words = plain.split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+
+  const violations: HeadlineValidationViolation[] = [];
+  let score = 100;
+
+  // 1. Minimum words check
+  if (wordCount < minWords) {
+    score -= (minWords - wordCount) * 10;
+    violations.push({
+      rule: 'length_min',
+      message: `Headline (${wordCount} words) is below the minimum target of ${minWords} words.`,
+      severity: 'warning',
+    });
+  }
+
+  // 2. Maximum words check (target 12, hard max 14)
+  if (wordCount > hardMaxWords) {
+    score -= (wordCount - hardMaxWords) * 15;
+    violations.push({
+      rule: 'length_max',
+      message: `Headline (${wordCount} words) exceeds the hard maximum of ${hardMaxWords} words. Shorten to ${minWords}-${maxWords} words.`,
+      severity: 'error',
+    });
+  } else if (wordCount > maxWords) {
+    score -= (wordCount - maxWords) * 5;
+    violations.push({
+      rule: 'length_max',
+      message: `Headline (${wordCount} words) slightly exceeds target maximum of ${maxWords} words.`,
+      severity: 'warning',
+    });
+  }
+
+  // 3. Accuracy check: certainty verbs
+  const certaintyRegex = /\b(IDENTIFIES|IDENTIFY|PROVES|PROVE|CONFIRMS|CONFIRM|DISCOVERS|DISCOVER)\b/i;
+  if (certaintyRegex.test(plain)) {
+    const hasProof = (options.verifiedFacts || []).some((f) => {
+      const fl = f.toLowerCase();
+      return fl.includes('definitively proven') || fl.includes('conclusive proof') || fl.includes('confirmed');
+    });
+
+    if (!hasProof) {
+      score -= 20;
+      violations.push({
+        rule: 'certainty_overclaiming',
+        message: 'Headline uses certainty verbs (identifies/proves/confirms) without conclusive fact backing. Use hedged verbs (suggests/may/hints/finds clues).',
+        severity: 'warning',
+      });
+    }
+  }
+
+  let suggestedShortenedHeadline: string | undefined;
+  if (wordCount > maxWords) {
+    suggestedShortenedHeadline = shortenHeadline(plain, maxWords);
+  }
+
+  return {
+    valid: violations.every((v) => v.severity !== 'error') && score >= 75,
+    score: Math.max(0, score),
+    wordCount,
+    plainHeadline: plain.toUpperCase(),
+    violations,
+    suggestedShortenedHeadline,
+  };
+}

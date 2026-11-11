@@ -49,8 +49,12 @@ export * from './validation/schemas.js';
 export * from './validation/caption-validator.js';
 export * from './validation/claim-verifier.js';
 
-// Unified Generation Pipeline
+// Unified Generation Pipeline & Headline Card Engine
 export * from './pipeline/generation-pipeline.js';
+export * from './pipeline/headline-renderer.js';
+export * from './pipeline/headline-layout.js';
+export * from './pipeline/headline-highlighter.js';
+export * from './fonts/font-loader.js';
 
 // Facebook Graph API & Tokens
 export * from './facebook/constants.js';

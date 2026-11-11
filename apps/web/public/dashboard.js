@@ -792,11 +792,29 @@
     document.getElementById('editMaxWords').value = overrides['caption.max'] || 250;
     document.getElementById('editAspectRatio').value = overrides['image.aspectRatio'] || '4:5';
     document.getElementById('editPanelEnabled').checked = overrides['image.headlinePanel.enabled'] !== false;
-    document.getElementById('editPanelHeight').value = overrides['image.headlinePanel.heightPercent'] || 25;
-    const bgColor = overrides['image.headlinePanel.backgroundColor'] || '#050b14';
+    document.getElementById('editPanelHeight').value = overrides['image.headlinePanel.heightPercent'] || 36;
+    const bgColor = page.image_panel_color || overrides['image.headlinePanel.backgroundColor'] || '#000000';
     document.getElementById('editPanelColor').value = bgColor;
     const hexInput = document.getElementById('editPanelColorHex');
     if (hexInput) hexInput.value = bgColor;
+
+    const fontFamily = page.image_font_family || overrides['image.headlinePanel.fontFamily'] || 'Roboto Condensed';
+    const panelHeightMode = page.image_panel_height_mode || overrides['image.headlinePanel.heightMode'] || 'auto';
+    const minFontSize = page.image_min_font_size || overrides['image.headlinePanel.minFontSize'] || 76;
+    const highlightStyle = overrides['image.headlinePanel.highlightStyle'] || 'alternating';
+    const accent1 = (page.image_highlight_colors && page.image_highlight_colors[0]) || overrides['image.headlinePanel.accent1Color'] || '#FFD21F';
+    const accent2 = (page.image_highlight_colors && page.image_highlight_colors[1]) || overrides['image.headlinePanel.accent2Color'] || '#22D3EE';
+    const matchNiche = overrides['image.headlinePanel.matchNicheAccent'] !== false;
+
+    if (document.getElementById('editFontFamily')) document.getElementById('editFontFamily').value = fontFamily;
+    if (document.getElementById('editPanelHeightMode')) document.getElementById('editPanelHeightMode').value = panelHeightMode;
+    if (document.getElementById('editMinFontSize')) document.getElementById('editMinFontSize').value = minFontSize;
+    if (document.getElementById('editHighlightStyle')) document.getElementById('editHighlightStyle').value = highlightStyle;
+    if (document.getElementById('editAccent1Color')) document.getElementById('editAccent1Color').value = accent1;
+    if (document.getElementById('editAccent2Color')) document.getElementById('editAccent2Color').value = accent2;
+    if (document.getElementById('editMatchNicheAccent')) document.getElementById('editMatchNicheAccent').checked = matchNiche;
+
+    updateHeadlineLivePreview();
 
     validateStudioWordLimits();
     validateStudioFirstComment();
@@ -878,6 +896,79 @@
     }
   }
 
+  function applyClassicHeadlinePreset() {
+    if (document.getElementById('editFontFamily')) document.getElementById('editFontFamily').value = 'Roboto Condensed';
+    if (document.getElementById('editPanelHeightMode')) document.getElementById('editPanelHeightMode').value = 'auto';
+    if (document.getElementById('editPanelColor')) document.getElementById('editPanelColor').value = '#000000';
+    if (document.getElementById('editPanelColorHex')) document.getElementById('editPanelColorHex').value = '#000000';
+    if (document.getElementById('editMinFontSize')) document.getElementById('editMinFontSize').value = 76;
+    if (document.getElementById('editHighlightStyle')) document.getElementById('editHighlightStyle').value = 'alternating';
+    if (document.getElementById('editAccent1Color')) document.getElementById('editAccent1Color').value = '#FFD21F';
+    if (document.getElementById('editAccent2Color')) document.getElementById('editAccent2Color').value = '#22D3EE';
+    if (document.getElementById('editMatchNicheAccent')) document.getElementById('editMatchNicheAccent').checked = true;
+    showToast('Applied Preset: Classic Big White with Yellow Accent', 'info');
+    updateHeadlineLivePreview();
+  }
+
+  let headlinePreviewDebounceTimer = null;
+  function updateHeadlineLivePreview() {
+    if (headlinePreviewDebounceTimer) clearTimeout(headlinePreviewDebounceTimer);
+    headlinePreviewDebounceTimer = setTimeout(async function () {
+      const fontFamily = document.getElementById('editFontFamily') ? document.getElementById('editFontFamily').value : 'Roboto Condensed';
+      const panelHeightMode = document.getElementById('editPanelHeightMode') ? document.getElementById('editPanelHeightMode').value : 'auto';
+      const panelColor = (document.getElementById('editPanelColorHex') ? document.getElementById('editPanelColorHex').value.trim() : '') || (document.getElementById('editPanelColor') ? document.getElementById('editPanelColor').value : '') || '#000000';
+      const highlightStyle = document.getElementById('editHighlightStyle') ? document.getElementById('editHighlightStyle').value : 'alternating';
+      const accent1 = document.getElementById('editAccent1Color') ? document.getElementById('editAccent1Color').value : '#FFD21F';
+      const accent2 = document.getElementById('editAccent2Color') ? document.getElementById('editAccent2Color').value : '#22D3EE';
+
+      const samples = [
+        { id: 0, text: 'THE OCTOPUS HAS **THREE HEARTS** AND **BLUE BLOOD**' },
+        { id: 1, text: 'WEBB FINDS CLUES TO A **POSSIBLE OCEAN WORLD** ON **K2-18B**' },
+        { id: 2, text: '**DEEP OCEAN CREATURES** GLOW IN THE DARK' },
+        { id: 3, text: 'ASTRONOMERS DISCOVER BREATHTAKING NEW EXTRAORDINARY GIANT GALAXY CLUSTER LOCATED BILLIONS OF LIGHT YEARS AWAY' }
+      ];
+
+      for (let i = 0; i < samples.length; i++) {
+        const s = samples[i];
+        const cardElem = document.getElementById('sampleCard' + s.id);
+        if (!cardElem) continue;
+        const svgHolder = cardElem.querySelector('.sample-svg-holder');
+        const metricsElem = cardElem.querySelector('.sample-metrics');
+
+        try {
+          const res = await fetch('/api/preview/headline-card', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              headlineText: s.text,
+              fontFamily: fontFamily,
+              panelColor: panelColor,
+              panelHeightMode: panelHeightMode,
+              primaryAccent: highlightStyle === 'none' ? '#FFFFFF' : accent1,
+              secondaryAccent: highlightStyle === 'alternating' ? accent2 : (highlightStyle === 'none' ? '#FFFFFF' : accent1),
+            }),
+          });
+          const data = await res.json();
+          if (data && data.svg && svgHolder) {
+            svgHolder.innerHTML = data.svg;
+            const svgEl = svgHolder.querySelector('svg');
+            if (svgEl) {
+              svgEl.style.width = '100%';
+              svgEl.style.height = '100%';
+              svgEl.style.display = 'block';
+            }
+          }
+          if (data && data.layout && metricsElem) {
+            const l = data.layout;
+            metricsElem.innerHTML = '<strong>' + l.fontSize + 'px</strong> (' + l.lines.length + 'L) • ' + Math.round(l.widthFillPercent) + '% fill' + (data.needsShortening ? ' <span style="color:#f59e0b;">(shortened)</span>' : '');
+          }
+        } catch (e) {
+          if (metricsElem) metricsElem.innerText = 'Preview failed';
+        }
+      }
+    }, 150);
+  }
+
   async function savePagePromptsAction(forceSave) {
     const pageId = document.getElementById('studioPageSelect') ? document.getElementById('studioPageSelect').value : null;
     const page = pagesData.find(function (p) { return p.id === pageId; });
@@ -919,16 +1010,30 @@
       const first_comment_enabled = document.getElementById('editFirstCommentEnabled').checked;
       const first_comment_prompt = document.getElementById('editFirstCommentPrompt').value;
 
-      const panelColorVal = (document.getElementById('editPanelColorHex') ? document.getElementById('editPanelColorHex').value.trim() : '') || document.getElementById('editPanelColor').value || '#050b14';
+      const panelColorVal = (document.getElementById('editPanelColorHex') ? document.getElementById('editPanelColorHex').value.trim() : '') || (document.getElementById('editPanelColor') ? document.getElementById('editPanelColor').value : '') || '#000000';
+      const fontFamilyVal = document.getElementById('editFontFamily') ? document.getElementById('editFontFamily').value : 'Roboto Condensed';
+      const panelHeightModeVal = document.getElementById('editPanelHeightMode') ? document.getElementById('editPanelHeightMode').value : 'auto';
+      const minFontSizeVal = document.getElementById('editMinFontSize') ? parseInt(document.getElementById('editMinFontSize').value, 10) : 76;
+      const highlightStyleVal = document.getElementById('editHighlightStyle') ? document.getElementById('editHighlightStyle').value : 'alternating';
+      const accent1Val = document.getElementById('editAccent1Color') ? document.getElementById('editAccent1Color').value : '#FFD21F';
+      const accent2Val = document.getElementById('editAccent2Color') ? document.getElementById('editAccent2Color').value : '#22D3EE';
+      const matchNicheVal = document.getElementById('editMatchNicheAccent') ? document.getElementById('editMatchNicheAccent').checked : true;
 
       const overrides = Object.assign({}, page.overrides || {}, {
         'caption.min': parseInt(document.getElementById('editMinWords').value, 10),
         'caption.target': parseInt(document.getElementById('editTargetWords').value, 10),
         'caption.max': parseInt(document.getElementById('editMaxWords').value, 10),
-        'image.aspectRatio': document.getElementById('editAspectRatio').value,
+        'image.aspectRatio': '4:5',
         'image.headlinePanel.enabled': document.getElementById('editPanelEnabled').checked,
-        'image.headlinePanel.heightPercent': parseInt(document.getElementById('editPanelHeight').value, 10),
+        'image.headlinePanel.heightMode': panelHeightModeVal,
+        'image.headlinePanel.heightPercent': panelHeightModeVal === 'fixed_30' ? 30 : (panelHeightModeVal === 'fixed_42' ? 42 : 36),
         'image.headlinePanel.backgroundColor': panelColorVal,
+        'image.headlinePanel.fontFamily': fontFamilyVal,
+        'image.headlinePanel.minFontSize': minFontSizeVal,
+        'image.headlinePanel.highlightStyle': highlightStyleVal,
+        'image.headlinePanel.accent1Color': accent1Val,
+        'image.headlinePanel.accent2Color': accent2Val,
+        'image.headlinePanel.matchNicheAccent': matchNicheVal,
       });
 
       const payload = {
@@ -944,6 +1049,13 @@
         custom_image_prompt_mode: custom_image_prompt_mode,
         first_comment_enabled: first_comment_enabled,
         first_comment_prompt: first_comment_prompt,
+        image_headline_panel_enabled: document.getElementById('editPanelEnabled').checked,
+        image_font_family: fontFamilyVal,
+        image_panel_color: panelColorVal,
+        image_panel_height_mode: panelHeightModeVal,
+        image_min_font_size: minFontSizeVal,
+        image_highlight_enabled: highlightStyleVal !== 'none',
+        image_highlight_colors: [accent1Val, accent2Val],
         overrides: overrides,
         expected_settings_version: page.settings_version || page.version || 1,
         expected_updated_at: page.settings_updated_at || page.updated_at,
@@ -1872,6 +1984,8 @@
   window.openPagePromptStudio = openPagePromptStudio;
   window.loadPageIntoStudio = loadPageIntoStudio;
   window.savePagePromptsAction = savePagePromptsAction;
+  window.applyClassicHeadlinePreset = applyClassicHeadlinePreset;
+  window.updateHeadlineLivePreview = updateHeadlineLivePreview;
   window.inspectEffectivePrompt = inspectEffectivePrompt;
   window.testRunCurrentPage = testRunCurrentPage;
   window.renderAuditLogs = renderAuditLogs;

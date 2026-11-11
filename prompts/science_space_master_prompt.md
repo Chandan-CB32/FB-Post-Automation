@@ -161,9 +161,12 @@ Rotate categories and subjects to minimize repetition. Do not generate the same 
 
 ## **5A. Image headline (integrated into the black lower panel)**
 
-* Short, powerful, grammatically correct English.  
-* Generally 8–22 words, adjusted to fit the panel comfortably.  
-* Easy to read on a mobile phone.  
+* Short, powerful, grammatically correct English in ALL CAPS.  
+* Exactly 6–12 words (hard maximum 14 words), optimized for large, high-impact condensed typography.  
+* Mark 1 to 3 key attention-grabbing phrases with double asterisks for accent coloring, for example: "THE OCTOPUS HAS **THREE HEARTS** AND **BLUE BLOOD**" or "WEBB FINDS CLUES TO A **POSSIBLE OCEAN WORLD** ON **K2-18B**".
+* Highlight only numbers/measurements, surprising facts, or the central subject. Never highlight filler words (the, a, of, and, is) and never more than 40% of the headline.
+* Accurate, strictly grounded in verified evidence with no overclaiming. Reject certainty verbs (IDENTIFIES, PROVES, CONFIRMS, DISCOVERS) for developing hypotheses; use hedged verbs (SUGGESTS, MAY, HINTS, FINDS CLUES TO).
+* Easy to read on a mobile phone with large, bold text.  
 * Must accurately represent the post's central fact.  
 * Do not use BREAKING, TODAY, JUST DISCOVERED, or a specific future deadline unless genuinely warranted and verified.
 

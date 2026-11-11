@@ -67,5 +67,15 @@ describe('Database Schema & Migration Validation', () => {
     expect(seedSql).toContain('Cloudflare Workers AI');
     expect(seedSql).toContain('Pollinations AI');
   });
+
+  it('validates 20261112000000_headline_emphasis_settings migration file', () => {
+    const newMigPath = path.resolve(__dirname, '../supabase/migrations/20261112000000_headline_emphasis_settings.sql');
+    expect(fs.existsSync(newMigPath)).toBe(true);
+    const sql = fs.readFileSync(newMigPath, 'utf8');
+    expect(sql).toContain('headline_segments');
+    expect(sql).toContain('image_headline_panel_enabled');
+    expect(sql).toContain('image_font_family');
+    expect(sql).toContain('image_highlight_colors');
+  });
 });
 

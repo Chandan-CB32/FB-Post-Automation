@@ -9,12 +9,23 @@ import {
   formatParagraphs,
   trimToWordLimit,
   validateCaption,
+  validateHeadline,
+  shortenHeadline,
 } from '../validation/caption-validator.js';
 import {
   FactItem,
   verifyFactualClaims,
   ClaimVerificationResult,
 } from '../validation/claim-verifier.js';
+import {
+  renderHeadlineCard,
+  HeadlineRendererOptions,
+} from './headline-renderer.js';
+import {
+  parseHeadlineSegments,
+  sanitizeHeadlineAccuracy,
+  HeadlineSegment,
+} from './headline-highlighter.js';
 
 export interface PipelineStageResult {
   stage: string;
@@ -75,7 +86,11 @@ export interface GenerationPipelineResult {
     headlineText: string;
     backgroundColor: string;
     sourceText?: string;
+    segments?: HeadlineSegment[];
+    fontSize?: number;
+    lines?: string[];
   };
+  headlineSegments?: HeadlineSegment[];
   researchSources: string[];
   claimVerification: Array<{ claim: string; verified: boolean; sourceUrl: string | null }>;
   thumbnailUrl: string;
@@ -190,11 +205,8 @@ export function wrapHeadlineLines(text: string, maxCharsPerLine: number = 18, ma
 
 /**
  * Generates an SVG data URI of the composed 1080x1350 image with headline panel overlay.
- * Layout strictly matches the viral fact card specification:
- * - Upper ~67% (0 to 910px): Full-bleed AI-generated visual scene (edge-to-edge, no borders).
- * - Lower ~33% (910px to 1350px): Solid pitch black panel (#000000).
- * - Text: High-impact condensed bold uppercase pure white text (#FFFFFF), centered horizontally and vertically.
- * - Zero watermarks, zero logos, zero category pills, zero source lines.
+ * Uses the bundled Roboto Condensed Bold (or Oswald Bold) font with true glyph metrics,
+ * word-level emphasis styling, and clean full-bleed layout.
  */
 export function generateCompositePreviewSvg(options: {
   width?: number;
@@ -204,72 +216,24 @@ export function generateCompositePreviewSvg(options: {
   sourceText?: string;
   themeColor?: string;
   imageUrl?: string;
+  fontFamily?: 'Roboto Condensed' | 'Oswald';
+  panelColor?: string;
+  primaryAccent?: string;
+  secondaryAccent?: string;
 }): string {
-  const width = options.width || 1080;
-  const height = options.height || 1350;
-  // Bottom ~32.6% panel (440px on 1350px canvas)
-  const panelHeight = Math.round(height * 0.326);
-  const panelTop = height - panelHeight;
-
-  const headlineRaw = (options.headline || 'BREAKING DISCOVERY').trim().toUpperCase();
-  const lines = wrapHeadlineLines(headlineRaw, 18, 4);
-
-  // Dynamic font sizing based on line count and line lengths
-  const maxLineLength = Math.max(...lines.map((l) => l.length), 10);
-  let fontSize = 66;
-  if (lines.length <= 2 && maxLineLength <= 18) {
-    fontSize = 72;
-  } else if (lines.length >= 4 || maxLineLength > 24) {
-    fontSize = 54;
-  } else if (maxLineLength > 20) {
-    fontSize = 60;
-  }
-
-  const lineHeight = Math.round(fontSize * 1.25);
-  const totalTextBlockHeight = (lines.length - 1) * lineHeight;
-  const centerY = panelTop + panelHeight / 2;
-  const startY = Math.round(centerY - totalTextBlockHeight / 2 + fontSize * 0.35);
-
-  const textElements = lines
-    .map((line, idx) => {
-      const y = startY + idx * lineHeight;
-      return `<text x="${width / 2}" y="${y}" text-anchor="middle" fill="#FFFFFF" font-family="'Impact', 'Bebas Neue', 'Anton', 'Oswald', 'League Gothic', 'Arial Black', -apple-system, sans-serif" font-size="${fontSize}" font-weight="900" letter-spacing="1.5px">${escapeXml(line)}</text>`;
-    })
-    .join('\n    ');
-
-  const imageElem = options.imageUrl
-    ? `<!-- Full-Bleed Photorealistic AI Visual Scene (Edge-to-Edge) -->
-  <image href="${options.imageUrl}" x="0" y="0" width="${width}" height="${panelTop}" preserveAspectRatio="xMidYMid slice" />`
-    : `<!-- Rich Cosmic / Atmospheric Visual Scene Fallback -->
-  <defs>
-    <radialGradient id="spaceGlow" cx="50%" cy="45%" r="60%">
-      <stop offset="0%" stop-color="#1e293b"/>
-      <stop offset="60%" stop-color="#0f172a"/>
-      <stop offset="100%" stop-color="#020617"/>
-    </radialGradient>
-    <radialGradient id="orbGlow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="${options.themeColor || '#38bdf8'}" stop-opacity="0.4"/>
-      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect x="0" y="0" width="${width}" height="${panelTop}" fill="url(#spaceGlow)"/>
-  <circle cx="540" cy="455" r="320" fill="url(#orbGlow)"/>
-  <circle cx="540" cy="455" r="280" fill="#030712" fill-opacity="0.8"/>`;
-
-  const svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-  <!-- Top Visual Scene Section -->
-  ${imageElem}
-
-  <!-- Solid Pitch Black Headline Panel (Bottom ~33%) -->
-  <rect x="0" y="${panelTop}" width="${width}" height="${panelHeight}" fill="#000000"/>
-
-  <!-- Centered Bold White High-Impact Uppercase Typography -->
-  <g id="headline-text">
-    ${textElements}
-  </g>
-</svg>`.trim();
-
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  const result = renderHeadlineCard(options.headline, {
+    canvasWidth: options.width || 1080,
+    canvasHeight: options.height || 1350,
+    fontFamily: options.fontFamily || 'Roboto Condensed',
+    imageUrl: options.imageUrl,
+    themeColor: options.themeColor,
+    niche: options.category,
+    panelColor: options.panelColor || '#000000',
+    primaryAccent: options.primaryAccent,
+    secondaryAccent: options.secondaryAccent,
+    matchNiche: true,
+  });
+  return result.svgDataUri;
 }
 
 /**
@@ -510,7 +474,7 @@ export async function runGenerationPipeline(
     let draft = '';
     if (isHorror) {
       keyScene = 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.';
-      headline = 'THE CLOCK THAT TICKED WITHOUT TIME';
+      headline = 'THE CLOCK TICKED WITHOUT **GEARS OR SPRINGS**';
       if (attempt === 1) {
         draft = `The grandfather clock in the study of Hemlock Manor had not been wound since 1894, yet every night at 3:17 AM, its brass pendulum swung into motion.\n\nLocal legend claimed that the clock did not mark the passage of hours, but the distance between our world and the darkness beneath the cellar stairs. Caretakers who spent the night reported hearing faint whispers echoing between each metallic tick.\n\nWhen restoration experts examined the casing decades later, they found no internal gears or mechanical springs—only an intricate series of Latin carvings warning anyone from stopping the chime.\n\nWhat would you do if a broken clock in your house suddenly started chiming in the middle of the night?\n\n#horror #spooky #creepypasta #mystery #ghoststory`;
       } else {
@@ -518,18 +482,34 @@ export async function runGenerationPipeline(
       }
     } else if (isScience) {
       keyScene = 'A vibrant turquoise ocean planet viewed from low orbit with a luminous atmosphere glowing in infrared star light.';
-      headline = 'WEBB TELESCOPE FINDS WATER VAPOR ON EXOPLANET';
+      headline = 'WEBB FINDS CLUES TO A **POSSIBLE OCEAN WORLD** ON **K2-18B**';
       if (attempt === 1) {
         draft = `Astrophysicists analyzing spectroscopic transmission data from the James Webb Space Telescope have detected atmospheric methane and carbon dioxide in the habitable zone exoplanet K2-18b, located approximately 124 light-years away in the constellation Leo.\n\nThis crucial discovery supports the hypothesis that K2-18b could be a Hycean world—an ocean-covered planet possessing a hydrogen-rich atmosphere. Observations also revealed potential traces of dimethyl sulfide, an organic molecule on Earth primarily produced by living phytoplankton in marine environments.\n\nWhile further deep-space spectroscopic observations are required to confirm biological origin, this marks an unprecedented milestone in the quest to identify habitable environments beyond our solar system. The universe continues to astound researchers with its cosmic complexity.\n\nDo you believe ocean worlds are humanity's best chance of discovering microbial life outside our solar system?\n\n#space #astronomy #science #jwst #discovery`;
       } else {
         draft = `Astronomers using the James Webb Space Telescope have identified carbon molecules and methane in the atmosphere of exoplanet K2-18b, located 124 light-years away in the constellation Leo.\n\nThe findings strongly suggest this exoplanet may be a Hycean world with a planet-wide liquid water ocean under a hydrogen-rich sky. Traces of dimethyl sulfide provide tantalizing hints of potential biological activity.\n\nDo you think we will find definitive proof of extraterrestrial life within the next decade?\n\n#space #astronomy #science #discovery #jwst`;
       }
     } else {
+      headline = 'ASTRONOMERS DETECT **UNEXPECTED SIGNALS** IN DEEP SPACE';
       if (attempt === 1) {
         draft = `In the world of ${profile?.name || 'this field'}, groundbreaking insights continue to challenge everything we thought we knew about our reality and environment.\n\nFrom unprecedented technical precision to stunning real-world revelations, these remarkable developments are captivating researchers and enthusiasts across the globe. Each new perspective uncovers layers of hidden complexity that inspire deeper questions.\n\nAs our collective understanding grows, the possibilities for innovation and creative expression continue to expand in ways we are only beginning to appreciate.\n\nWhat do you think is the most fascinating aspect of ${profile?.name || 'this niche'}?\n\n${fixedTags}`;
       } else {
         draft = `Remarkable breakthroughs in ${profile?.name || 'this field'} are completely reshaping how experts and enthusiasts understand this fascinating topic.\n\nRecent discoveries showcase unprecedented patterns and practical innovations that were previously thought impossible. Every new milestone reveals fresh perspectives and exciting opportunities for exploration.\n\nWhat excites you the most about the recent developments in ${profile?.name || 'this niche'}?\n\n${fixedTags}`;
       }
+    }
+
+    // Apply accuracy guard and headline validation
+    const factStrings = researchFacts.map((f: any) => (typeof f === 'string' ? f : f.fact || f.claim || String(f)));
+    const accuracyCheck = sanitizeHeadlineAccuracy(headline, factStrings);
+    headline = accuracyCheck.headline;
+
+    const hlValidation = validateHeadline(headline, {
+      minWords: 6,
+      maxWords: 12,
+      hardMaxWords: 14,
+      verifiedFacts: factStrings,
+    });
+    if (!hlValidation.valid && hlValidation.suggestedShortenedHeadline) {
+      headline = hlValidation.suggestedShortenedHeadline;
     }
 
     const qaResult = validateCaption(draft, effectiveCaptionSettings);
@@ -773,15 +753,18 @@ export async function runGenerationPipeline(
   // --------------------------------------------------------------------------
   const s7Start = Date.now();
   const sourceAttribution = sourceUrls.length > 0 ? sourceUrls[0].replace('https://', '').split('/')[0] : 'Beyond the Known';
-  const compositeImageUrl = generateCompositePreviewSvg({
-    width: 1080,
-    height: 1350,
-    headline,
-    category: topicCategory,
-    sourceText: sourceAttribution,
+  const renderedCard = renderHeadlineCard(headline, {
+    canvasWidth: 1080,
+    canvasHeight: 1350,
+    fontFamily: (page.overrides?.['image.fontFamily'] as any) || 'Roboto Condensed',
+    panelColor: (page.overrides?.['image.panelColor'] as string) || '#000000',
+    panelHeightMode: (page.overrides?.['image.panelHeightMode'] as any) || 'auto',
     themeColor: isHorror ? '#e11d48' : '#38bdf8',
+    niche: topicCategory,
     imageUrl: thumbnailUrl,
+    matchNiche: true,
   });
+  const compositeImageUrl = renderedCard.svgDataUri;
 
   stages.push({
     stage: 'headline_composition',
@@ -827,10 +810,14 @@ export async function runGenerationPipeline(
     imageDimensions: page.overrides?.['image.aspectRatio'] === '1:1' ? '1080x1080 (1:1 Square)' : '1080x1350 (4:5 Portrait)',
     headlinePanel: {
       enabled: page.overrides?.['image.headlinePanel.enabled'] !== false,
-      headlineText: headline,
-      backgroundColor: page.overrides?.['image.headlinePanel.backgroundColor'] || '#050b14',
+      headlineText: renderedCard.plainHeadline,
+      backgroundColor: (page.overrides?.['image.panelColor'] as string) || '#000000',
       sourceText: sourceAttribution,
+      segments: renderedCard.segments,
+      fontSize: renderedCard.layout.fontSize,
+      lines: renderedCard.layout.lines.map((l) => l.text),
     },
+    headlineSegments: renderedCard.segments,
     researchSources: sourceUrls,
     claimVerification: bestClaimResult?.claims || [],
     thumbnailUrl,

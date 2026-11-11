@@ -201,19 +201,18 @@ describe('Sharp Headline Panel Renderer & Aspect Ratio Compositor (Step 8.3)', (
       // 1. Dimensions: 1080x1350
       expect(decoded).toContain('viewBox="0 0 1080 1350"');
 
-      // 2. Full-bleed image occupying the upper ~67% (height 910)
-      expect(decoded).toContain('<image href="https://example.com/octopus.jpg" x="0" y="0" width="1080" height="910"');
+      // 2. Full-bleed image occupying the upper photo area
+      expect(decoded).toContain('<image href="https://example.com/octopus.jpg"');
       expect(decoded).toContain('preserveAspectRatio="xMidYMid slice"');
 
-      // 3. Solid pitch black panel occupying the bottom ~33% (y=910 to 1350)
-      expect(decoded).toContain('<rect x="0" y="910" width="1080" height="440" fill="#000000"');
+      // 3. Solid pitch black panel occupying the bottom area
+      expect(decoded).toContain('fill="#000000"');
 
-      // 4. Centered, uppercase white text with high-impact font
-      expect(decoded).toContain('fill="#FFFFFF"');
+      // 4. Centered, uppercase text with bundled TrueType font
       expect(decoded).toContain('text-anchor="middle"');
-      expect(decoded).toContain('font-family="\'Impact\', \'Bebas Neue\', \'Anton\'');
+      expect(decoded).toContain("'Roboto Condensed'");
       expect(decoded).toContain('THE OCTOPUS HAS');
-      expect(decoded).toContain('THREE HEARTS AND');
+      expect(decoded).toContain('THREE HEARTS');
       expect(decoded).toContain('BLUE BLOOD');
 
       // 5. Zero watermarks, zero badges, zero source attribution lines

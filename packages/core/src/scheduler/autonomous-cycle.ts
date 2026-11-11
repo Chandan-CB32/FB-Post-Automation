@@ -316,7 +316,8 @@ export async function runAutonomousCycle(
             page_id: page.id,
             fb_account_id: page.fb_account_id || null,
             title: pipelineResult.topic?.title || 'Daily Discovery',
-            headline: (pipelineResult.topic as any)?.headline || pipelineResult.topic?.title || '',
+            headline: (pipelineResult as any).headlinePanel?.headlineText || pipelineResult.topic?.title || '',
+            headline_segments: (pipelineResult as any).headlineSegments || [],
             caption: pipelineResult.caption,
             caption_word_count: pipelineResult.caption.trim().split(/\s+/).length,
             status: postStatus,
@@ -337,11 +338,23 @@ export async function runAutonomousCycle(
             created_at: new Date().toISOString(),
           };
 
-          const { data: insertedPost, error: insertErr } = await supabase
+          let { data: insertedPost, error: insertErr } = await supabase
             .from('posts')
             .insert(postPayload)
             .select()
             .single();
+
+          if (insertErr && (insertErr.message?.includes('headline_segments') || insertErr.message?.includes('schema cache'))) {
+            const fallbackPayload = { ...postPayload };
+            delete (fallbackPayload as any).headline_segments;
+            const retryRes = await supabase
+              .from('posts')
+              .insert(fallbackPayload)
+              .select()
+              .single();
+            insertedPost = retryRes.data;
+            insertErr = retryRes.error;
+          }
 
           if (insertErr) {
             console.error(`[Autonomous Worker] Failed to save post to Supabase: ${insertErr.message}`);

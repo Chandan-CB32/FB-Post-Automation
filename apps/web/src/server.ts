@@ -60,6 +60,11 @@ import {
   decrypt,
   GeminiNativeAdapter,
   OpenAIChatAdapter,
+  renderHeadlineCard,
+  verifyFontLoading,
+  parseHeadlineSegments,
+  computeHeadlineLayout,
+  sanitizeHeadlineAccuracy,
 } from '@fb-auto/core';
 import {
   renderPrivacyPolicyHtml,
@@ -828,7 +833,12 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
     // A. Health check endpoint (Public)
     if (url.pathname === '/health' || url.pathname === '/api/health') {
-      return sendJson({ status: 'ok', timestamp: new Date().toISOString() });
+      const fontHealth = verifyFontLoading();
+      return sendJson({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        fonts: fontHealth,
+      });
     }
 
     // A2. Static Client Script for Dashboard (Public, Pure JavaScript, Acorn-verified)
@@ -2231,6 +2241,46 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         effectiveSettings: resolved,
         provenance: resolved.provenance,
       });
+    }
+
+    // 4b. API: Headline Card Live Preview (SVG / Layout metrics)
+    if (url.pathname === '/api/preview/headline-card') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', async () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const headline = String(payload.headline || payload.headlineText || 'THE OCTOPUS HAS **THREE HEARTS** AND **BLUE BLOOD**');
+          const fontFamily = (payload.fontFamily === 'Oswald' ? 'Oswald' : 'Roboto Condensed') as 'Roboto Condensed' | 'Oswald';
+          const panelColor = payload.panelColor || '#000000';
+          const panelHeightMode = payload.panelHeightMode || 'auto';
+          const primaryAccent = payload.primaryAccent || '#FFD21F';
+          const secondaryAccent = payload.secondaryAccent || '#22D3EE';
+          const niche = payload.niche || 'science';
+          const photoUrl = payload.photoUrl;
+
+          const cardResult = renderHeadlineCard({
+            headlineText: headline,
+            imageUrl: photoUrl,
+            fontFamily,
+            panelColor,
+            panelHeightMode,
+            primaryAccent,
+            secondaryAccent,
+            niche,
+          });
+
+          return sendJson({
+            success: true,
+            layout: cardResult.layout,
+            svg: cardResult.svg,
+            needsShortening: cardResult.layout.needsShortening,
+          });
+        } catch (cardErr: any) {
+          return sendJson({ error: cardErr.message || 'Failed to render headline preview' }, 500);
+        }
+      });
+      return;
     }
 
     // 5. API: Review Posts list
@@ -4193,33 +4243,116 @@ async function generateDashboardHtml(
             </div>
 
             <div class="card" style="background: #0b0f19; border: 1px solid var(--card-border); padding: 14px; margin-bottom: 16px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <label style="font-weight: 700; font-size: 13px; text-transform: uppercase;">Headline Panel Settings</label>
-                <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
-                  <input type="checkbox" id="editPanelEnabled" checked> Enable Headline Panel Overlay
-                </label>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                <div>
+                  <label style="font-weight: 700; font-size: 13px; text-transform: uppercase; color: #60a5fa;">Viral Headline Panel & Typography</label>
+                  <div style="font-size: 11px; color: var(--text-muted);">Exact TrueType condensed typography matching reference standard</div>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <button type="button" class="btn btn-secondary" onclick="applyClassicHeadlinePreset()" style="font-size: 11px; padding: 4px 10px; background: #1e293b; border: 1px solid #3b82f6; color: #93c5fd; cursor: pointer;">
+                    ⭐ Preset: Classic Big White + Yellow
+                  </button>
+                  <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; color: #e2e8f0;">
+                    <input type="checkbox" id="editPanelEnabled" checked onchange="updateHeadlineLivePreview()"> Enable Panel
+                  </label>
+                </div>
               </div>
 
-              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
                 <div>
-                  <label style="font-size: 11px; color: var(--text-muted);">Aspect Ratio</label>
-                  <select id="editAspectRatio" class="form-control" style="padding: 6px;">
-                    <option value="4:5">4:5 Portrait (1080x1350)</option>
-                    <option value="1:1">1:1 Square (1080x1080)</option>
-                    <option value="16:9">16:9 Landscape (1920x1080)</option>
+                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Font Family (Bundled TrueType)</label>
+                  <select id="editFontFamily" class="form-control" style="padding: 6px; font-size: 12px;" onchange="updateHeadlineLivePreview()">
+                    <option value="Roboto Condensed" selected>Roboto Condensed Bold (Reference)</option>
+                    <option value="Oswald">Oswald Bold</option>
                   </select>
                 </div>
                 <div>
-                  <label style="font-size: 11px; color: var(--text-muted);">Panel Height %</label>
-                  <input type="number" id="editPanelHeight" class="form-control" value="25" min="15" max="40" style="padding: 6px;">
+                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Panel Height Mode</label>
+                  <select id="editPanelHeightMode" class="form-control" style="padding: 6px; font-size: 12px;" onchange="updateHeadlineLivePreview()">
+                    <option value="auto" selected>Auto-Adjust (30% 2-lines, 36% 3-lines, 42% 4-lines)</option>
+                    <option value="fixed_30">Fixed 30%</option>
+                    <option value="fixed_36">Fixed 36% (Standard)</option>
+                    <option value="fixed_42">Fixed 42% (Max)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                <div>
+                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Panel Color</label>
+                  <div style="display: flex; align-items: center; gap: 4px;">
+                    <input type="color" id="editPanelColor" class="form-control" value="#000000" style="padding: 1px; height: 32px; width: 36px; cursor: pointer;" oninput="syncHeadlineColorPicker(this.value); updateHeadlineLivePreview();">
+                    <input type="text" id="editPanelColorHex" class="form-control" value="#000000" style="padding: 4px; font-family: monospace; font-size: 11px; flex: 1;" placeholder="#000000" oninput="syncHeadlineColorText(this.value); updateHeadlineLivePreview();">
+                  </div>
                 </div>
                 <div>
-                  <label style="font-size: 11px; color: var(--text-muted);">Panel Color</label>
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <input type="color" id="editPanelColor" class="form-control" value="#050b14" style="padding: 2px; height: 35px; width: 45px; cursor: pointer;" oninput="syncHeadlineColorPicker(this.value)">
-                    <input type="text" id="editPanelColorHex" class="form-control" value="#050b14" style="padding: 6px; font-family: monospace; font-size: 11px; flex: 1;" placeholder="#050b14" oninput="syncHeadlineColorText(this.value)">
+                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Min Font Size (px)</label>
+                  <input type="number" id="editMinFontSize" class="form-control" value="76" min="60" max="96" style="padding: 6px; font-size: 12px;" onchange="updateHeadlineLivePreview()">
+                </div>
+                <div>
+                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Highlight Mode</label>
+                  <select id="editHighlightStyle" class="form-control" style="padding: 6px; font-size: 12px;" onchange="updateHeadlineLivePreview()">
+                    <option value="alternating" selected>Alternating Accent 1 & 2</option>
+                    <option value="accent1">Accent 1 Only</option>
+                    <option value="none">None (All White)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px; align-items: center;">
+                <div>
+                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Accent 1 (Primary)</label>
+                  <div style="display: flex; align-items: center; gap: 4px;">
+                    <input type="color" id="editAccent1Color" class="form-control" value="#FFD21F" style="padding: 1px; height: 32px; width: 36px; cursor: pointer;" oninput="updateHeadlineLivePreview()">
+                    <span style="font-size: 11px; font-family: monospace; color: #FFD21F;">#FFD21F</span>
                   </div>
-                  <div id="editHeadlineColorError" style="display: none; color: #f87171; font-size: 11px; font-weight: 600; margin-top: 2px;"></div>
+                </div>
+                <div>
+                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Accent 2 (Secondary)</label>
+                  <div style="display: flex; align-items: center; gap: 4px;">
+                    <input type="color" id="editAccent2Color" class="form-control" value="#22D3EE" style="padding: 1px; height: 32px; width: 36px; cursor: pointer;" oninput="updateHeadlineLivePreview()">
+                    <span style="font-size: 11px; font-family: monospace; color: #22D3EE;">#22D3EE</span>
+                  </div>
+                </div>
+                <div>
+                  <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); cursor: pointer; margin-top: 14px;">
+                    <input type="checkbox" id="editMatchNicheAccent" checked onchange="updateHeadlineLivePreview()"> Match accent to niche
+                  </label>
+                </div>
+              </div>
+
+              <!-- Hidden inputs for backward compatibility -->
+              <input type="hidden" id="editAspectRatio" value="4:5">
+              <input type="hidden" id="editPanelHeight" value="36">
+              <div id="editHeadlineColorError" style="display: none; color: #f87171; font-size: 11px; font-weight: 600; margin-top: 2px;"></div>
+
+              <!-- Live 4-Sample Preview Container -->
+              <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--card-border);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase;">Live Typography & Layout Previews (4 Samples)</span>
+                  <span id="previewStatusBadge" style="font-size: 10px; color: #4ade80;">● Bundled Fonts Active</span>
+                </div>
+                <div id="headlineSamplesGrid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+                  <div id="sampleCard0" style="background: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 6px; text-align: center;">
+                    <div style="font-size: 10px; color: #94a3b8; margin-bottom: 4px; font-weight: 600;">Sample 1 (Octopus)</div>
+                    <div class="sample-svg-holder" style="width: 100%; aspect-ratio: 4/5; background: #000; border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center;"></div>
+                    <div class="sample-metrics" style="font-size: 9px; color: #cbd5e1; margin-top: 4px; line-height: 1.3;">-</div>
+                  </div>
+                  <div id="sampleCard1" style="background: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 6px; text-align: center;">
+                    <div style="font-size: 10px; color: #94a3b8; margin-bottom: 4px; font-weight: 600;">Sample 2 (12 Words)</div>
+                    <div class="sample-svg-holder" style="width: 100%; aspect-ratio: 4/5; background: #000; border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center;"></div>
+                    <div class="sample-metrics" style="font-size: 9px; color: #cbd5e1; margin-top: 4px; line-height: 1.3;">-</div>
+                  </div>
+                  <div id="sampleCard2" style="background: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 6px; text-align: center;">
+                    <div style="font-size: 10px; color: #94a3b8; margin-bottom: 4px; font-weight: 600;">Sample 3 (5 Words)</div>
+                    <div class="sample-svg-holder" style="width: 100%; aspect-ratio: 4/5; background: #000; border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center;"></div>
+                    <div class="sample-metrics" style="font-size: 9px; color: #cbd5e1; margin-top: 4px; line-height: 1.3;">-</div>
+                  </div>
+                  <div id="sampleCard3" style="background: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 6px; text-align: center;">
+                    <div style="font-size: 10px; color: #94a3b8; margin-bottom: 4px; font-weight: 600;">Sample 4 (Auto-Shortened)</div>
+                    <div class="sample-svg-holder" style="width: 100%; aspect-ratio: 4/5; background: #000; border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center;"></div>
+                    <div class="sample-metrics" style="font-size: 9px; color: #cbd5e1; margin-top: 4px; line-height: 1.3;">-</div>
+                  </div>
                 </div>
               </div>
             </div>
