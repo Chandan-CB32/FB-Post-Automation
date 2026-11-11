@@ -694,16 +694,70 @@ export async function runGenerationPipeline(
   }
 
   // --------------------------------------------------------------------------
-  // STAGE 5: Image Prompt Engineering
+  // STAGE 5: Image Prompt Engineering (Topic-Focused & Sanitized)
   // --------------------------------------------------------------------------
   const s5Start = Date.now();
-  if (page.custom_image_prompt && page.custom_image_prompt.trim()) {
-    if (page.custom_image_prompt_mode === 'replace') {
-      keyScene = page.custom_image_prompt.trim();
+
+  // 1. Determine the core topic visual subject
+  let visualSubject = keyScene;
+  const isGenericBoilerplate =
+    !visualSubject ||
+    /Create ONE|Show a single|COMPOSITION:|High-detail visual exploring|AVOID:/i.test(visualSubject);
+
+  if (isGenericBoilerplate) {
+    if (isScience) {
+      visualSubject = `Exoplanet K2-18b with deep ocean atmosphere and luminous cloud bands illuminated by distant red dwarf star, wide angle deep space view, James Webb Space Telescope discovery`;
+    } else if (isHorror) {
+      visualSubject = `An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows`;
     } else {
-      keyScene = `${keyScene} -- ${page.custom_image_prompt.trim()}`;
+      visualSubject = `${topicTitle}, ${topicCategory}, highly detailed scientific discovery`;
     }
   }
+
+  // 2. Handle page.custom_image_prompt safely without overriding the subject
+  let customStyleDirective = '';
+  if (page.custom_image_prompt && page.custom_image_prompt.trim()) {
+    const rawCustom = page.custom_image_prompt.trim();
+    if (/\{topic\}|\{subject\}|\{headline\}|\{niche\}/i.test(rawCustom)) {
+      visualSubject = rawCustom
+        .replace(/\{topic\}/gi, topicTitle)
+        .replace(/\{subject\}/gi, visualSubject)
+        .replace(/\{headline\}/gi, headline.replace(/\*\*/g, ''))
+        .replace(/\{niche\}/gi, topicCategory);
+    } else if (page.custom_image_prompt_mode === 'replace') {
+      // If the custom prompt contains instructional boilerplate (Create ONE, COMPOSITION, AVOID, etc.)
+      if (/Create ONE|COMPOSITION:|SUBJECT STYLES:|Show a single/i.test(rawCustom)) {
+        const styleMatch = rawCustom.match(/STYLE:\s*([^.\n]+(?:\.[^.\n]+)?)/i);
+        const paletteMatch = rawCustom.match(/Palette of ([^.\n]+)/i);
+        const parts = [
+          styleMatch ? styleMatch[1].trim() : '',
+          paletteMatch ? `Palette of ${paletteMatch[1].trim()}` : '',
+        ].filter(Boolean);
+        customStyleDirective = parts.join(', ') || 'photorealistic and cinematic scientific lighting, palette of deep blues and cosmic blacks';
+      } else {
+        // Plain custom prompt: keep the topic subject front and center
+        visualSubject = `${topicTitle}: ${rawCustom}`;
+      }
+    } else {
+      // 'append' mode: strip boilerplate and use clean style
+      const cleaned = rawCustom
+        .replace(/Create ONE photorealistic[^.]*\./gi, '')
+        .replace(/COMPOSITION:[^.]*\./gi, '')
+        .replace(/AVOID:[^.]*\./gi, '')
+        .trim();
+      if (cleaned) {
+        customStyleDirective = cleaned.slice(0, 160);
+      }
+    }
+  }
+
+  // 3. Assemble subject-first prompt for diffusion models (first tokens carry highest attention weight)
+  const styleKeywords = customStyleDirective
+    ? `${customStyleDirective}, photorealistic, 8k resolution, tack sharp photography, no text, no watermark, no logo, no subtitles, no borders`
+    : `cinematic scientific lighting, photorealistic National Geographic quality, 8k resolution, tack sharp photography, sharp focal point, no text, no watermark, no logo, no subtitles, no borders`;
+
+  const visualPrompt = `${visualSubject}. ${styleKeywords}`;
+  keyScene = visualSubject;
 
   stages.push({
     stage: 'image_prompt',
@@ -720,9 +774,8 @@ export async function runGenerationPipeline(
   // --------------------------------------------------------------------------
   const s6Start = Date.now();
   let thumbnailUrl = '';
-  const cleanPrompt = (keyScene || headline || topicTitle || 'Astrophysics deep space discovery').slice(0, 300);
-  const visualPrompt = `${cleanPrompt}, cinematic lighting, photorealistic, 8k, detailed photography, no text, no watermark, no logo, no subtitles, no borders`;
-  const polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt)}?width=1080&height=1080&model=flux&nologo=true`;
+  // Topic and scene are guaranteed in the first 350 chars
+  const polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=flux&nologo=true`;
 
   try {
     if (typeof fetch === 'function' && !isTestEnv()) {
@@ -736,7 +789,7 @@ export async function runGenerationPipeline(
       }
       // Secondary: Fast turbo model fallback (10s timeout)
       if (!thumbnailUrl) {
-        const turboUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt)}?width=1080&height=1080&model=turbo&nologo=true`;
+        const turboUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=turbo&nologo=true`;
         polliRes = await fetch(turboUrl, { signal: AbortSignal.timeout(10000) });
         if (polliRes.ok) {
           const ab = await polliRes.arrayBuffer();
@@ -766,7 +819,7 @@ export async function runGenerationPipeline(
   });
 
   // --------------------------------------------------------------------------
-  // STAGE 7: Headline Panel Composition (1080x1350 Preview with AI Image)
+  // STAGE 7: Headline Panel Composition (1080x1350 Single Unified Raster JPEG)
   // --------------------------------------------------------------------------
   const s7Start = Date.now();
   const sourceAttribution = sourceUrls.length > 0 ? sourceUrls[0].replace('https://', '').split('/')[0] : 'Beyond the Known';
@@ -781,11 +834,15 @@ export async function runGenerationPipeline(
     imageUrl: thumbnailUrl,
     matchNiche: true,
   });
-  const compositeImageUrl = renderedCard.svgDataUri;
 
+  // Rasterize card to a single unified 1080x1350 JPEG
   let compositeJpegBuffer: Buffer | undefined;
+  let compositeImageUrl = renderedCard.svgDataUri;
   try {
     compositeJpegBuffer = await rasterizeHeadlineCardToJpeg(renderedCard.svgXml);
+    if (compositeJpegBuffer && compositeJpegBuffer.byteLength > 500) {
+      compositeImageUrl = `data:image/jpeg;base64,${compositeJpegBuffer.toString('base64')}`;
+    }
   } catch (rErr) {
     console.warn('[GenerationPipeline] Failed to rasterize composed card to JPEG:', rErr);
   }

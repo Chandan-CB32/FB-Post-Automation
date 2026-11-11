@@ -3494,6 +3494,7 @@
     const viewComposedBtn = document.getElementById('pdmViewComposedBtn');
     const viewRawBtn = document.getElementById('pdmViewRawBtn');
     const viewToggleRow = document.getElementById('pdmViewToggleRow');
+    const downloadBtn = document.getElementById('pdmDownloadBtn');
 
     const composed = currentModalPost.composed_image_path;
     const raw = currentModalPost.raw_image_path;
@@ -3507,13 +3508,22 @@
       if (targetSrc) {
         previewImg.src = targetSrc;
         previewImg.style.display = 'block';
+        const filename = (currentModalImageView === 'raw' ? 'photo-' : 'card-') + (currentModalPost.id || 'post') + '.jpg';
         if (previewLink) {
           previewLink.href = targetSrc;
           previewLink.style.display = 'flex';
+          previewLink.download = filename;
+        }
+        if (downloadBtn) {
+          downloadBtn.style.display = 'inline-flex';
+          downloadBtn.innerHTML = currentModalImageView === 'raw'
+            ? '⬇️ Save Raw Photo (.JPG)'
+            : '⬇️ Save Composed Card (.JPG)';
         }
       } else {
         previewImg.style.display = 'none';
         if (previewLink) previewLink.style.display = 'none';
+        if (downloadBtn) downloadBtn.style.display = 'none';
       }
     }
 
@@ -3530,6 +3540,68 @@
         viewComposedBtn.style.color = '#94a3b8';
       }
     }
+  }
+
+  function downloadCurrentPostImage() {
+    if (!currentModalPost) return;
+    const composed = currentModalPost.composed_image_path;
+    const raw = currentModalPost.raw_image_path;
+    const targetSrc = (currentModalImageView === 'raw' && raw) ? raw : (composed || raw);
+    if (!targetSrc) return;
+
+    const filename = (currentModalImageView === 'raw' ? 'raw-photo-' : 'composed-card-') + (currentModalPost.id || 'fb-post') + '.jpg';
+
+    if (targetSrc.startsWith('data:image/jpeg') || targetSrc.startsWith('data:image/png')) {
+      const a = document.createElement('a');
+      a.href = targetSrc;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast('⬇️ Saved ' + filename + ' to your computer!', 'success');
+      return;
+    }
+
+    if (targetSrc.startsWith('data:image/svg+xml') || targetSrc.startsWith('<svg')) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function () {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 1080;
+          canvas.height = 1350;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(0, 0, 1080, 1350);
+          ctx.drawImage(img, 0, 0, 1080, 1350);
+          const jpegUri = canvas.toDataURL('image/jpeg', 0.95);
+          const a = document.createElement('a');
+          a.href = jpegUri;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          showToast('⬇️ Saved ' + filename + ' (1080×1350 single JPEG)!', 'success');
+        } catch (cvErr) {
+          const a = document.createElement('a');
+          a.href = targetSrc;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+      };
+      img.src = targetSrc;
+      return;
+    }
+
+    const a = document.createElement('a');
+    a.href = targetSrc;
+    a.target = '_blank';
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   function togglePostModalView(view) {
@@ -4117,6 +4189,7 @@
   window.closePostDetailsModal = closePostDetailsModal;
   window.copyPostCaptionToClipboard = copyPostCaptionToClipboard;
   window.togglePostModalView = togglePostModalView;
+  window.downloadCurrentPostImage = downloadCurrentPostImage;
   window.confirmModeChange = confirmModeChange;
   window.cancelModeConfirmation = cancelModeConfirmation;
   window.reloadProfilesAndResetToCustom = reloadProfilesAndResetToCustom;

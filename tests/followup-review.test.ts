@@ -277,7 +277,10 @@ describe('Follow-up Review: Emergency Reformat, Test Run Isolation & Fact Verifi
       const compStage = report.stages.find((s: any) => s.stage === 'headline_composition');
       expect(compStage.status).toBe('completed');
       expect(report.compositeImageUrl).toBeDefined();
-      expect(report.compositeImageUrl).toContain('data:image/svg+xml');
+      expect(
+        report.compositeImageUrl.startsWith('data:image/jpeg') ||
+        report.compositeImageUrl.startsWith('data:image/svg+xml')
+      ).toBe(true);
       expect(report.headlinePanel.enabled).toBe(true);
       expect(report.imageDimensions).toContain('1080x1350');
     });

@@ -6511,7 +6511,12 @@ async function generateDashboardHtml(
           <a id="pdmPreviewLink" href="#" target="_blank" rel="noopener noreferrer" style="display: flex; justify-content: center; width: 100%; cursor: zoom-in;" title="Click to view full resolution">
             <img id="pdmPreviewImg" src="" alt="Post Visual Preview" style="max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 8px; border: 1px solid #1e293b; background: #000; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); display: none;" />
           </a>
-          <div style="font-size: 11px; color: #64748b; margin-top: 6px;">(Click image to open in full high-resolution)</div>
+          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 480px; margin-top: 8px; flex-wrap: wrap; gap: 8px;">
+            <div style="font-size: 11px; color: #64748b;">(Click image to open in full high-resolution)</div>
+            <button type="button" id="pdmDownloadBtn" onclick="downloadCurrentPostImage()" class="btn btn-secondary" style="padding: 5px 12px; font-size: 12px; background: #065f46; color: #6ee7b7; border: 1px solid #059669; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; border-radius: 6px;">
+              ⬇️ Save Composed Card (.JPG)
+            </button>
+          </div>
         </div>
       </div>
 
