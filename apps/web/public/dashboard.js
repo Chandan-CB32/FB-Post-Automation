@@ -4194,6 +4194,467 @@
   window.cancelModeConfirmation = cancelModeConfirmation;
   window.reloadProfilesAndResetToCustom = reloadProfilesAndResetToCustom;
 
+  // ==========================================
+  // DAILY CONTENT & IMAGE IDEAS STUDIO
+  // ==========================================
+  let currentDcsPageId = '';
+  let currentDcsPageName = '';
+  let currentDcsTopics = [];
+
+  function openDailyContentStudio(pageId, pageName) {
+    currentDcsPageId = pageId;
+    currentDcsPageName = pageName || 'Selected Page';
+    const modal = document.getElementById('dailyContentStudioModal');
+    if (!modal) return;
+    
+    const pageBadge = document.getElementById('dcsPageBadge');
+    if (pageBadge) pageBadge.textContent = 'Page: ' + currentDcsPageName;
+    
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    loadDailyTopics();
+  }
+
+  function closeDailyContentStudio() {
+    const modal = document.getElementById('dailyContentStudioModal');
+    if (modal) modal.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+
+  async function loadDailyTopics() {
+    const loading = document.getElementById('dcsLoading');
+    const loadingText = document.getElementById('dcsLoadingText');
+    const emptyState = document.getElementById('dcsEmptyState');
+    const container = document.getElementById('dcsCardsContainer');
+    const countBadge = document.getElementById('dcsCountBadge');
+
+    if (loading) {
+      if (loadingText) loadingText.textContent = 'Loading today\'s researched ideas & visual scenes...';
+      loading.style.display = 'block';
+    }
+    if (emptyState) emptyState.style.display = 'none';
+    if (container) container.innerHTML = '';
+
+    try {
+      const res = await fetch('/api/topics?pageId=' + encodeURIComponent(currentDcsPageId));
+      const data = await res.json();
+      if (loading) loading.style.display = 'none';
+
+      if (!res.ok || !data.success) {
+        showToast('⚠️ Failed to load ideas: ' + (data.error || 'Server error'), 'error');
+        return;
+      }
+
+      currentDcsTopics = data.topics || [];
+      if (countBadge) {
+        countBadge.textContent = currentDcsTopics.length + ' Ideas in Queue';
+      }
+
+      if (currentDcsTopics.length === 0) {
+        if (emptyState) emptyState.style.display = 'block';
+      } else {
+        renderDailyTopicCards(currentDcsTopics);
+      }
+    } catch (e) {
+      if (loading) loading.style.display = 'none';
+      showToast('⚠️ Network error loading ideas', 'error');
+    }
+  }
+
+  function renderDailyTopicCards(topics) {
+    const container = document.getElementById('dcsCardsContainer');
+    if (!container) return;
+    container.innerHTML = '';
+
+    topics.forEach((t, idx) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.style.cssText = 'background: #020617; border: 1px solid #1e293b; border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 14px; position: relative;';
+
+      const factsList = Array.isArray(t.facts) ? t.facts : [];
+      const factsHtml = factsList.map(f => `<li style="margin-bottom: 4px; color: #cbd5e1; font-size: 12px; line-height: 1.4;">${escapeHtml(f)}</li>`).join('');
+
+      const headlineFormatted = escapeHtml(t.headline || t.title)
+        .replace(/\*\*([^*]+)\*\*/g, '<span style="color: #facc15; font-weight: 800;">$1</span>');
+
+      const imageUrl = t.imageUrl || '';
+
+      card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid #0f172a; padding-bottom: 10px;">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span class="badge" style="background: #1e293b; color: #38bdf8; font-weight: 700; font-size: 11px;">Slot #${idx + 1}</span>
+            <span class="badge" style="background: rgba(147, 51, 234, 0.2); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.4); font-size: 11px;">${escapeHtml(t.category || 'General')}</span>
+            <h4 style="font-size: 15px; font-weight: 700; color: #f8fafc; margin: 0;">${escapeHtml(t.title)}</h4>
+          </div>
+          <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+            <button class="btn btn-secondary btn-edit-topic" style="font-size: 11px; padding: 4px 10px;" title="Edit title, facts, headline, or visual scene">✏️ Edit</button>
+            <button class="btn btn-secondary btn-regen-topic" style="font-size: 11px; padding: 4px 10px; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);" title="1-Click automatic re-research with AI">🔄 1-Click New Idea</button>
+            <button class="btn btn-secondary btn-custom-topic" style="font-size: 11px; padding: 4px 10px; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.3);" title="Tell the AI what to research for this slot">💬 Custom Guidance</button>
+            <button class="btn btn-danger btn-delete-topic" style="font-size: 11px; padding: 4px 8px;" title="Remove from today's queue">🗑️</button>
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 240px; gap: 16px; align-items: start;">
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="background: #000; border: 1px solid #1e293b; border-radius: 6px; padding: 10px 14px; text-align: center;">
+              <span style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; font-weight: 700; display: block; margin-bottom: 4px;">Rendered Headline on Card</span>
+              <div style="font-family: 'Open Sans', 'Roboto', 'Arial Black', sans-serif; font-size: 14px; font-weight: 800; color: #ffffff; letter-spacing: 0.02em; line-height: 1.3;">
+                ${headlineFormatted}
+              </div>
+            </div>
+            <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid #1e293b; border-radius: 6px; padding: 10px 12px;">
+              <span style="font-size: 11px; font-weight: 700; color: #94a3b8; display: block; margin-bottom: 6px;">🔬 Verified Research Facts:</span>
+              <ul style="margin: 0; padding-left: 18px;">
+                ${factsHtml || '<li style="color: #64748b; font-size: 12px;">No facts recorded.</li>'}
+              </ul>
+            </div>
+            <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid #1e293b; border-radius: 6px; padding: 10px 12px;">
+              <span style="font-size: 11px; font-weight: 700; color: #94a3b8; display: block; margin-bottom: 4px;">🎨 Exact Visual Scene:</span>
+              <p style="margin: 0; color: #93c5fd; font-size: 11px; line-height: 1.4; font-family: monospace;">
+                ${escapeHtml(t.visualSubject || 'Default scientific photography scene')}
+              </p>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: center; background: #000; border: 1px solid #1e293b; border-radius: 8px; padding: 10px;">
+            <div style="width: 100%; aspect-ratio: 4 / 5; max-height: 220px; overflow: hidden; border-radius: 6px; background: #0b0f19; display: flex; align-items: center; justify-content: center; position: relative;">
+              ${imageUrl
+                ? `<img src="${escapeHtml(imageUrl)}" alt="Preview" style="width: 100%; height: 100%; object-fit: cover;" loading="lazy" onerror="this.src=''; this.alt='Image generation pending...';" />`
+                : '<div style="color: #64748b; font-size: 11px; text-align: center; padding: 10px;">No image generated yet</div>'}
+            </div>
+            <button class="btn btn-secondary btn-image-regen" style="width: 100%; font-size: 11px; font-weight: 600; padding: 6px; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); display: flex; align-items: center; justify-content: center; gap: 4px;">🎨 New Image Variant</button>
+            ${imageUrl ? `<a href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener" style="font-size: 10px; color: #64748b; text-decoration: underline;">View Full HD</a>` : ''}
+          </div>
+        </div>
+      `;
+
+      // Event listeners for card buttons (safe and clean)
+      const editBtn = card.querySelector('.btn-edit-topic');
+      if (editBtn) editBtn.addEventListener('click', () => openEditTopicModal(t.id));
+
+      const regenBtn = card.querySelector('.btn-regen-topic');
+      if (regenBtn) regenBtn.addEventListener('click', () => regenerateSingleTopicAction(t.id));
+
+      const customBtn = card.querySelector('.btn-custom-topic');
+      if (customBtn) customBtn.addEventListener('click', () => openCustomPromptRegenModal(t.id, t.title));
+
+      const deleteBtn = card.querySelector('.btn-delete-topic');
+      if (deleteBtn) deleteBtn.addEventListener('click', () => deleteTopicItemAction(t.id));
+
+      const imageRegenBtn = card.querySelector('.btn-image-regen');
+      if (imageRegenBtn) imageRegenBtn.addEventListener('click', () => regenerateTopicImage(t.id, t.visualSubject || t.title));
+
+      container.appendChild(card);
+    });
+  }
+
+  async function regenerateAllTopics() {
+    if (!confirm('Regenerate all daily ideas? This will research a fresh batch of content ideas and matching visual scenes for today.')) {
+      return;
+    }
+    const regenBtn = document.getElementById('dcsRegenAllBtn');
+    const loading = document.getElementById('dcsLoading');
+    const loadingText = document.getElementById('dcsLoadingText');
+    const emptyState = document.getElementById('dcsEmptyState');
+    const container = document.getElementById('dcsCardsContainer');
+
+    if (regenBtn) regenBtn.disabled = true;
+    if (loading) {
+      if (loadingText) loadingText.textContent = 'Conducting AI research & generating FLUX visual scenes for today...';
+      loading.style.display = 'block';
+    }
+    if (emptyState) emptyState.style.display = 'none';
+    if (container) container.innerHTML = '';
+
+    try {
+      const res = await fetch('/api/topics/research', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: currentDcsPageId, force: true }),
+      });
+      const data = await res.json();
+      if (regenBtn) regenBtn.disabled = false;
+
+      if (!res.ok || !data.success) {
+        if (loading) loading.style.display = 'none';
+        showToast('⚠️ Error researching topics: ' + (data.error || 'Server error'), 'error');
+        return;
+      }
+
+      showToast('🎉 Fresh daily ideas and visuals generated successfully!', 'success');
+      loadDailyTopics();
+    } catch (e) {
+      if (regenBtn) regenBtn.disabled = false;
+      if (loading) loading.style.display = 'none';
+      showToast('⚠️ Network error during research', 'error');
+    }
+  }
+
+  async function regenerateSingleTopicAction(itemId) {
+    const loading = document.getElementById('dcsLoading');
+    const loadingText = document.getElementById('dcsLoadingText');
+    if (loading) {
+      if (loadingText) loadingText.textContent = 'Generating 1 replacement topic & FLUX visual with AI...';
+      loading.style.display = 'block';
+    }
+
+    try {
+      const res = await fetch('/api/topics/regenerate-item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: currentDcsPageId, itemId: itemId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        if (loading) loading.style.display = 'none';
+        showToast('⚠️ Failed to regenerate item: ' + (data.error || 'Server error'), 'error');
+        return;
+      }
+
+      showToast('✨ Idea regenerated with verified facts and new visual!', 'success');
+      loadDailyTopics();
+    } catch (e) {
+      if (loading) loading.style.display = 'none';
+      showToast('⚠️ Network error regenerating idea', 'error');
+    }
+  }
+
+  function openCustomPromptRegenModal(itemId, currentTitle) {
+    const modal = document.getElementById('customPromptRegenModal');
+    if (!modal) return;
+    const itemInput = document.getElementById('cprItemId');
+    const titleSpan = document.getElementById('cprCurrentTitle');
+    const guidanceArea = document.getElementById('cprGuidanceText');
+
+    if (itemInput) itemInput.value = itemId;
+    if (titleSpan) titleSpan.textContent = currentTitle;
+    if (guidanceArea) guidanceArea.value = '';
+    modal.style.display = 'flex';
+  }
+
+  function closeCustomPromptRegenModal() {
+    const modal = document.getElementById('customPromptRegenModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  async function submitCustomPromptRegen() {
+    const itemIdEl = document.getElementById('cprItemId');
+    const guidanceEl = document.getElementById('cprGuidanceText');
+    const itemId = itemIdEl ? itemIdEl.value : '';
+    const guidance = guidanceEl ? guidanceEl.value.trim() : '';
+
+    if (!guidance) {
+      alert('Please enter some guidance or prompt direction for the AI.');
+      return;
+    }
+
+    closeCustomPromptRegenModal();
+    const loading = document.getElementById('dcsLoading');
+    const loadingText = document.getElementById('dcsLoadingText');
+    if (loading) {
+      if (loadingText) loadingText.textContent = 'Researching topic matching: "' + guidance.slice(0, 30) + '..."';
+      loading.style.display = 'block';
+    }
+
+    try {
+      const res = await fetch('/api/topics/regenerate-item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: currentDcsPageId, itemId: itemId, userGuidance: guidance }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        if (loading) loading.style.display = 'none';
+        showToast('⚠️ Failed with guidance: ' + (data.error || 'Server error'), 'error');
+        return;
+      }
+
+      showToast('🎯 Regenerated idea matching your exact guidance!', 'success');
+      loadDailyTopics();
+    } catch (e) {
+      if (loading) loading.style.display = 'none';
+      showToast('⚠️ Network error', 'error');
+    }
+  }
+
+  function openEditTopicModal(itemId) {
+    const topic = currentDcsTopics.find(t => t.id === itemId);
+    if (!topic) return;
+
+    const idEl = document.getElementById('etiItemId');
+    const titleEl = document.getElementById('etiTitle');
+    const catEl = document.getElementById('etiCategory');
+    const headEl = document.getElementById('etiHeadline');
+    const factsEl = document.getElementById('etiFacts');
+    const visualEl = document.getElementById('etiVisualSubject');
+    const imgEl = document.getElementById('etiImageUrl');
+
+    if (idEl) idEl.value = topic.id;
+    if (titleEl) titleEl.value = topic.title || '';
+    if (catEl) catEl.value = topic.category || '';
+    if (headEl) headEl.value = topic.headline || '';
+    if (factsEl) factsEl.value = Array.isArray(topic.facts) ? topic.facts.join('\n') : (topic.facts || '');
+    if (visualEl) visualEl.value = topic.visualSubject || '';
+    if (imgEl) imgEl.value = topic.imageUrl || '';
+
+    const modal = document.getElementById('editTopicIdeaModal');
+    if (modal) modal.style.display = 'flex';
+  }
+
+  function openAddTopicModal() {
+    const idEl = document.getElementById('etiItemId');
+    const titleEl = document.getElementById('etiTitle');
+    const catEl = document.getElementById('etiCategory');
+    const headEl = document.getElementById('etiHeadline');
+    const factsEl = document.getElementById('etiFacts');
+    const visualEl = document.getElementById('etiVisualSubject');
+    const imgEl = document.getElementById('etiImageUrl');
+
+    if (idEl) idEl.value = '';
+    if (titleEl) titleEl.value = '';
+    if (catEl) catEl.value = 'Science & Space';
+    if (headEl) headEl.value = '';
+    if (factsEl) factsEl.value = '';
+    if (visualEl) visualEl.value = '';
+    if (imgEl) imgEl.value = '';
+
+    const modal = document.getElementById('editTopicIdeaModal');
+    if (modal) modal.style.display = 'flex';
+  }
+
+  function closeEditTopicModal() {
+    const modal = document.getElementById('editTopicIdeaModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  async function saveTopicEditAction() {
+    const idEl = document.getElementById('etiItemId');
+    const titleEl = document.getElementById('etiTitle');
+    const catEl = document.getElementById('etiCategory');
+    const headEl = document.getElementById('etiHeadline');
+    const factsEl = document.getElementById('etiFacts');
+    const visualEl = document.getElementById('etiVisualSubject');
+    const imgEl = document.getElementById('etiImageUrl');
+
+    const itemId = idEl ? idEl.value : '';
+    const title = titleEl ? titleEl.value.trim() : '';
+    const category = catEl ? catEl.value.trim() : '';
+    const headline = headEl ? headEl.value.trim() : '';
+    const factsRaw = factsEl ? factsEl.value.trim() : '';
+    const facts = factsRaw ? factsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
+    const visualSubject = visualEl ? visualEl.value.trim() : '';
+    const imageUrl = imgEl ? imgEl.value.trim() : '';
+
+    if (!title) {
+      alert('Title is required.');
+      return;
+    }
+
+    try {
+      let res;
+      if (itemId) {
+        res = await fetch('/api/topics/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: itemId,
+            title,
+            category,
+            headline,
+            facts,
+            visualSubject,
+            imageUrl,
+          }),
+        });
+      } else {
+        res = await fetch('/api/topics/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pageId: currentDcsPageId,
+            title,
+            category,
+            headline,
+            facts,
+            visualSubject,
+            imageUrl,
+          }),
+        });
+      }
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast('⚠️ Failed to save: ' + (data.error || 'Server error'), 'error');
+        return;
+      }
+
+      closeEditTopicModal();
+      showToast('💾 Topic saved successfully!', 'success');
+      loadDailyTopics();
+    } catch (e) {
+      showToast('⚠️ Network error saving topic', 'error');
+    }
+  }
+
+  async function regenerateTopicImage(itemId, visualSubject) {
+    showToast('🎨 Generating new image variant...', 'info');
+
+    try {
+      const res = await fetch('/api/topics/regenerate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId, visualSubject }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast('⚠️ Image update failed: ' + (data.error || 'Server error'), 'error');
+        return;
+      }
+
+      showToast('🎨 New image variant generated!', 'success');
+      loadDailyTopics();
+    } catch (e) {
+      showToast('⚠️ Network error updating image', 'error');
+    }
+  }
+
+  async function deleteTopicItemAction(itemId) {
+    if (!confirm('Remove this idea from today\'s queue?')) return;
+
+    try {
+      const res = await fetch('/api/topics/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: itemId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast('⚠️ Failed to delete: ' + (data.error || 'Server error'), 'error');
+        return;
+      }
+
+      showToast('🗑️ Idea removed from queue', 'info');
+      loadDailyTopics();
+    } catch (e) {
+      showToast('⚠️ Network error deleting idea', 'error');
+    }
+  }
+
+  window.openDailyContentStudio = openDailyContentStudio;
+  window.closeDailyContentStudio = closeDailyContentStudio;
+  window.loadDailyTopics = loadDailyTopics;
+  window.renderDailyTopicCards = renderDailyTopicCards;
+  window.regenerateAllTopics = regenerateAllTopics;
+  window.regenerateSingleTopicAction = regenerateSingleTopicAction;
+  window.openCustomPromptRegenModal = openCustomPromptRegenModal;
+  window.closeCustomPromptRegenModal = closeCustomPromptRegenModal;
+  window.submitCustomPromptRegen = submitCustomPromptRegen;
+  window.openEditTopicModal = openEditTopicModal;
+  window.openAddTopicModal = openAddTopicModal;
+  window.closeEditTopicModal = closeEditTopicModal;
+  window.saveTopicEditAction = saveTopicEditAction;
+  window.regenerateTopicImage = regenerateTopicImage;
+  window.deleteTopicItemAction = deleteTopicItemAction;
+
+
   function copyExpectedRedirectUri() {
     const el = document.getElementById('expectedRedirectUriText');
     if (!el) return;

@@ -59,6 +59,7 @@ import {
   generateDraftProfileFromPage,
   decrypt,
   runDailyContentResearch,
+  regenerateSingleTopicItem,
   getSupabaseClient,
   GeminiNativeAdapter,
   OpenAIChatAdapter,
@@ -2151,6 +2152,303 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           });
 
           return sendJson(researchResult);
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3e3. API: Fetch All Content Ideas & Image Ideas for a Page
+    if (url.pathname === '/api/topics' && req.method === 'GET') {
+      try {
+        const pageId = url.searchParams.get('pageId');
+        if (!pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+        const sb = getSupabaseClient();
+        if (!sb) return sendJson({ error: 'Supabase client unavailable' }, 500);
+
+        const { data: rows, error } = await sb
+          .from('topic_queue_items')
+          .select('*')
+          .eq('page_id', pageId)
+          .order('sort_order', { ascending: true });
+
+        if (error) return sendJson({ error: error.message }, 500);
+
+        const formatted = (rows || []).map((r) => {
+          let parsed: any = {};
+          try {
+            parsed = JSON.parse(r.text);
+          } catch (_) {
+            parsed = { title: r.text, category: r.category };
+          }
+          return {
+            id: r.id,
+            page_id: r.page_id,
+            status: r.status,
+            sort_order: r.sort_order,
+            created_at: r.created_at,
+            used_at: r.used_at,
+            title: parsed.title || r.text,
+            category: parsed.category || r.category || 'General',
+            facts: Array.isArray(parsed.facts) ? parsed.facts : [],
+            visualSubject: parsed.visualSubject || '',
+            headline: parsed.headline || (parsed.title || r.text).toUpperCase(),
+            imagePrompt: parsed.imagePrompt || '',
+            imageUrl: parsed.imageUrl || '',
+          };
+        });
+
+        return sendJson({ success: true, topics: formatted });
+      } catch (e: any) {
+        return sendJson({ error: e.message }, 500);
+      }
+    }
+
+    // 3e4. API: Update a Content & Image Idea
+    if (url.pathname === '/api/topics/update' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.id) return sendJson({ error: 'id is required' }, 400);
+
+          const sb = getSupabaseClient();
+          if (!sb) return sendJson({ error: 'Supabase client unavailable' }, 500);
+
+          const { data: existing, error: fetchErr } = await sb
+            .from('topic_queue_items')
+            .select('*')
+            .eq('id', data.id)
+            .single();
+
+          if (fetchErr || !existing) return sendJson({ error: 'Topic not found' }, 404);
+
+          let currentParsed: any = {};
+          try { currentParsed = JSON.parse(existing.text); } catch (_) {}
+
+          const updatedPayload = {
+            ...currentParsed,
+            title: data.title !== undefined ? String(data.title).trim() : currentParsed.title,
+            category: data.category !== undefined ? String(data.category).trim() : (existing.category || currentParsed.category),
+            headline: data.headline !== undefined ? String(data.headline).trim() : currentParsed.headline,
+            facts: Array.isArray(data.facts) ? data.facts : currentParsed.facts,
+            visualSubject: data.visualSubject !== undefined ? String(data.visualSubject).trim() : currentParsed.visualSubject,
+            imageUrl: data.imageUrl !== undefined ? String(data.imageUrl).trim() : currentParsed.imageUrl,
+            imagePrompt: data.imagePrompt !== undefined ? String(data.imagePrompt).trim() : currentParsed.imagePrompt,
+          };
+
+          const { data: updated, error: updErr } = await sb
+            .from('topic_queue_items')
+            .update({
+              category: updatedPayload.category,
+              text: JSON.stringify(updatedPayload),
+              status: data.status || existing.status,
+            })
+            .eq('id', data.id)
+            .select()
+            .single();
+
+          if (updErr) return sendJson({ error: updErr.message }, 500);
+          return sendJson({ success: true, topic: updatedPayload, row: updated });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3e5. API: Regenerate a Specific Content & Image Idea (with optional user guidance)
+    if (url.pathname === '/api/topics/regenerate-item' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.itemId) return sendJson({ error: 'itemId is required' }, 400);
+          if (!data.pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+          const page = await store.getPageById(data.pageId);
+          if (!page) return sendJson({ error: 'Page not found' }, 404);
+
+          const allProviders = await store.getProviders();
+          const allKeys = await store.getProviderKeys();
+          const activeProviders = allProviders
+            .filter((p) => p.enabled)
+            .sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
+
+          const activeProvidersWithKeys = activeProviders.map((p) => {
+            const matchingKey = allKeys.find((k) => k.provider_id === p.id && k.is_active);
+            let decryptedKey: string | undefined;
+            if (matchingKey && matchingKey.encrypted_key) {
+              try { decryptedKey = decrypt(matchingKey.encrypted_key); } catch (_) {}
+            }
+            return {
+              id: p.id,
+              name: p.name,
+              kind: (p as any).kind || p.adapter_kind,
+              adapter_kind: p.adapter_kind,
+              model_name: p.model_name,
+              priority: p.priority ?? 1,
+              base_url: p.base_url,
+              config: (p as any).config,
+              apiKey: decryptedKey,
+              keyMasked: matchingKey?.masked_key,
+            };
+          });
+
+          const sb = getSupabaseClient();
+          if (!sb) return sendJson({ error: 'Supabase client unavailable' }, 500);
+
+          const newTopic = await regenerateSingleTopicItem({
+            page,
+            supabase: sb,
+            activeProviders: activeProvidersWithKeys,
+            userGuidance: data.userGuidance,
+            category: data.category,
+          });
+
+          if (!newTopic) return sendJson({ error: 'AI failed to generate a replacement topic.' }, 500);
+
+          const payloadJson = JSON.stringify(newTopic);
+          const { data: updated, error: updErr } = await sb
+            .from('topic_queue_items')
+            .update({
+              category: newTopic.category,
+              text: payloadJson,
+              status: 'pending',
+            })
+            .eq('id', data.itemId)
+            .select()
+            .single();
+
+          if (updErr) return sendJson({ error: updErr.message }, 500);
+          return sendJson({ success: true, topic: newTopic, item: updated });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3e6. API: Regenerate Only the Image for an Idea
+    if (url.pathname === '/api/topics/regenerate-image' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.itemId) return sendJson({ error: 'itemId is required' }, 400);
+
+          const sb = getSupabaseClient();
+          if (!sb) return sendJson({ error: 'Supabase client unavailable' }, 500);
+
+          const { data: existing, error: fetchErr } = await sb
+            .from('topic_queue_items')
+            .select('*')
+            .eq('id', data.itemId)
+            .single();
+
+          if (fetchErr || !existing) return sendJson({ error: 'Item not found' }, 404);
+
+          let parsed: any = {};
+          try { parsed = JSON.parse(existing.text); } catch (_) {}
+
+          const visualSubject = data.visualSubject ? String(data.visualSubject).trim() : (parsed.visualSubject || parsed.title || 'Science scene');
+          const seed = (Date.now() + Math.floor(Math.random() * 50000)) % 1000000;
+          const newImageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualSubject.slice(0, 300))}?width=1080&height=1350&model=flux&nologo=true&seed=${seed}`;
+
+          parsed.visualSubject = visualSubject;
+          parsed.imageUrl = newImageUrl;
+          parsed.imagePrompt = `${visualSubject}. cinematic lighting, photorealistic National Geographic quality, 8k resolution, tack sharp photography, sharp focal point, no text, no watermark, no logo, no subtitles, no borders`;
+
+          await sb
+            .from('topic_queue_items')
+            .update({ text: JSON.stringify(parsed) })
+            .eq('id', data.itemId);
+
+          return sendJson({ success: true, imageUrl: newImageUrl, visualSubject });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3e7. API: Delete an Idea from the Queue
+    if (url.pathname === '/api/topics/delete' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.id) return sendJson({ error: 'id is required' }, 400);
+
+          const sb = getSupabaseClient();
+          if (!sb) return sendJson({ error: 'Supabase client unavailable' }, 500);
+
+          const { error } = await sb.from('topic_queue_items').delete().eq('id', data.id);
+          if (error) return sendJson({ error: error.message }, 500);
+          return sendJson({ success: true });
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3e8. API: Create / Add a Fresh Idea to the Queue
+    if (url.pathname === '/api/topics/create' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.pageId) return sendJson({ error: 'pageId is required' }, 400);
+          if (!data.title) return sendJson({ error: 'title is required' }, 400);
+
+          const sb = getSupabaseClient();
+          if (!sb) return sendJson({ error: 'Supabase client unavailable' }, 500);
+
+          const visualSubject = data.visualSubject || `${data.title}, photorealistic National Geographic photography`;
+          const seed = Date.now() % 100000;
+          const imageUrl = data.imageUrl || `https://image.pollinations.ai/prompt/${encodeURIComponent(visualSubject.slice(0, 300))}?width=1080&height=1350&model=flux&nologo=true&seed=${seed}`;
+
+          const payload = {
+            title: String(data.title).trim(),
+            category: data.category ? String(data.category).trim() : 'General',
+            headline: data.headline ? String(data.headline).trim().toUpperCase() : String(data.title).trim().toUpperCase(),
+            facts: Array.isArray(data.facts) ? data.facts : [data.facts || `Key verified discovery in ${data.title}.`],
+            visualSubject,
+            imagePrompt: `${visualSubject}. cinematic lighting, photorealistic quality, 8k, sharp focal point, no text, no watermark`,
+            imageUrl,
+          };
+
+          const { data: maxOrderRow } = await sb
+            .from('topic_queue_items')
+            .select('sort_order')
+            .eq('page_id', data.pageId)
+            .order('sort_order', { ascending: false })
+            .limit(1);
+
+          const nextOrder = (maxOrderRow?.[0]?.sort_order ?? -1) + 1;
+
+          const { data: inserted, error: insErr } = await sb
+            .from('topic_queue_items')
+            .insert({
+              page_id: data.pageId,
+              category: payload.category,
+              text: JSON.stringify(payload),
+              status: 'pending',
+              sort_order: nextOrder,
+            })
+            .select()
+            .single();
+
+          if (insErr) return sendJson({ error: insErr.message }, 500);
+          return sendJson({ success: true, topic: payload, item: inserted });
         } catch (e: any) {
           return sendJson({ error: e.message }, 500);
         }
@@ -4408,6 +4706,9 @@ async function generateDashboardHtml(
                               <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; font-weight: 600;" onclick="openPageSettingsModal('${p.id}')" title="Configure posting cadence, schedule builder, and publishing modes">
                                 ⚙️ Settings & Schedule
                               </button>
+                              <button class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px; font-weight: 600; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.08);" onclick="openDailyContentStudio('${p.id}', '${escapeHtml(p.name)}')" title="Review, edit, or regenerate today's researched topics and visual image ideas">
+                                💡 Daily Ideas
+                              </button>
                               <button class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px;" onclick="analyzePageNicheAction('${p.id}')" title="Automatically evaluate Page niche using AI">
                                 ✨ Detect Niche
                               </button>
@@ -4838,7 +5139,8 @@ async function generateDashboardHtml(
             <h3 style="font-size: 18px; margin-bottom: 4px;">7-Day Autonomous Schedule Calendar</h3>
             <p style="color: var(--text-muted); font-size: 13px;">Multi-page posting time slots optimized for Facebook algorithm audience peaks.</p>
           </div>
-          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+            ${pages.length > 0 ? `<button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.08); padding: 5px 12px; cursor: pointer;" onclick="openDailyContentStudio('${pages[0].id}', '${escapeHtml(pages[0].name)}')">💡 Daily Content & Image Ideas</button>` : ''}
             <span class="badge" style="background: #064e3b; color: #34d399;">● Published</span>
             <span class="badge" style="background: #1e3a8a; color: #60a5fa;">● Scheduled on FB</span>
             <span class="badge" style="background: #78350f; color: #f59e0b;">● Review Required</span>
@@ -6627,6 +6929,147 @@ async function generateDashboardHtml(
       <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #1e293b; padding-top: 16px;">
         <button type="button" class="btn btn-secondary" onclick="closePostDetailsModal()">Close</button>
         <button type="button" class="btn btn-primary" onclick="copyPostCaptionToClipboard()">📋 Copy Caption</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DAILY CONTENT & IMAGE IDEAS STUDIO MODAL -->
+  <div class="modal" id="dailyContentStudioModal" style="display: none; align-items: center; justify-content: center; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.88); backdrop-filter: blur(8px); z-index: 10000; overflow-y: auto; padding: 20px;">
+    <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; width: 100%; max-width: 1080px; max-height: 92vh; overflow-y: auto; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8); position: relative;">
+      
+      <!-- Studio Header -->
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid #1e293b; padding-bottom: 14px; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <h2 style="font-size: 20px; font-weight: 700; color: #f8fafc; margin: 0;">💡 Daily Content & Image Ideas Studio</h2>
+            <span id="dcsPageBadge" class="badge" style="background: #1e3a8a; color: #60a5fa; font-weight: 700;">Page: -</span>
+            <span id="dcsCountBadge" class="badge" style="background: #064e3b; color: #34d399; font-weight: 700;">0 Ideas in Queue</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 13px; margin: 4px 0 0 0;">
+            Review, edit, or regenerate today's researched topics and photorealistic visual scenes. The autonomous worker generates the full caption and composes the final card at T-30m before each slot.
+          </p>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button type="button" class="btn btn-secondary" style="font-size: 12px; font-weight: 600; color: #38bdf8; border: 1px solid rgba(56,189,248,0.4);" onclick="openAddTopicModal()">
+            ➕ Add Idea
+          </button>
+          <button type="button" class="btn btn-primary" id="dcsRegenAllBtn" style="font-size: 12px; font-weight: 700;" onclick="regenerateAllTopics()">
+            ⚡ Regenerate All (Fresh Batch)
+          </button>
+          <button type="button" onclick="closeDailyContentStudio()" style="background: none; border: none; color: #94a3b8; font-size: 26px; cursor: pointer; line-height: 1; padding: 2px 8px; border-radius: 4px;" title="Close Modal">&times;</button>
+        </div>
+      </div>
+
+      <!-- Loading Indicator -->
+      <div id="dcsLoading" style="display: none; text-align: center; padding: 40px 20px;">
+        <div style="font-size: 28px; margin-bottom: 12px;">⏳</div>
+        <h4 style="font-size: 15px; color: #93c5fd; margin-bottom: 4px;" id="dcsLoadingText">Researching fresh verified topics...</h4>
+        <p style="font-size: 12px; color: var(--text-muted);">Consulting AI models with scientific databases and generating FLUX visual scenes</p>
+      </div>
+
+      <!-- Empty State -->
+      <div id="dcsEmptyState" style="display: none; text-align: center; padding: 48px 20px; background: #020617; border: 1px solid #1e293b; border-radius: 8px;">
+        <div style="font-size: 36px; margin-bottom: 12px;">💡</div>
+        <h3 style="font-size: 16px; color: #f8fafc; margin-bottom: 6px;">No Content Ideas in Queue for Today</h3>
+        <p style="color: var(--text-muted); font-size: 13px; max-width: 520px; margin: 0 auto 18px auto;">
+          Run Daily Research now to generate today's content topics, verified facts, and visual prompts based on your page's niche and cadence.
+        </p>
+        <button class="btn btn-primary" onclick="regenerateAllTopics()" style="font-size: 13px; padding: 8px 18px; font-weight: 700;">
+          ✨ Generate Today's Ideas Now
+        </button>
+      </div>
+
+      <!-- List of Ideas Cards -->
+      <div id="dcsCardsContainer" style="display: flex; flex-direction: column; gap: 16px;"></div>
+
+      <!-- Modal Footer -->
+      <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #1e293b; padding-top: 16px; margin-top: 20px; flex-wrap: wrap; gap: 10px;">
+        <div style="font-size: 12px; color: #64748b;">
+          💡 Changes take effect immediately. Scheduled slots pop ideas in order (Slot 1, Slot 2...).
+        </div>
+        <button type="button" class="btn btn-secondary" onclick="closeDailyContentStudio()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EDIT CONTENT IDEA MODAL -->
+  <div class="modal" id="editTopicIdeaModal" style="display: none; align-items: center; justify-content: center; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.88); backdrop-filter: blur(8px); z-index: 10001; overflow-y: auto; padding: 20px;">
+    <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; width: 100%; max-width: 680px; max-height: 90vh; overflow-y: auto; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8); position: relative;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid #1e293b; padding-bottom: 12px;">
+        <h3 style="font-size: 18px; font-weight: 700; color: #f8fafc; margin: 0;" id="etiModalHeading">✏️ Edit Content & Image Idea</h3>
+        <button type="button" onclick="closeEditTopicModal()" style="background: none; border: none; color: #94a3b8; font-size: 24px; cursor: pointer;">&times;</button>
+      </div>
+
+      <input type="hidden" id="etiId" value="" />
+
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">Topic Title</label>
+        <input type="text" id="etiTitle" class="form-control" style="width: 100%; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 8px 12px; color: #f8fafc; font-size: 14px;" placeholder="e.g. James Webb Confirms Water Vapor in PDS 70" />
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px;">
+        <div>
+          <label style="display: block; font-size: 12px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">Category</label>
+          <input type="text" id="etiCategory" class="form-control" style="width: 100%; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 8px 12px; color: #f8fafc; font-size: 13px;" placeholder="e.g. Space & Astronomy" />
+        </div>
+        <div>
+          <label style="display: block; font-size: 12px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">Headline (Wrap accents in **)</label>
+          <input type="text" id="etiHeadline" class="form-control" style="width: 100%; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 8px 12px; color: #f8fafc; font-size: 13px;" placeholder="e.g. WEBB CONFIRMS **WATER VAPOR** ON PLANET" />
+        </div>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">
+          Verified Facts (One fact per line)
+        </label>
+        <textarea id="etiFacts" rows="4" class="form-control" style="width: 100%; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 8px 12px; color: #f8fafc; font-size: 13px; line-height: 1.5;" placeholder="Fact 1&#10;Fact 2&#10;Fact 3"></textarea>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">
+          Visual Scene Description (For Image Generator)
+        </label>
+        <textarea id="etiVisualSubject" rows="3" class="form-control" style="width: 100%; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 8px 12px; color: #f8fafc; font-size: 13px; line-height: 1.5;" placeholder="Vivid, photorealistic scene description of the exact physical subject"></textarea>
+      </div>
+
+      <div style="margin-bottom: 20px;">
+        <label style="display: block; font-size: 12px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">Image URL</label>
+        <input type="text" id="etiImageUrl" class="form-control" style="width: 100%; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 8px 12px; color: #f8fafc; font-size: 12px; font-family: monospace;" placeholder="https://..." />
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #1e293b; padding-top: 14px;">
+        <button type="button" class="btn btn-secondary" onclick="closeEditTopicModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveTopicEditAction()">💾 Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REGENERATE WITH CUSTOM PROMPT / FEEDBACK DIALOG -->
+  <div class="modal" id="customPromptRegenModal" style="display: none; align-items: center; justify-content: center; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.88); backdrop-filter: blur(8px); z-index: 10001; overflow-y: auto; padding: 20px;">
+    <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; width: 100%; max-width: 580px; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8); position: relative;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid #1e293b; padding-bottom: 12px;">
+        <h3 style="font-size: 17px; font-weight: 700; color: #f8fafc; margin: 0;">💬 Regenerate Idea with Custom Guidance</h3>
+        <button type="button" onclick="closeCustomPromptRegenModal()" style="background: none; border: none; color: #94a3b8; font-size: 24px; cursor: pointer;">&times;</button>
+      </div>
+
+      <input type="hidden" id="cprItemId" value="" />
+      <div style="font-size: 13px; color: #94a3b8; margin-bottom: 14px;">
+        Currently replacing: <strong id="cprCurrentTitle" style="color: #f8fafc;">-</strong>
+      </div>
+
+      <div style="margin-bottom: 18px;">
+        <label style="display: block; font-size: 12px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">
+          What would you like the AI to research or change?
+        </label>
+        <textarea id="cprGuidanceText" rows="4" class="form-control" style="width: 100%; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 10px 12px; color: #f8fafc; font-size: 13px; line-height: 1.5;" placeholder="e.g. Focus on deep-sea bioluminescence, or make it about Europa's ocean, or make the headline punchier with a number."></textarea>
+        <div style="font-size: 11px; color: #64748b; margin-top: 4px;">
+          The AI will research a brand new, verified scientific topic matching your direction and generate a matching FLUX visual scene.
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #1e293b; padding-top: 14px;">
+        <button type="button" class="btn btn-secondary" onclick="closeCustomPromptRegenModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="cprSubmitBtn" onclick="submitCustomPromptRegen()">🚀 Regenerate with this Direction</button>
       </div>
     </div>
   </div>
