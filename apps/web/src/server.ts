@@ -4848,33 +4848,34 @@ async function generateDashboardHtml(
 
         <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; overflow-x: auto;">
           ${(() => {
+            const userTz = 'Asia/Kolkata';
             const defaultTz = pages[0]?.schedule?.timezone || 'America/New_York';
             const now = new Date();
-            const todayAudienceStr = new Intl.DateTimeFormat('en-CA', {
-              timeZone: defaultTz,
+            const todayUserStr = new Intl.DateTimeFormat('en-CA', {
+              timeZone: userTz,
               year: 'numeric',
               month: '2-digit',
               day: '2-digit',
             }).format(now);
-            const [tYear, tMonth, tDay] = todayAudienceStr.split('-').map(Number);
+            const [tYear, tMonth, tDay] = todayUserStr.split('-').map(Number);
 
             return Array.from({ length: 7 })
               .map((_, idx) => {
                 const slotDate = new Date(Date.UTC(tYear, tMonth - 1, tDay + idx, 12, 0, 0));
                 const dayDateStr = new Intl.DateTimeFormat('en-CA', {
-                  timeZone: defaultTz,
+                  timeZone: userTz,
                   year: 'numeric',
                   month: '2-digit',
                   day: '2-digit',
                 }).format(slotDate);
-                const dayName = slotDate.toLocaleDateString('en-US', { timeZone: defaultTz, weekday: 'short' });
-                const dayMonthStr = slotDate.toLocaleDateString('en-US', { timeZone: defaultTz, month: 'short', day: 'numeric' });
+                const dayName = slotDate.toLocaleDateString('en-US', { timeZone: userTz, weekday: 'short' });
+                const dayMonthStr = slotDate.toLocaleDateString('en-US', { timeZone: userTz, month: 'short', day: 'numeric' });
 
                 const dayPosts = posts.filter((p) => {
                   if (!p.scheduled_for) return false;
                   try {
                     const pTzDate = new Intl.DateTimeFormat('en-CA', {
-                      timeZone: defaultTz,
+                      timeZone: userTz,
                       year: 'numeric',
                       month: '2-digit',
                       day: '2-digit',
@@ -4948,7 +4949,7 @@ async function generateDashboardHtml(
                           hour12: true,
                         });
                         const locTime = new Date(p.scheduled_for).toLocaleTimeString('en-US', {
-                          timeZone: 'Asia/Kolkata',
+                          timeZone: userTz,
                           hour: 'numeric',
                           minute: '2-digit',
                           hour12: true,

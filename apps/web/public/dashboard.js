@@ -4268,6 +4268,12 @@
 
   // --- Master Initialization Routine ---
   function initDashboard() {
+    try {
+      const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (browserTz && !document.cookie.includes('user_tz=')) {
+        document.cookie = 'user_tz=' + encodeURIComponent(browserTz) + '; path=/; max-age=31536000; SameSite=Lax';
+      }
+    } catch (_) {}
     safeParseInitialData();
     checkMissingTablesBanner();
 
