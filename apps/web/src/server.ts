@@ -58,6 +58,8 @@ import {
   analyzePageNiche,
   generateDraftProfileFromPage,
   decrypt,
+  runDailyContentResearch,
+  getSupabaseClient,
   GeminiNativeAdapter,
   OpenAIChatAdapter,
   renderHeadlineCard,
@@ -2101,6 +2103,61 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       return;
     }
 
+    // 3e2. API: Trigger Daily Content Research for a Page
+    if (url.pathname === '/api/topics/research' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+          const page = await store.getPageById(data.pageId);
+          if (!page) return sendJson({ error: 'Page not found' }, 404);
+
+          const allProviders = await store.getProviders();
+          const allKeys = await store.getProviderKeys();
+          const activeProviders = allProviders
+            .filter((p) => p.enabled)
+            .sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
+
+          const activeProvidersWithKeys = activeProviders.map((p) => {
+            const matchingKey = allKeys.find((k) => k.provider_id === p.id && k.is_active);
+            let decryptedKey: string | undefined;
+            if (matchingKey && matchingKey.encrypted_key) {
+              try {
+                decryptedKey = decrypt(matchingKey.encrypted_key);
+              } catch (_) {}
+            }
+            return {
+              id: p.id,
+              name: p.name,
+              kind: (p as any).kind || p.adapter_kind,
+              adapter_kind: p.adapter_kind,
+              model_name: p.model_name,
+              priority: p.priority ?? 1,
+              base_url: p.base_url,
+              config: (p as any).config,
+              apiKey: decryptedKey,
+              keyMasked: matchingKey?.masked_key,
+            };
+          });
+
+          const researchResult = await runDailyContentResearch({
+            page,
+            supabase: getSupabaseClient()!,
+            activeProviders: activeProvidersWithKeys,
+            force: Boolean(data.force),
+          });
+
+          return sendJson(researchResult);
+        } catch (e: any) {
+          return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
     // 3f. API: Real-Time 7-Day Live Schedule Preview
     if (url.pathname === '/api/pages/preview-schedule' && req.method === 'POST') {
       let body = '';
@@ -2536,12 +2593,34 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             };
           });
 
+          let queueItem: any = null;
+          if (!parsed.userTopic) {
+            try {
+              const sb = getSupabaseClient()!;
+              const { data: qRows } = await sb
+                .from('topic_queue_items')
+                .select('*')
+                .eq('page_id', page.id)
+                .eq('status', 'pending')
+                .order('sort_order', { ascending: true })
+                .limit(1);
+              if (qRows && qRows.length > 0) {
+                try {
+                  queueItem = JSON.parse(qRows[0].text);
+                } catch (_) {
+                  queueItem = { title: qRows[0].text, category: qRows[0].category };
+                }
+              }
+            } catch (_) {}
+          }
+
           // Invoke the unified generation pipeline (shared with worker)
           const pipelineResult = await runGenerationPipeline({
             page,
             profile,
             activeProviders: activeProvidersWithKeys,
-            userTopic: parsed.userTopic,
+            userTopic: parsed.userTopic || queueItem?.title,
+            queueItem,
             isTestRun: true,
           });
 

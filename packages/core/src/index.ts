@@ -26,6 +26,7 @@ export * from './profiles/seed-profiles.js';
 export * from './topics/queue-manager.js';
 export * from './topics/dedup.js';
 export * from './topics/category-selector.js';
+export * from './topics/daily-research.js';
 
 // Settings Resolver
 export * from './settings-resolver/resolver.js';

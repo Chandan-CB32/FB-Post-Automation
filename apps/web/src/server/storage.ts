@@ -1419,19 +1419,21 @@ export class SystemStore {
     if (updates.daily_cap !== undefined) updatePayload.daily_cap = updates.daily_cap;
 
     // Both active and is_live kept strictly in sync
-    if (updates.active !== undefined) {
-      updatePayload.active = updates.active;
-      updatePayload.is_live = updates.active;
-    }
-    if (updates.is_live !== undefined) {
-      updatePayload.is_live = updates.is_live;
-      updatePayload.active = updates.is_live;
+    const finalActive = updates.active !== undefined ? updates.active : updates.is_live;
+    if (finalActive !== undefined) {
+      updatePayload.active = finalActive;
+      const baseSched = updates.schedule || existingRow.schedule || {};
+      updatePayload.schedule = {
+        ...baseSched,
+        active: finalActive,
+        is_live: finalActive,
+      };
+    } else if (updates.schedule) {
+      updatePayload.schedule = updates.schedule;
     }
     if (updates.auto_posting_stopped_action) {
       updatePayload.auto_posting_stopped_action = updates.auto_posting_stopped_action;
     }
-
-    if (updates.schedule) updatePayload.schedule = updates.schedule;
     if (updates.niche_analysis !== undefined) updatePayload.niche_analysis = updates.niche_analysis;
     if (updates.ai_disclosure_enabled !== undefined) updatePayload.ai_disclosure_enabled = updates.ai_disclosure_enabled;
     if (updates.ai_disclosure_text !== undefined) updatePayload.ai_disclosure_text = updates.ai_disclosure_text;

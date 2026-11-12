@@ -7,6 +7,8 @@ import { calculateNextSlots, PageScheduleConfig } from './slot-planner.js';
 import { runGenerationPipeline } from '../pipeline/generation-pipeline.js';
 import { rasterizeHeadlineCardToJpeg } from '../pipeline/headline-renderer.js';
 import { decrypt } from '../crypto/encryption.js';
+import { runDailyContentResearch } from '../topics/daily-research.js';
+import { generateTopicKey } from '../topics/dedup.js';
 
 export interface AutonomousCycleOptions {
   now?: Date;
@@ -147,11 +149,12 @@ export async function runAutonomousCycle(
       throw new Error(`Failed to query pages: ${pagesErr.message}`);
     }
 
-    // Filter active and live pages
+    // Filter active and live pages: strictly require active === true AND schedule.is_live !== false
     const livePages = (allPages || []).filter((p) => {
-      const isPageLive = p.active === true || p.schedule?.is_live === true;
+      if (p.active !== true) return false;
+      if (p.schedule && (p.schedule.is_live === false || p.schedule.active === false)) return false;
       const isTokenOk = p.fb_page_token && p.token_status !== 'revoked' && p.token_status !== 'inaccessible';
-      return isPageLive && isTokenOk;
+      return isTokenOk;
     });
 
     console.log(`[Autonomous Worker] Found ${livePages.length} active live page(s) to evaluate.`);
@@ -175,6 +178,58 @@ export async function runAutonomousCycle(
           minGapMinutes,
           mode: sched.mode || 'fixed',
         };
+
+        // Load active providers with decrypted keys for multi-provider failover
+        let activeProvidersWithKeys: any[] = [];
+        try {
+          let pQuery: any = supabase.from('providers').select('*');
+          if (typeof pQuery.order === 'function') {
+            pQuery = pQuery.order('priority', { ascending: true });
+          }
+          const { data: dbProviders } = await pQuery;
+          let kQuery: any = supabase.from('provider_keys').select('*');
+          if (typeof kQuery.eq === 'function') {
+            kQuery = kQuery.eq('status', 'active');
+          }
+          const { data: dbKeys } = await kQuery;
+
+          activeProvidersWithKeys = (dbProviders || [])
+            .filter((p: any) => p.active !== false)
+            .map((p: any) => {
+              const matchingKey = (dbKeys || []).find((k: any) => k.provider_id === p.id);
+              let decryptedKey: string | undefined;
+              if (matchingKey && matchingKey.key_encrypted) {
+                try {
+                  decryptedKey = decrypt(matchingKey.key_encrypted);
+                } catch (_) {}
+              }
+              return {
+                id: p.id,
+                name: p.name,
+                kind: p.kind || p.adapter_kind,
+                model_name: p.model_name,
+                priority: p.priority || 1,
+                base_url: p.base_url,
+                config: p.config,
+                apiKey: decryptedKey,
+                keyMasked: matchingKey?.key_masked,
+              };
+            });
+        } catch (pLoadErr) {
+          console.warn('[Autonomous Worker] Could not load provider keys:', pLoadErr);
+        }
+
+        // Run Daily Content Research once per day or when topic queue is below target count
+        try {
+          await runDailyContentResearch({
+            page,
+            supabase,
+            activeProviders: activeProvidersWithKeys,
+            force: false,
+          });
+        } catch (resErr: any) {
+          console.warn(`[Autonomous Worker] Daily research warning for '${page.name}':`, resErr?.message || resErr);
+        }
 
         // Calculate upcoming slots from now
         const upcomingSlots = calculateNextSlots(scheduleConfig, now, 10);
@@ -220,6 +275,33 @@ export async function runAutonomousCycle(
             `[Autonomous Worker] Generating post for '${page.name}' for slot ${slot.toISOString()} (T${diffMinutes >= 0 ? '-' : '+'}${Math.abs(Math.round(diffMinutes))}m)...`
           );
 
+          // Pop next pending researched topic from queue
+          let chosenQueueItem: any = null;
+          let queueItemId: string | null = null;
+          try {
+            const { data: qRows } = await supabase
+              .from('topic_queue_items')
+              .select('*')
+              .eq('page_id', page.id)
+              .eq('status', 'pending')
+              .order('sort_order', { ascending: true })
+              .limit(1);
+
+            if (qRows && qRows.length > 0) {
+              queueItemId = qRows[0].id;
+              try {
+                chosenQueueItem = JSON.parse(qRows[0].text);
+              } catch (_) {
+                chosenQueueItem = {
+                  title: qRows[0].text,
+                  category: qRows[0].category,
+                };
+              }
+            }
+          } catch (qErr: any) {
+            console.warn('[Autonomous Worker] Could not fetch next pending topic queue item:', qErr?.message || qErr);
+          }
+
           // Resolve content profile
           let profile: ContentProfile | null = null;
           if (page.profile_id) {
@@ -251,51 +333,13 @@ export async function runAutonomousCycle(
             publishing_mode: page.publishing_mode || 'auto',
           };
 
-          // Load active providers with decrypted keys for multi-provider failover
-          let activeProvidersWithKeys: any[] = [];
-          try {
-            let pQuery: any = supabase.from('providers').select('*');
-            if (typeof pQuery.order === 'function') {
-              pQuery = pQuery.order('priority', { ascending: true });
-            }
-            const { data: dbProviders } = await pQuery;
-            let kQuery: any = supabase.from('provider_keys').select('*');
-            if (typeof kQuery.eq === 'function') {
-              kQuery = kQuery.eq('status', 'active');
-            }
-            const { data: dbKeys } = await kQuery;
-
-            activeProvidersWithKeys = (dbProviders || [])
-              .filter((p: any) => p.active !== false)
-              .map((p: any) => {
-                const matchingKey = (dbKeys || []).find((k: any) => k.provider_id === p.id);
-                let decryptedKey: string | undefined;
-                if (matchingKey && matchingKey.key_encrypted) {
-                  try {
-                    decryptedKey = decrypt(matchingKey.key_encrypted);
-                  } catch (_) {}
-                }
-                return {
-                  id: p.id,
-                  name: p.name,
-                  kind: p.kind || p.adapter_kind,
-                  model_name: p.model_name,
-                  priority: p.priority || 1,
-                  base_url: p.base_url,
-                  config: p.config,
-                  apiKey: decryptedKey,
-                  keyMasked: matchingKey?.key_masked,
-                };
-              });
-          } catch (pLoadErr) {
-            console.warn('[Autonomous Worker] Could not load provider keys:', pLoadErr);
-          }
-
           // Run unified 7-stage generation pipeline with multi-provider failover
           const pipelineResult = await runGenerationPipeline({
             page: pageWithOverrides,
             profile: profile || undefined,
             activeProviders: activeProvidersWithKeys,
+            userTopic: chosenQueueItem?.title,
+            queueItem: chosenQueueItem,
             isTestRun: false,
           });
 
@@ -453,14 +497,28 @@ export async function runAutonomousCycle(
               `[Autonomous Worker] Successfully created & scheduled post '${insertedPost.title}' (${postStatus}) for ${slot.toISOString()}!`
             );
 
+            // Mark queue item as used
+            if (queueItemId) {
+              try {
+                await supabase
+                  .from('topic_queue_items')
+                  .update({ status: 'used', used_at: new Date().toISOString() })
+                  .eq('id', queueItemId);
+              } catch (qUpdErr: any) {
+                console.warn('[Autonomous Worker] Could not mark queue item as used:', qUpdErr?.message || qUpdErr);
+              }
+            }
+
             // Record in topic history
             try {
+              const topicTitle = pipelineResult.topic?.title || insertedPost.title;
               await supabase.from('topic_history').insert({
                 page_id: page.id,
-                topic_key: pipelineResult.topic?.category || 'General',
-                title: pipelineResult.topic?.title || insertedPost.title,
+                topic_key: generateTopicKey(topicTitle),
+                title: topicTitle,
                 category: pipelineResult.topic?.category || '',
-                used_at: new Date().toISOString(),
+                post_id: insertedPost.id,
+                created_at: new Date().toISOString(),
               });
             } catch (_) {}
 

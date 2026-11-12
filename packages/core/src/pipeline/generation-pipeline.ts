@@ -149,6 +149,7 @@ export interface GenerationPipelineOptions {
     keyMasked?: string;
   }>;
   userTopic?: string;
+  queueItem?: any;
   isTestRun?: boolean;
 }
 
@@ -343,11 +344,23 @@ export async function runGenerationPipeline(
   // --------------------------------------------------------------------------
   // STAGE 1: Research / Source Discovery
   // --------------------------------------------------------------------------
+  // STAGE 1 & 2: Research Discovery & Topic Selection
+  // --------------------------------------------------------------------------
   const s1Start = Date.now();
   let researchFacts: FactItem[] = [];
   let sourceUrls: string[] = [];
 
-  if (isScience) {
+  let topicTitle = userTopic?.trim() || options.queueItem?.title?.trim() || '';
+  let topicCategory = options.queueItem?.category || profile?.topicSettings?.categories?.[0]?.name || `${profile?.name || 'General'} Highlights`;
+
+  if (options.queueItem && Array.isArray(options.queueItem.facts) && options.queueItem.facts.length > 0) {
+    researchFacts = options.queueItem.facts.map((f: any) =>
+      typeof f === 'string'
+        ? { text: f.trim(), sourceUrl: 'https://science.nasa.gov/' }
+        : { text: (f.text || f.claim || String(f)).trim(), sourceUrl: f.sourceUrl || 'https://science.nasa.gov/' }
+    );
+    sourceUrls = researchFacts.map((f) => f.sourceUrl).filter(Boolean) as string[];
+  } else if (isScience) {
     sourceUrls = [
       'https://science.nasa.gov/mission/webb/',
       'https://www.esa.int/Science_Exploration/Space_Science/Cheops',
@@ -404,9 +417,6 @@ export async function runGenerationPipeline(
   // STAGE 2: Topic Selection
   // --------------------------------------------------------------------------
   const s2Start = Date.now();
-  let topicTitle = userTopic?.trim() || '';
-  let topicCategory = profile?.topicSettings?.categories?.[0]?.name || `${profile?.name || 'General'} Highlights`;
-
   if (!topicTitle) {
     if (isHorror) {
       topicTitle = 'The Whispering Clock of Hemlock Manor';
@@ -432,8 +442,8 @@ export async function runGenerationPipeline(
   // --------------------------------------------------------------------------
   // STAGE 3: Caption Writing & Prompt Composition
   // --------------------------------------------------------------------------
-  let keyScene = `High-detail visual exploring ${profile?.name || 'the scene'}, showcasing key elements with dramatic atmospheric lighting and cinematic framing.`;
-  let headline = `${(profile?.name || 'DISCOVERY').toUpperCase()}: THE UNSEEN REVELATION`;
+  let keyScene = options.queueItem?.visualSubject || `High-detail visual exploring ${topicTitle || profile?.name || 'the scene'}, showcasing key elements with dramatic atmospheric lighting and cinematic framing.`;
+  let headline = options.queueItem?.headline || `${(topicTitle || profile?.name || 'DISCOVERY').toUpperCase()}: THE UNSEEN REVELATION`;
   const fixedTags =
     (profile?.hashtagSettings?.fixedHashtags || []).slice(0, 5).join(' ') ||
     `#${(profile?.name || 'discovery').replace(/\s+/g, '')}`;
@@ -452,6 +462,17 @@ export async function runGenerationPipeline(
     }
   }
 
+  const factStrings = researchFacts.map((f: any) => (typeof f === 'string' ? f : f.text || f.claim || String(f)));
+
+  const topicDirectivePrompt = `TOPIC & SCIENTIFIC RESEARCH DIRECTIVE:
+You are writing a Facebook post strictly about the following topic:
+TOPIC: ${topicTitle}
+CATEGORY: ${topicCategory}
+VERIFIED FACTS TO COVER:
+${factStrings.length > 0 ? factStrings.map((f: string) => `- ${f}`).join('\n') : `- Key observations and discoveries in ${topicTitle}`}
+
+You must ground your entire post on these verified facts. Do not write about unrelated subjects.`;
+
   const structureRulesPrompt = `MANDATORY EDITORIAL & STRUCTURE RULES (STRICT COMPLIANCE REQUIRED):
 - Total Word Count: MUST BE strictly between ${minWords} and ${maxWords} words (Target: ${targetWords} words).
 - Paragraph Structure: Maximum of ${maxSentencesPerParagraph} sentences per paragraph. NEVER write wall-of-text paragraphs. Always separate each paragraph with a blank line (double newline).
@@ -460,7 +481,7 @@ export async function runGenerationPipeline(
 - Hashtags: End with 3 to 5 relevant hashtags on their own final line.
 - Policies: Zero links or URLs. Minimal emojis (1-2 maximum).`;
 
-  const rawEffectivePrompt = [basePrompt, customPromptSection, structureRulesPrompt]
+  const rawEffectivePrompt = [basePrompt, customPromptSection, topicDirectivePrompt, structureRulesPrompt]
     .filter(Boolean)
     .join('\n\n');
   const effectivePrompt = maskSecretsInPrompt(rawEffectivePrompt);
@@ -560,7 +581,10 @@ export async function runGenerationPipeline(
     }
 
     if (!draft) {
-      if (isHorror) {
+      if (options.queueItem || (userTopic && userTopic !== 'Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b')) {
+        const factSummary = factStrings.slice(0, 3).join('\n\n');
+        draft = `Groundbreaking observations have revealed fascinating insights into ${topicTitle}.\n\n${factSummary || `Researchers analyzing high-precision data uncovered significant physical characteristics that advance our understanding of this phenomenon.`}\n\nThese verified findings mark an exciting milestone in our study of the cosmos and natural world.\n\nWhat do you find most intriguing about this discovery?\n\n${fixedTags}`;
+      } else if (isHorror) {
         keyScene = 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.';
         headline = 'THE CLOCK TICKED WITHOUT **GEARS OR SPRINGS**';
         if (attempt === 1) {
@@ -587,15 +611,15 @@ export async function runGenerationPipeline(
     }
 
     // Apply accuracy guard and headline validation
-    const factStrings = researchFacts.map((f: any) => (typeof f === 'string' ? f : f.fact || f.claim || String(f)));
-    const accuracyCheck = sanitizeHeadlineAccuracy(headline, factStrings);
+    const verifiedFactStrings = researchFacts.map((f: any) => (typeof f === 'string' ? f : f.fact || f.claim || String(f)));
+    const accuracyCheck = sanitizeHeadlineAccuracy(headline, verifiedFactStrings);
     headline = accuracyCheck.headline;
 
     const hlValidation = validateHeadline(headline, {
       minWords: 6,
       maxWords: 12,
       hardMaxWords: 14,
-      verifiedFacts: factStrings,
+      verifiedFacts: verifiedFactStrings,
     });
     if (!hlValidation.valid && hlValidation.suggestedShortenedHeadline) {
       headline = hlValidation.suggestedShortenedHeadline;
@@ -783,13 +807,17 @@ export async function runGenerationPipeline(
   const s5Start = Date.now();
 
   // 1. Determine the core topic visual subject
-  let visualSubject = keyScene;
+  let visualSubject = options.queueItem?.visualSubject || keyScene;
   const isGenericBoilerplate =
     !visualSubject ||
     /Create ONE|Show a single|COMPOSITION:|High-detail visual exploring|AVOID:/i.test(visualSubject);
 
   if (isGenericBoilerplate) {
-    if (isScience) {
+    if (options.queueItem?.visualSubject) {
+      visualSubject = options.queueItem.visualSubject;
+    } else if (userTopic && userTopic !== 'Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b') {
+      visualSubject = `${userTopic}, ${topicCategory}, photorealistic scientific subject in vivid detail`;
+    } else if (isScience) {
       visualSubject = `Exoplanet K2-18b with deep ocean atmosphere and luminous cloud bands illuminated by distant red dwarf star, wide angle deep space view, James Webb Space Telescope discovery`;
     } else if (isHorror) {
       visualSubject = `An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows`;
@@ -953,9 +981,29 @@ export async function runGenerationPipeline(
   }
 
   if (!thumbnailUrl) {
-    thumbnailUrl = isTestEnv()
-      ? generateThumbnailSvg({ headline, themeColor: isHorror ? '#e11d48' : '#38bdf8' })
-      : `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=flux&nologo=true`;
+    if (options.queueItem?.imageUrl) {
+      thumbnailUrl = options.queueItem.imageUrl;
+    } else {
+      thumbnailUrl = isTestEnv()
+        ? generateThumbnailSvg({ headline, themeColor: isHorror ? '#e11d48' : '#38bdf8' })
+        : `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=flux&nologo=true`;
+    }
+  }
+
+  // Pre-fetch remote HTTP image to Base64 data URI so Sharp compositor can rasterize directly
+  if (thumbnailUrl && thumbnailUrl.startsWith('http') && !isTestEnv()) {
+    try {
+      const imgRes = await fetch(thumbnailUrl, { signal: AbortSignal.timeout(20000) });
+      if (imgRes.ok) {
+        const ab = await imgRes.arrayBuffer();
+        if (ab.byteLength > 500) {
+          const mime = imgRes.headers.get('content-type') || 'image/jpeg';
+          thumbnailUrl = `data:${mime};base64,${Buffer.from(ab).toString('base64')}`;
+        }
+      }
+    } catch (fErr) {
+      console.warn('[GenerationPipeline] Could not pre-fetch remote image for compositor:', fErr);
+    }
   }
 
   stages.push({

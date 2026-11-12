@@ -91,8 +91,8 @@ export function getBundledFont(family: SupportedFontFamily = 'Roboto'): LoadedFo
 
   for (const p of searchPaths) {
     try {
-      if (fs.existsSync(p)) {
-        fontBuffer = fs.readFileSync(p);
+      if (fs.existsSync(/*turbopackIgnore: true*/ p)) {
+        fontBuffer = fs.readFileSync(/*turbopackIgnore: true*/ p);
         resolvedPath = p;
         break;
       }
