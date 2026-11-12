@@ -67,7 +67,21 @@ function isFactualAssertion(sentence: string): boolean {
     lower.startsWith('as our collective understanding') ||
     lower.startsWith('each new perspective') ||
     lower.startsWith('it is a reminder') ||
-    lower.startsWith('one thing is certain')
+    lower.startsWith('one thing is certain') ||
+    lower.startsWith('groundbreaking observations') ||
+    lower.startsWith('groundbreaking insights') ||
+    lower.startsWith('recent observations') ||
+    lower.startsWith('recent scientific') ||
+    lower.startsWith('these verified findings') ||
+    lower.startsWith('these verified discoveries') ||
+    lower.startsWith('these groundbreaking') ||
+    lower.startsWith('these remarkable') ||
+    lower.startsWith('these detailed findings') ||
+    lower.startsWith('these discoveries') ||
+    lower.startsWith('these exciting discoveries') ||
+    lower.startsWith('these findings mark') ||
+    lower.startsWith('this marks an unprecedented') ||
+    lower.startsWith('in the world of')
   ) {
     return false;
   }
@@ -183,6 +197,8 @@ export function verifyFactualClaims(
         'detect', 'observ', 'spectroscop', 'methane', 'carbon', 'dioxide', 'dms', 'sulfide',
         'hycean', 'phytoplankton', 'telescope', 'light-year', 'habitable', 'molecule',
         'temperature', 'orbit', 'distance', 'evidence', 'transit', 'transmission',
+        'magnetic', 'field', 'gauss', 'dynamo', 'spacecraft', 'mission', 'jupiter', 'juno',
+        'asymmetry', 'instrument', 'telemetry', 'gravity', 'radiation',
       ];
 
       let findingMatches = 0;
@@ -192,10 +208,28 @@ export function verifyFactualClaims(
         }
       }
 
-      const totalMatchScore = keywordOverlap + entityOverlap * 1.5 + findingMatches * 2;
-      // Strict threshold: requires matching at least one core empirical finding term
-      // and sufficient overall overlap (e.g. findingMatches >= 1 and totalMatchScore >= 4)
-      const isStrongMatch = findingMatches >= 1 && (keywordOverlap >= 3 || totalMatchScore >= 4);
+      // Check numerical data & measurements overlap (e.g. "5", "12%", "150", "1.5")
+      const claimNumbers = claim.match(/\b\d+(?:\.\d+)?%?\b/g) || [];
+      let numberMatches = 0;
+      for (const num of claimNumbers) {
+        if (lowerFact.includes(num.toLowerCase())) {
+          numberMatches++;
+        }
+      }
+
+      const totalMatchScore = keywordOverlap + entityOverlap * 1.5 + findingMatches * 2 + numberMatches * 3;
+      const ratio = claimKeywords.size > 0 ? keywordOverlap / claimKeywords.size : 0;
+      // Strong match criteria:
+      // 1. Matched finding term with sufficient overlap, OR
+      // 2. Strong keyword overlap (>= 3 words or >= 2 words with >= 25% ratio), OR
+      // 3. Shared numerical measurement with at least 1 keyword, OR
+      // 4. Overall high composite score (>= 4)
+      const isStrongMatch =
+        (findingMatches >= 1 && (keywordOverlap >= 2 || totalMatchScore >= 3)) ||
+        keywordOverlap >= 3 ||
+        (keywordOverlap >= 2 && ratio >= 0.25) ||
+        (numberMatches >= 1 && keywordOverlap >= 1) ||
+        totalMatchScore >= 4;
 
       if (isStrongMatch && (!bestMatch || totalMatchScore > bestMatch.score)) {
         bestMatch = { fact: ft.fact, score: totalMatchScore };

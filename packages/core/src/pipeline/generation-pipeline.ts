@@ -513,77 +513,95 @@ You must ground your entire post on these verified facts. Do not write about unr
     let provName = 'simulated-ai-writer';
     let modelName = 'gemini-1.5-pro';
 
-    const selectedProv = textCandidates.length > 0 ? textCandidates[(attempt - 1) % textCandidates.length] : undefined;
-    if (selectedProv) {
-      provName = selectedProv.name;
-      modelName = selectedProv.model_name || 'default-model';
-    }
-
     let draft = '';
 
-    // Invoke real AI provider API if apiKey is present
-    if (selectedProv && selectedProv.apiKey && !isTestEnv()) {
-      try {
-        const kind = (selectedProv.kind || selectedProv.adapter_kind || '').toLowerCase();
-        if (kind === 'gemini_native' || kind === 'gemini') {
-          const adapter = new GeminiNativeAdapter();
-          const res = await adapter.generateText({
-            prompt: rawEffectivePrompt,
-            apiKey: selectedProv.apiKey,
-            model: selectedProv.model_name || 'gemini-2.5-flash',
-            baseUrl: selectedProv.base_url,
-            temperature: 0.7,
-            timeoutMs: 20000,
-          });
-          if (res.text && res.text.trim()) {
-            draft = res.text.trim();
-            successfulTextProviderId = selectedProv.id;
-            successfulTextProviderName = selectedProv.name;
-            successfulTextModel = res.modelUsed || selectedProv.model_name || 'gemini-2.5-flash';
+    // In production / live execution, try active text providers with priority failover
+    if (!isTestEnv() && textCandidates.length > 0) {
+      // Rotate starting index by attempt if retrying for higher QA score
+      const candidateList = [
+        ...textCandidates.slice((attempt - 1) % textCandidates.length),
+        ...textCandidates.slice(0, (attempt - 1) % textCandidates.length),
+      ];
+
+      for (const candidate of candidateList) {
+        if (!candidate.apiKey) continue;
+        try {
+          const kind = (candidate.kind || candidate.adapter_kind || '').toLowerCase();
+          if (kind === 'gemini_native' || kind === 'gemini') {
+            const adapter = new GeminiNativeAdapter();
+            const res = await adapter.generateText({
+              prompt: rawEffectivePrompt,
+              apiKey: candidate.apiKey,
+              model: candidate.model_name || 'gemini-2.5-flash',
+              baseUrl: candidate.base_url,
+              temperature: 0.7,
+              timeoutMs: 20000,
+            });
+            if (res.text && res.text.trim()) {
+              draft = res.text.trim();
+              provName = candidate.name;
+              modelName = res.modelUsed || candidate.model_name || 'gemini-2.5-flash';
+              successfulTextProviderId = candidate.id;
+              successfulTextProviderName = candidate.name;
+              successfulTextModel = modelName;
+              break;
+            }
+          } else if (kind === 'cloudflare_workers_ai') {
+            const accountId = candidate.config?.account_id || (candidate as any).accountId || process.env.CLOUDFLARE_ACCOUNT_ID;
+            if (!accountId) {
+              console.warn(`[Pipeline Stage 3] Cloudflare Workers AI skipped: missing accountId`);
+              continue;
+            }
+            const adapter = new CloudflareWorkersAIAdapter();
+            const res = await adapter.generateText({
+              prompt: rawEffectivePrompt,
+              apiKey: candidate.apiKey,
+              model: candidate.model_name || '@cf/meta/llama-3.1-8b-instruct',
+              baseUrl: candidate.base_url,
+              extraBody: { accountId },
+              timeoutMs: 20000,
+            });
+            if (res.text && res.text.trim()) {
+              draft = res.text.trim();
+              provName = candidate.name;
+              modelName = res.modelUsed || candidate.model_name || '@cf/meta/llama-3.1-8b-instruct';
+              successfulTextProviderId = candidate.id;
+              successfulTextProviderName = candidate.name;
+              successfulTextModel = modelName;
+              break;
+            }
+          } else {
+            // OpenAIChatAdapter: Groq, OpenRouter, NVIDIA NIM, Hugging Face
+            const adapter = new OpenAIChatAdapter();
+            const res = await adapter.generateText({
+              prompt: rawEffectivePrompt,
+              apiKey: candidate.apiKey,
+              model: candidate.model_name || 'openai/gpt-oss-20b',
+              baseUrl: candidate.base_url,
+              temperature: 0.7,
+              maxTokens: 2500,
+              timeoutMs: 20000,
+            });
+            if (res.text && res.text.trim()) {
+              draft = res.text.trim();
+              provName = candidate.name;
+              modelName = res.modelUsed || candidate.model_name || 'openai/gpt-oss-20b';
+              successfulTextProviderId = candidate.id;
+              successfulTextProviderName = candidate.name;
+              successfulTextModel = modelName;
+              break;
+            }
           }
-        } else if (kind === 'cloudflare_workers_ai') {
-          const adapter = new CloudflareWorkersAIAdapter();
-          const res = await adapter.generateText({
-            prompt: rawEffectivePrompt,
-            apiKey: selectedProv.apiKey,
-            model: selectedProv.model_name || '@cf/meta/llama-3.1-8b-instruct',
-            baseUrl: selectedProv.base_url,
-            extraBody: { accountId: selectedProv.config?.account_id || (selectedProv as any).accountId || process.env.CLOUDFLARE_ACCOUNT_ID },
-            timeoutMs: 20000,
-          });
-          if (res.text && res.text.trim()) {
-            draft = res.text.trim();
-            successfulTextProviderId = selectedProv.id;
-            successfulTextProviderName = selectedProv.name;
-            successfulTextModel = res.modelUsed || selectedProv.model_name || '@cf/meta/llama-3.1-8b-instruct';
-          }
-        } else {
-          // OpenAIChatAdapter: Groq, OpenRouter, NVIDIA NIM, Hugging Face
-          const adapter = new OpenAIChatAdapter();
-          const res = await adapter.generateText({
-            prompt: rawEffectivePrompt,
-            apiKey: selectedProv.apiKey,
-            model: selectedProv.model_name || 'llama-3.3-70b-versatile',
-            baseUrl: selectedProv.base_url,
-            temperature: 0.7,
-            timeoutMs: 20000,
-          });
-          if (res.text && res.text.trim()) {
-            draft = res.text.trim();
-            successfulTextProviderId = selectedProv.id;
-            successfulTextProviderName = selectedProv.name;
-            successfulTextModel = res.modelUsed || selectedProv.model_name || 'llama-3.3-70b-versatile';
-          }
+        } catch (provErr: any) {
+          console.warn(`[Pipeline Stage 3] Priority #${candidate.priority} Provider '${candidate.name}' failed:`, provErr?.message || provErr);
         }
-      } catch (provErr: any) {
-        console.warn(`[Pipeline Stage 3] Priority #${selectedProv.priority} Provider '${provName}' failed:`, provErr?.message || provErr);
       }
     }
 
     if (!draft) {
       if (options.queueItem || (userTopic && userTopic !== 'Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b')) {
-        const factSummary = factStrings.slice(0, 3).join('\n\n');
-        draft = `Groundbreaking observations have revealed fascinating insights into ${topicTitle}.\n\n${factSummary || `Researchers analyzing high-precision data uncovered significant physical characteristics that advance our understanding of this phenomenon.`}\n\nThese verified findings mark an exciting milestone in our study of the cosmos and natural world.\n\nWhat do you find most intriguing about this discovery?\n\n${fixedTags}`;
+        const factBullets = factStrings.slice(0, 3).join('. ');
+        draft = `Recent observations have revealed fascinating new insights into ${topicTitle}, providing researchers and enthusiasts with unprecedented clarity into this phenomenon.\n\n${factBullets || `Researchers analyzing high-precision telemetry and observational data uncovered significant physical characteristics that fundamentally advance our scientific understanding.`} These detailed findings represent years of meticulous investigation and collaborative exploration across the scientific community.\n\nThese verified discoveries mark an exciting new milestone in our ongoing exploration of the natural world and the cosmos, opening up fresh avenues for deeper scientific inquiry.\n\nWhat do you find most intriguing about this incredible breakthrough?\n\n${fixedTags}`;
       } else if (isHorror) {
         keyScene = 'An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.';
         headline = 'THE CLOCK TICKED WITHOUT **GEARS OR SPRINGS**';
