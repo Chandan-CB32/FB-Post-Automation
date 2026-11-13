@@ -2144,22 +2144,6 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
           const updated = await store.updatePage(data.pageId, updates, { force: true });
 
-          // Also update Supabase database directly for instantaneous persistence across all processes
-          try {
-            const sb = getSupabaseClient();
-            if (sb) {
-              await sb
-                .from('pages')
-                .update({
-                  active: targetActive,
-                  is_live: targetActive,
-                  schedule: targetSchedule,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', data.pageId);
-            }
-          } catch (_) {}
-
           await store.addAuditLog({
             level: targetActive ? 'info' : 'warning',
             category: 'publish',
@@ -5223,22 +5207,21 @@ async function generateDashboardHtml(
                                     ● ${statusLabel}
                                   </span>
                                   ${p.publishing_mode === 'auto'
-                                    ? `<span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 10px; font-weight: 700; padding: 2px 6px;">AUTO</span>`
+                                    ? `<span class="badge page-mode-badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 10px; font-weight: 700; padding: 2px 6px;">AUTO</span>`
                                     : p.publishing_mode === 'hybrid'
-                                    ? `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 10px; font-weight: 700; padding: 2px 6px;">HYBRID</span>`
-                                    : `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #fbbf24; border: 1px solid rgba(234, 179, 8, 0.3); font-size: 10px; font-weight: 700; padding: 2px 6px;">REVIEW</span>`}
+                                    ? `<span class="badge page-mode-badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 10px; font-weight: 700; padding: 2px 6px;">HYBRID</span>`
+                                    : `<span class="badge page-mode-badge" style="background: rgba(234, 179, 8, 0.15); color: #fbbf24; border: 1px solid rgba(234, 179, 8, 0.3); font-size: 10px; font-weight: 700; padding: 2px 6px;">REVIEW</span>`}
                                   ${isShared ? `<span class="badge" style="background: rgba(59,130,246,0.15); color: #93c5fd; font-size: 10px;" title="Discovered via multiple Facebook accounts">Shared</span>` : ''}
                                   ${p.active
-                                    ? `<span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399; font-size: 11px; font-weight: 700;">🟢 LIVE (${p.schedule.postsPerDay} posts/day)</span>`
-                                    : `<span class="badge" style="background: rgba(239,68,68,0.15); color: #f87171; font-size: 11px; font-weight: 700;">🔴 POSTING DISABLED</span>`}
+                                    ? `<span class="badge page-live-badge" style="background: rgba(16,185,129,0.15); color: #34d399; font-size: 11px; font-weight: 700;">🟢 LIVE (${p.schedule.postsPerDay} posts/day)</span>`
+                                    : `<span class="badge page-live-badge" style="background: rgba(239,68,68,0.15); color: #f87171; font-size: 11px; font-weight: 700;">🔴 POSTING DISABLED</span>`}
                                 </div>
                                 <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">
                                   <code style="color: #94a3b8;">ID: ${p.fb_page_id}</code>
                                   ${p.category ? ` • <span>${p.category}</span>` : ''}
                                   ${typeof p.fan_count === 'number' && p.fan_count > 0 ? ` • <span>${p.fan_count.toLocaleString()} fans</span>` : ''}
-                                  • <span style="color: #cbd5e1;">🎭 Profile: <strong>${profileLabel}</strong></span>
-                                  • <span style="color: #93c5fd;">Mode: ${p.publishing_mode.toUpperCase()}</span>
-                                  • <span>🕒 ${p.schedule.postsPerDay > 0 ? `${p.schedule.postsPerDay} posts/day (${p.schedule.timezone || 'Asia/Kolkata'})` : 'No Schedule'}</span>
+                                  • <span class="page-profile-label" style="color: #cbd5e1;">🎭 Profile: <strong>${profileLabel}</strong></span>
+                                  • <span class="page-schedule-summary">🕒 ${p.schedule.postsPerDay > 0 ? `${p.schedule.postsPerDay} posts/day (${p.schedule.timezone || 'Asia/Kolkata'})` : 'No Schedule'}</span>
                                 </div>
                                 <div style="margin-top: 5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                                   <span class="badge" style="background: ${isSafetyGatePassed ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)'}; color: ${isSafetyGatePassed ? '#34d399' : '#fbbf24'}; font-size: 11px; font-weight: 700;">

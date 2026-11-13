@@ -372,6 +372,35 @@ export class SystemStore {
   private memorySettings: Map<string, any> = new Map();
   private memoryContentProfiles: Map<string, any> = new Map();
 
+  // In-memory query cache for sub-50ms dashboard response times
+  private queryCache: Map<string, { data: any; expiresAt: number }> = new Map();
+
+  public getCached<T>(key: string): T | null {
+    const item = this.queryCache.get(key);
+    if (!item) return null;
+    if (Date.now() > item.expiresAt) {
+      this.queryCache.delete(key);
+      return null;
+    }
+    return item.data as T;
+  }
+
+  public setCached<T>(key: string, data: T, ttlMs = 15000): void {
+    this.queryCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+  }
+
+  public invalidateCache(prefix?: string): void {
+    if (!prefix) {
+      this.queryCache.clear();
+      return;
+    }
+    for (const key of this.queryCache.keys()) {
+      if (key === prefix || key.startsWith(prefix + ':') || key.startsWith(prefix + '_')) {
+        this.queryCache.delete(key);
+      }
+    }
+  }
+
   private constructor() {
     this.initClient();
   }
@@ -427,6 +456,10 @@ export class SystemStore {
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
     }
+
+    const cached = this.getCached<StoredFacebookAccount[]>('accounts');
+    if (cached) return cached;
+
     const { data, error } = await this.getClient()
       .from('facebook_accounts')
       .select('*')
@@ -436,7 +469,7 @@ export class SystemStore {
       console.error('[SystemStore] Error fetching facebook_accounts:', error.message);
       return [];
     }
-    return (data || []).map((row) => ({
+    const accounts = (data || []).map((row) => ({
       id: row.id,
       account_name: row.account_name,
       fb_user_id: row.fb_user_id,
@@ -451,6 +484,8 @@ export class SystemStore {
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));
+    this.setCached('accounts', accounts, 15000);
+    return accounts;
   }
 
   public async getAccountById(id: string): Promise<StoredFacebookAccount | undefined> {
@@ -557,6 +592,9 @@ export class SystemStore {
       throw new Error(`Failed to create Facebook Account in Supabase: ${error.message}`);
     }
 
+    this.invalidateCache('accounts');
+    this.invalidateCache('pages');
+
     return {
       id: data.id,
       account_name: data.account_name,
@@ -635,6 +673,9 @@ export class SystemStore {
       throw new Error(`Failed to update Facebook Account ${id}: ${error.message}`);
     }
 
+    this.invalidateCache('accounts');
+    this.invalidateCache('pages');
+
     return data as StoredFacebookAccount;
   }
 
@@ -653,6 +694,8 @@ export class SystemStore {
       console.error('[SystemStore] Delete account error:', error.message);
       return false;
     }
+    this.invalidateCache('accounts');
+    this.invalidateCache('pages');
     return true;
   }
 
@@ -839,6 +882,9 @@ export class SystemStore {
       );
     }
 
+    const cached = this.getCached<StoredPage[]>('pages');
+    if (cached) return cached;
+
     const { data, error } = await this.getClient()
       .from('pages')
       .select('*')
@@ -849,7 +895,9 @@ export class SystemStore {
       return [];
     }
 
-    return (data || []).map((row) => this.mapRowToStoredPage(row));
+    const pages = (data || []).map((row) => this.mapRowToStoredPage(row));
+    this.setCached('pages', pages, 15000);
+    return pages;
   }
 
   public async getPageById(id: string): Promise<StoredPage | undefined> {
@@ -1090,6 +1138,8 @@ export class SystemStore {
     if (error) {
       throw new Error(`Failed to create Facebook Page in Supabase: ${error.message}`);
     }
+
+    this.invalidateCache('pages');
 
     return this.mapRowToStoredPage({
       ...payload,
@@ -1559,6 +1609,8 @@ export class SystemStore {
       throw new Error(`Write-verification failed: active status did not persist to database.`);
     }
 
+    this.invalidateCache('pages');
+
     return this.mapRowToStoredPage(verifiedRow);
   }
 
@@ -1572,6 +1624,7 @@ export class SystemStore {
       console.error('[SystemStore] Delete page error:', error.message);
       return false;
     }
+    this.invalidateCache('pages');
     return true;
   }
 
@@ -1579,10 +1632,14 @@ export class SystemStore {
     if (isTestEnv() && !this.client) {
       return Array.from(this.memoryContentProfiles.values());
     }
+
+    const cached = this.getCached<any[]>('content_profiles');
+    if (cached) return cached;
+
     const { data, error } = await this.getClient().from('content_profiles').select('*').order('created_at', { ascending: false });
     if (error || !data || data.length === 0) {
       const starters = getAllNicheProfiles();
-      return starters.map((p) => ({
+      const list = starters.map((p) => ({
         id: p.id,
         name: p.name,
         description: p.description,
@@ -1602,8 +1659,10 @@ export class SystemStore {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }));
+      this.setCached('content_profiles', list, 30000);
+      return list;
     }
-    return data.map((r: any) => ({
+    const profiles = data.map((r: any) => ({
       id: r.id,
       name: r.name,
       description: r.description,
@@ -1623,6 +1682,8 @@ export class SystemStore {
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }));
+    this.setCached('content_profiles', profiles, 30000);
+    return profiles;
   }
 
   public async createContentProfile(profile: any): Promise<any> {
@@ -1650,6 +1711,7 @@ export class SystemStore {
     if (error) {
       throw new Error(`Failed to create content profile: ${error.message}`);
     }
+    this.invalidateCache('content_profiles');
     return {
       id: data.id,
       name: data.name,
@@ -2003,6 +2065,9 @@ export class SystemStore {
       );
     }
 
+    const cached = this.getCached<StoredPost[]>('posts');
+    if (cached) return cached;
+
     const { data, error } = await this.getClient()
       .from('posts')
       .select('*')
@@ -2013,7 +2078,7 @@ export class SystemStore {
       return [];
     }
 
-    return (data || []).map((row) => ({
+    const posts = (data || []).map((row) => ({
       id: row.id,
       page_id: row.page_id,
       fb_account_id: row.fb_account_id,
@@ -2044,6 +2109,8 @@ export class SystemStore {
       published_at: row.published_at,
       analytics: row.analytics || {},
     }));
+    this.setCached('posts', posts, 10000);
+    return posts;
   }
 
   public async getPostById(id: string): Promise<StoredPost | undefined> {
@@ -2132,6 +2199,7 @@ export class SystemStore {
       throw new Error(`Failed to update post ${id}: ${error.message}`);
     }
 
+    this.invalidateCache('posts');
     return data as StoredPost;
   }
 
@@ -2187,6 +2255,7 @@ export class SystemStore {
       throw new Error(`Failed to create post in Supabase: ${error.message}`);
     }
 
+    this.invalidateCache('posts');
     return data as StoredPost;
   }
 
@@ -2200,6 +2269,7 @@ export class SystemStore {
       console.error('[SystemStore] Delete post error:', error.message);
       return false;
     }
+    this.invalidateCache('posts');
     return true;
   }
 
@@ -2208,6 +2278,9 @@ export class SystemStore {
     if (isTestEnv() && !this.client) {
       return Array.from(this.memoryProviders.values()).sort((a, b) => a.priority - b.priority);
     }
+
+    const cached = this.getCached<StoredProvider[]>('providers');
+    if (cached) return cached;
 
     const { data, error } = await this.getClient()
       .from('providers')
@@ -2232,7 +2305,7 @@ export class SystemStore {
       }
     }
 
-    return (data || []).map((row) => ({
+    const providers = (data || []).map((row) => ({
       id: row.id,
       name: row.name,
       adapter_kind: row.kind,
@@ -2249,6 +2322,8 @@ export class SystemStore {
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));
+    this.setCached('providers', providers, 15000);
+    return providers;
   }
 
   public async getProviderById(id: string): Promise<StoredProvider | undefined> {
@@ -2359,6 +2434,7 @@ export class SystemStore {
       throw new Error(`Failed to create provider in Supabase: ${error.message}`);
     }
 
+    this.invalidateCache('providers');
     return {
       id: data.id,
       name: data.name,
@@ -2428,6 +2504,7 @@ export class SystemStore {
       throw new Error(`Failed to update provider ${id}: ${error.message}`);
     }
 
+    this.invalidateCache('providers');
     return {
       id: data.id,
       name: data.name,
@@ -2463,6 +2540,7 @@ export class SystemStore {
       console.error('[SystemStore] Delete provider error:', error.message);
       return false;
     }
+    this.invalidateCache('providers');
     return true;
   }
 
@@ -2472,6 +2550,10 @@ export class SystemStore {
         .filter((k) => !providerId || k.provider_id === providerId)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     }
+
+    const cacheKey = providerId ? 'provider_keys:' + providerId : 'provider_keys:all';
+    const cached = this.getCached<StoredProviderKey[]>(cacheKey);
+    if (cached) return cached;
 
     let query = this.getClient().from('provider_keys').select('*').order('created_at', { ascending: false });
     if (providerId) {
@@ -2483,7 +2565,7 @@ export class SystemStore {
       return [];
     }
 
-    return (data || []).map((row) => ({
+    const keys = (data || []).map((row) => ({
       id: row.id,
       provider_id: row.provider_id,
       encrypted_key: row.key_encrypted,
@@ -2492,6 +2574,8 @@ export class SystemStore {
       is_active: row.status === 'active',
       created_at: row.created_at,
     }));
+    this.setCached(cacheKey, keys, 15000);
+    return keys;
   }
 
   public async invalidateAllPagesTestRun(): Promise<void> {
@@ -2592,6 +2676,7 @@ export class SystemStore {
     if (error) {
       throw new Error(`Failed to insert provider key in Supabase: ${error.message}`);
     }
+    this.invalidateCache('provider_keys');
 
     await this.invalidateAllPagesTestRun();
     return {
@@ -2641,6 +2726,7 @@ export class SystemStore {
       console.error('[SystemStore] Delete provider key error:', error.message);
       return false;
     }
+    this.invalidateCache('provider_keys');
     await this.invalidateAllPagesTestRun();
     return true;
   }
@@ -2677,6 +2763,7 @@ export class SystemStore {
       .eq('id', keyId)
       .select()
       .single();
+    this.invalidateCache('provider_keys');
 
     if (error) {
       throw new Error(`Failed to toggle provider key ${keyId}: ${error.message}`);
@@ -3501,7 +3588,7 @@ export class SystemStore {
     }
 
     const now = Date.now();
-    if (!forceRefresh && this.cachedStorageHealth && now - this.cachedStorageHealth.timestamp < 30000) {
+    if (!forceRefresh && this.cachedStorageHealth && now - this.cachedStorageHealth.timestamp < 300000) {
       return this.cachedStorageHealth.result;
     }
 

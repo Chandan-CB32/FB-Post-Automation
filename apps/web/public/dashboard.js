@@ -819,6 +819,92 @@
     if (ovCountEl) ovCountEl.innerText = pages.length;
   }
 
+  function updatePageCardDom(page) {
+    if (!page || !page.id) return;
+    const card = document.getElementById('page-card-' + page.id);
+    if (!card) return;
+
+    const isActive = Boolean(page.active || page.is_live);
+    const mode = (page.publishing_mode || 'review').toLowerCase();
+    const postsPerDay = (page.schedule && page.schedule.postsPerDay) || 0;
+    const tz = (page.schedule && page.schedule.timezone) || 'Asia/Kolkata';
+
+    // 1. Update Mode Badge
+    const modeBadge = card.querySelector('.page-mode-badge');
+    if (modeBadge) {
+      if (mode === 'auto') {
+        modeBadge.style.background = 'rgba(168, 85, 247, 0.15)';
+        modeBadge.style.color = '#c084fc';
+        modeBadge.style.border = '1px solid rgba(168, 85, 247, 0.3)';
+        modeBadge.innerText = 'AUTO';
+      } else if (mode === 'hybrid') {
+        modeBadge.style.background = 'rgba(59, 130, 246, 0.15)';
+        modeBadge.style.color = '#60a5fa';
+        modeBadge.style.border = '1px solid rgba(59, 130, 246, 0.3)';
+        modeBadge.innerText = 'HYBRID';
+      } else {
+        modeBadge.style.background = 'rgba(234, 179, 8, 0.15)';
+        modeBadge.style.color = '#fbbf24';
+        modeBadge.style.border = '1px solid rgba(234, 179, 8, 0.3)';
+        modeBadge.innerText = 'REVIEW';
+      }
+    }
+
+    // 2. Update Live Badge
+    const liveBadge = card.querySelector('.page-live-badge');
+    if (liveBadge) {
+      if (isActive) {
+        liveBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+        liveBadge.style.color = '#34d399';
+        liveBadge.innerText = '🟢 LIVE (' + postsPerDay + ' posts/day)';
+      } else {
+        liveBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+        liveBadge.style.color = '#f87171';
+        liveBadge.innerText = '🔴 POSTING DISABLED';
+      }
+    }
+
+    // 3. Update Profile Label
+    const profileLabelEl = card.querySelector('.page-profile-label');
+    if (profileLabelEl) {
+      var pName = 'Custom Niche';
+      if (page.profile_id && typeof contentProfilesData !== 'undefined' && Array.isArray(contentProfilesData)) {
+        var found = contentProfilesData.find(function (cp) { return cp.id === page.profile_id; });
+        if (found) pName = found.name;
+      } else if (page.custom_niche || page.custom_niche_text) {
+        pName = page.custom_niche || page.custom_niche_text;
+      }
+      profileLabelEl.innerHTML = '🎭 Profile: <strong>' + escapeHtml(pName) + '</strong>';
+    }
+
+    // 4. Update Schedule Summary
+    const schedSummaryEl = card.querySelector('.page-schedule-summary');
+    if (schedSummaryEl) {
+      schedSummaryEl.innerText = '🕒 ' + (postsPerDay > 0 ? (postsPerDay + ' posts/day (' + tz + ')') : 'No Schedule');
+    }
+
+    // 5. Update Start/Stop Button
+    const btn = card.querySelector('.start-stop-btn');
+    if (btn) {
+      btn.disabled = false;
+      if (isActive) {
+        btn.className = 'btn btn-secondary start-stop-btn';
+        btn.style.cssText = 'padding: 6px 14px; font-size: 12px; font-weight: 700; color: #f87171; border: 1px solid rgba(239,68,68,0.4);';
+        btn.innerText = '⏸️ Stop';
+        btn.title = '1-Click: Stop auto-posting for this Page';
+        btn.setAttribute('onclick', "togglePageAutoPosting('" + page.id + "', false)");
+      } else {
+        btn.className = 'btn btn-primary start-stop-btn';
+        btn.style.cssText = 'padding: 6px 14px; font-size: 12px; font-weight: 700; color: #ffffff;';
+        btn.innerText = '🚀 Start';
+        btn.title = '1-Click: Start auto-posting for this Page';
+        btn.setAttribute('onclick', "togglePageAutoPosting('" + page.id + "', true)");
+      }
+    }
+  }
+
+  window.updatePageCardDom = updatePageCardDom;
+
   // --- Missing Tables Alert Banner ---
   function checkMissingTablesBanner() {
     if (!storageHealth) return;
@@ -938,14 +1024,37 @@
 
   async function deleteAccountAction(id) {
     if (!confirm('Are you sure you want to disconnect this Facebook Account? Pages under it will remain but become unlinked.')) return;
-    const res = await fetch('/api/accounts', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: id }),
-    });
-    if (res.ok) {
-      showToast('Facebook Account disconnected.');
-      fetchAccountsTab();
+    try {
+      const res = await fetch('/api/accounts', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id }),
+      });
+      if (res.ok) {
+        showToast('Facebook Account disconnected.', 'info');
+        const row = document.getElementById('account-row-' + id);
+        if (row) {
+          row.style.transition = 'opacity 0.25s ease';
+          row.style.opacity = '0';
+          setTimeout(function () { row.remove(); }, 250);
+        }
+        const node = document.getElementById('account-node-' + id);
+        if (node) {
+          node.style.transition = 'opacity 0.25s ease';
+          node.style.opacity = '0';
+          setTimeout(function () { node.remove(); }, 250);
+        }
+        accountsData = accountsData.filter(function (a) { return a.id !== id; });
+        const sidebarCount = document.getElementById('sidebarAccountCount');
+        if (sidebarCount) sidebarCount.innerText = accountsData.length;
+        const ovCount = document.getElementById('ovAccountCount');
+        if (ovCount) ovCount.innerText = accountsData.length;
+      } else {
+        const errData = await res.json().catch(function () { return {}; });
+        showToast('Failed to disconnect account: ' + (errData.error || res.statusText), 'error');
+      }
+    } catch (err) {
+      showToast('Network error disconnecting account: ' + err.message, 'error');
     }
   }
 
@@ -1051,14 +1160,32 @@
 
   async function deletePageAction(id) {
     if (!confirm('Are you sure you want to disconnect this Page?')) return;
-    const res = await fetch('/api/pages', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: id }),
-    });
-    if (res.ok) {
-      showToast('Page deleted.');
-      fetchPagesTab();
+    try {
+      const res = await fetch('/api/pages', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id }),
+      });
+      if (res.ok) {
+        showToast('Page deleted.', 'info');
+        const card = document.getElementById('page-card-' + id);
+        if (card) {
+          card.style.transition = 'all 0.25s ease';
+          card.style.opacity = '0';
+          card.style.transform = 'scale(0.96)';
+          setTimeout(function () { card.remove(); }, 250);
+        }
+        pagesData = pagesData.filter(function (p) { return p.id !== id; });
+        const sidebarCount = document.getElementById('sidebarPageCount');
+        if (sidebarCount) sidebarCount.innerText = pagesData.length;
+        const ovCount = document.getElementById('ovPageCount');
+        if (ovCount) ovCount.innerText = pagesData.length;
+      } else {
+        const errData = await res.json().catch(function () { return {}; });
+        showToast('Failed to delete page: ' + (errData.error || res.statusText), 'error');
+      }
+    } catch (err) {
+      showToast('Network error deleting page: ' + err.message, 'error');
     }
   }
 
@@ -3343,6 +3470,7 @@
       showToast('✅ Saved and verified at ' + savedTime, 'success');
 
       if (data.page) {
+        updatePageCardDom(data.page);
         updateModalChecklistDisplay(data.page);
       }
     } catch (err) {
@@ -4022,6 +4150,9 @@
         page.active = targetActive;
         page.is_live = targetActive;
         if (data.page && data.page.schedule) page.schedule = data.page.schedule;
+        updatePageCardDom(page);
+      } else if (data.page) {
+        updatePageCardDom(data.page);
       }
 
       if (currentSettingsPageId === pageId) {
