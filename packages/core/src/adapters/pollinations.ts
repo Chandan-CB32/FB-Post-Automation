@@ -5,6 +5,14 @@ import {
   ProviderError,
 } from './types.js';
 
+export const POLLINATIONS_MODELS = [
+  { id: 'flux', name: 'FLUX.1 Schnell (Default, Free)', cost: 0.0 },
+  { id: 'turbo', name: 'SDXL Turbo (High-speed)', cost: 0.002 },
+  { id: 'gptimage', name: 'GPT Image (Semantic prompt alignment)', cost: 0.003 },
+  { id: 'seedream', name: 'Seedream (ByteDance SDXL)', cost: 0.003 },
+  { id: 'nanobanana', name: 'Nano Banana (Gemini 2.5 Flash Image)', cost: 0.004 },
+];
+
 export class PollinationsImageAdapter implements ImageProviderAdapter {
   public readonly id = 'pollinations';
 
@@ -52,7 +60,7 @@ export class PollinationsImageAdapter implements ImageProviderAdapter {
       });
 
       // Fallback: If enterprise gen.pollinations.ai returns 401/403, retry via direct image.pollinations.ai
-      if (!response.ok && (response.status === 401 || response.status === 403) && !isDirectService) {
+      if (!response.ok && (response.status === 401 || response.status === 403) && !isDirectService && model === 'flux') {
         const fallbackUrl = new URL(`https://image.pollinations.ai/prompt/${prompt}`);
         fallbackUrl.searchParams.set('model', model);
         fallbackUrl.searchParams.set('width', width.toString());
@@ -81,6 +89,13 @@ export class PollinationsImageAdapter implements ImageProviderAdapter {
     if (!response.ok) {
       const status = response.status;
       const errorText = await response.text();
+      if (status === 402 || (status === 403 && model !== 'flux')) {
+        throw new ProviderError(
+          `Pollinations model "${model}" requires an active Pollinations subscription/tier or credits. Use "flux" for the free unlimited tier.`,
+          'auth',
+          status
+        );
+      }
       if (status === 401 || status === 403) {
         throw new ProviderError(`Pollinations auth failure: ${errorText}`, 'auth', status);
       }
@@ -112,4 +127,3 @@ export class PollinationsImageAdapter implements ImageProviderAdapter {
     };
   }
 }
-

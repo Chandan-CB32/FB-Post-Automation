@@ -7,6 +7,8 @@ export interface ProviderPreset {
   baseUrl: string;
   defaultTextModel?: string;
   defaultImageModel?: string;
+  availableImageModels?: Array<{ id: string; name: string; cost: number }>;
+  estimatedCostPerImage?: number;
   rpmLimit: number;
   rpdLimit: number;
   concurrencyLimit: number;
@@ -23,22 +25,32 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: 'gemini_native',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     defaultTextModel: 'gemini-2.5-flash',
+    defaultImageModel: 'gemini-2.5-flash-image',
+    availableImageModels: [
+      { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image (Nano Banana)', cost: 0.03 },
+      { id: 'gemini-3-pro-image', name: 'Gemini 3 Pro Image (Ultra)', cost: 0.06 },
+    ],
+    estimatedCostPerImage: 0.03,
     rpmLimit: 15,
     rpdLimit: 1500,
     concurrencyLimit: 2,
     category: 'popular',
-    instructions: 'Get a free API key at Google AI Studio (https://aistudio.google.com).',
+    instructions: 'Get an API key at Google AI Studio (https://aistudio.google.com). Note: Image generation requires billing enabled.',
     config: {
       searchGrounding: true,
     },
   },
   {
     id: 'preset-openai',
-    name: 'OpenAI (ChatGPT & GPT-4o)',
+    name: 'OpenAI (ChatGPT & DALL-E 3)',
     kind: 'openai_compatible_chat',
     baseUrl: 'https://api.openai.com/v1',
     defaultTextModel: 'gpt-4o',
     defaultImageModel: 'dall-e-3',
+    availableImageModels: [
+      { id: 'dall-e-3', name: 'DALL-E 3 (Standard 1024x1024 / 1024x1792)', cost: 0.04 },
+    ],
+    estimatedCostPerImage: 0.04,
     rpmLimit: 60,
     rpdLimit: 10000,
     concurrencyLimit: 4,
@@ -78,6 +90,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: 'openai_compatible_chat',
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultTextModel: 'meta-llama/llama-3.3-70b-instruct:free',
+    defaultImageModel: 'black-forest-labs/flux-1-schnell',
     rpmLimit: 20,
     rpdLimit: 200,
     concurrencyLimit: 2,
@@ -89,42 +102,22 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     },
   },
   {
-    id: 'preset-anthropic',
-    name: 'Anthropic Claude',
+    id: 'preset-zenmux',
+    name: 'ZenMux (Free Image Models)',
     kind: 'openai_compatible_chat',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    defaultTextModel: 'anthropic/claude-3.5-sonnet',
+    baseUrl: 'https://zenmux.ai/api/v1',
+    defaultTextModel: 'google/gemini-2.5-flash-free',
+    defaultImageModel: 'google/gemini-2.5-flash-image-free',
+    availableImageModels: [
+      { id: 'google/gemini-2.5-flash-image-free', name: 'Gemini 2.5 Flash Image (Free Tier)', cost: 0.0 },
+      { id: 'black-forest-labs/flux-1-schnell-free', name: 'FLUX.1 Schnell (Free Tier)', cost: 0.0 },
+    ],
+    estimatedCostPerImage: 0.0,
     rpmLimit: 30,
-    rpdLimit: 5000,
-    concurrencyLimit: 3,
-    category: 'popular',
-    instructions: 'Use an OpenRouter key at https://openrouter.ai/keys to access Claude 3.5 Sonnet.',
-    config: {},
-  },
-  {
-    id: 'preset-mistral',
-    name: 'Mistral AI',
-    kind: 'openai_compatible_chat',
-    baseUrl: 'https://api.mistral.ai/v1',
-    defaultTextModel: 'mistral-large-latest',
-    rpmLimit: 30,
-    rpdLimit: 5000,
+    rpdLimit: 1000,
     concurrencyLimit: 2,
-    category: 'popular',
-    instructions: 'Get your API key at https://console.mistral.ai/api-keys.',
-    config: {},
-  },
-  {
-    id: 'preset-perplexity',
-    name: 'Perplexity AI',
-    kind: 'openai_compatible_chat',
-    baseUrl: 'https://api.perplexity.ai',
-    defaultTextModel: 'sonar-pro',
-    rpmLimit: 20,
-    rpdLimit: 2000,
-    concurrencyLimit: 2,
-    category: 'popular',
-    instructions: 'Get your API key at https://www.perplexity.ai/settings/api.',
+    category: 'image',
+    instructions: 'Get a free API key at https://zenmux.ai. Select google/gemini-2.5-flash-image-free for free image generation.',
     config: {},
   },
 
@@ -135,11 +128,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: 'pollinations',
     baseUrl: 'https://gen.pollinations.ai',
     defaultImageModel: 'flux',
+    availableImageModels: [
+      { id: 'flux', name: 'FLUX.1 Schnell (Free, Photorealistic)', cost: 0.0 },
+      { id: 'turbo', name: 'SDXL Turbo (High-speed)', cost: 0.002 },
+      { id: 'gptimage', name: 'GPT Image (High prompt adherence)', cost: 0.003 },
+      { id: 'seedream', name: 'Seedream (ByteDance SDXL)', cost: 0.003 },
+      { id: 'nanobanana', name: 'Nano Banana (Gemini 2.5 Flash Image)', cost: 0.004 },
+    ],
+    estimatedCostPerImage: 0.0,
     rpmLimit: 30,
     rpdLimit: 1000,
     concurrencyLimit: 2,
     category: 'image',
-    instructions: '100% Free! Works without any API key, or enter a Pollinations seed/token.',
+    instructions: '100% Free for FLUX! Enter a Pollinations API token to access premium models.',
     config: {
       nologo: true,
       width: 1080,
@@ -153,6 +154,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.cloudflare.com/client/v4',
     defaultTextModel: '@cf/meta/llama-3.1-8b-instruct',
     defaultImageModel: '@cf/black-forest-labs/flux-1-schnell',
+    availableImageModels: [
+      { id: '@cf/black-forest-labs/flux-1-schnell', name: 'FLUX.1 Schnell (Workers AI)', cost: 0.003 },
+      { id: '@cf/stabilityai/stable-diffusion-xl-base-1.0', name: 'SDXL Base 1.0', cost: 0.002 },
+    ],
+    estimatedCostPerImage: 0.003,
     rpmLimit: 60,
     rpdLimit: 1000,
     concurrencyLimit: 2,
@@ -169,6 +175,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: 'https://api.together.xyz/v1',
     defaultTextModel: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
     defaultImageModel: 'black-forest-labs/FLUX.1-schnell',
+    availableImageModels: [
+      { id: 'black-forest-labs/FLUX.1-schnell', name: 'FLUX.1 Schnell', cost: 0.003 },
+      { id: 'black-forest-labs/FLUX.1-dev', name: 'FLUX.1 Dev', cost: 0.015 },
+    ],
+    estimatedCostPerImage: 0.003,
     rpmLimit: 30,
     rpdLimit: 5000,
     concurrencyLimit: 2,
@@ -253,4 +264,40 @@ export function findPresetById(id: string): ProviderPreset | undefined {
 
 export function findPresetByName(name: string): ProviderPreset | undefined {
   return PROVIDER_PRESETS.find((p) => p.name.toLowerCase() === name.toLowerCase());
+}
+
+/**
+ * Calculates estimated cost per image generation for a given provider and model.
+ */
+export function getEstimatedCostPerImage(adapterKind: string, model?: string): number {
+  const m = (model || '').toLowerCase();
+  if (adapterKind === 'pollinations') {
+    if (m === 'flux' || !m) return 0.0;
+    if (m.includes('turbo')) return 0.002;
+    if (m.includes('gptimage') || m.includes('seedream')) return 0.003;
+    if (m.includes('nanobanana')) return 0.004;
+    return 0.002;
+  }
+  if (adapterKind === 'gemini_native' || m.includes('gemini')) {
+    if (m.includes('pro')) return 0.06;
+    if (m.includes('free')) return 0.0;
+    return 0.03; // Standard Gemini 2.5 Flash Image is ~$0.03 / image
+  }
+  if (adapterKind === 'cloudflare_workers_ai' || m.includes('@cf')) {
+    return 0.003; // ~$0.0028 per image or free tier
+  }
+  if (m.includes('dall-e-3') || m.includes('dalle')) {
+    return 0.04;
+  }
+  if (m.includes('free')) {
+    return 0.0;
+  }
+  return 0.005;
+}
+
+/**
+ * Calculates estimated daily spend based on posts per day.
+ */
+export function getEstimatedDailyCost(adapterKind: string, model: string | undefined, postsPerDay = 5): number {
+  return Number((getEstimatedCostPerImage(adapterKind, model) * postsPerDay).toFixed(4));
 }

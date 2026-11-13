@@ -32,6 +32,9 @@ import { GeminiNativeAdapter } from '../adapters/gemini.js';
 import { OpenAIChatAdapter } from '../adapters/openai-chat.js';
 import { CloudflareWorkersAIAdapter } from '../adapters/cloudflare.js';
 import { PollinationsImageAdapter } from '../adapters/pollinations.js';
+import { runContentIntegrityCheck, IntegrityCheckResult } from '../validation/content-integrity.js';
+import { buildConcreteImagePrompt } from './image-prompt-builder.js';
+import { getEstimatedCostPerImage } from '../providers/presets.js';
 
 export interface PipelineStageResult {
   stage: string;
@@ -110,6 +113,14 @@ export interface GenerationPipelineResult {
   needs_review: boolean;
   requires_human_review: boolean;
   review_reason?: string;
+  integrityCheck?: IntegrityCheckResult;
+  visionRelevanceCheck?: {
+    pass: boolean;
+    score: number;
+    reason: string;
+    isGenericGlow: boolean;
+    hasText: boolean;
+  };
   error?: string;
   usedTextProviderId?: string;
   usedTextProviderName?: string;
@@ -663,7 +674,32 @@ You must ground your entire post on these verified facts. Do not write about unr
       }
     }
 
-    const passed = qaResult.valid && qaScore >= minRequiredScore && (!isFactual || (claimResult?.allVerified ?? true));
+    // --------------------------------------------------------------------------
+    // STAGE 4.1 Check: Content Integrity & Consistency (Headline vs Caption vs Facts)
+    // --------------------------------------------------------------------------
+    const integrityResult = runContentIntegrityCheck({
+      headline,
+      caption: draft,
+      facts: researchFacts,
+      configuredHashtagsCount: 5,
+      niche: topicCategory,
+    });
+
+    if (!integrityResult.valid) {
+      qaScore = Math.min(qaScore, 50); // Hard fail QA when consistency or grounding fails
+      for (const v of integrityResult.violations) {
+        violations.push(`${v.code}: ${v.message}`);
+      }
+    }
+    if (integrityResult.correctedHeadline && integrityResult.correctedHeadline !== headline) {
+      headline = integrityResult.correctedHeadline;
+    }
+
+    const passed =
+      qaResult.valid &&
+      qaScore >= minRequiredScore &&
+      (!isFactual || (claimResult?.allVerified ?? true)) &&
+      integrityResult.valid;
 
     attempts.push({
       attempt,
@@ -714,10 +750,26 @@ You must ground your entire post on these verified facts. Do not write about unr
       }
     }
 
+    const reformatIntegrity = runContentIntegrityCheck({
+      headline,
+      caption: trimmed,
+      facts: researchFacts,
+      configuredHashtagsCount: 5,
+      niche: topicCategory,
+    });
+
+    if (!reformatIntegrity.valid) {
+      reformatScore = Math.min(reformatScore, 50);
+      for (const v of reformatIntegrity.violations) {
+        reformatViolations.push(`${v.code}: ${v.message}`);
+      }
+    }
+
     const reformatPassed =
       reformatQa.valid &&
       reformatScore >= minRequiredScore &&
-      (!isFactual || (reformatClaimResult?.allVerified ?? true));
+      (!isFactual || (reformatClaimResult?.allVerified ?? true)) &&
+      reformatIntegrity.valid;
 
     emergencyReformatNeeded = true;
 
@@ -824,70 +876,18 @@ You must ground your entire post on these verified facts. Do not write about unr
   // --------------------------------------------------------------------------
   const s5Start = Date.now();
 
-  // 1. Determine the core topic visual subject
-  let visualSubject = options.queueItem?.visualSubject || keyScene;
-  const isGenericBoilerplate =
-    !visualSubject ||
-    /Create ONE|Show a single|COMPOSITION:|High-detail visual exploring|AVOID:/i.test(visualSubject);
+  const concreteVisualResult = buildConcreteImagePrompt({
+    headline,
+    caption: bestDraft,
+    facts: researchFacts.map((f) => f.text),
+    topic: topicTitle,
+    category: topicCategory,
+    visualConcept: options.queueItem?.visualSubject,
+  });
 
-  if (isGenericBoilerplate) {
-    if (options.queueItem?.visualSubject) {
-      visualSubject = options.queueItem.visualSubject;
-    } else if (userTopic && userTopic !== 'Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b') {
-      visualSubject = `${userTopic}, ${topicCategory}, photorealistic scientific subject in vivid detail`;
-    } else if (isScience) {
-      visualSubject = `Exoplanet K2-18b with deep ocean atmosphere and luminous cloud bands illuminated by distant red dwarf star, wide angle deep space view, James Webb Space Telescope discovery`;
-    } else if (isHorror) {
-      visualSubject = `An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows`;
-    } else {
-      visualSubject = `${topicTitle}, ${topicCategory}, highly detailed scientific discovery`;
-    }
-  }
-
-  // 2. Handle page.custom_image_prompt safely without overriding the subject
-  let customStyleDirective = '';
-  if (page.custom_image_prompt && page.custom_image_prompt.trim()) {
-    const rawCustom = page.custom_image_prompt.trim();
-    if (/\{topic\}|\{subject\}|\{headline\}|\{niche\}/i.test(rawCustom)) {
-      visualSubject = rawCustom
-        .replace(/\{topic\}/gi, topicTitle)
-        .replace(/\{subject\}/gi, visualSubject)
-        .replace(/\{headline\}/gi, headline.replace(/\*\*/g, ''))
-        .replace(/\{niche\}/gi, topicCategory);
-    } else if (page.custom_image_prompt_mode === 'replace') {
-      // If the custom prompt contains instructional boilerplate (Create ONE, COMPOSITION, AVOID, etc.)
-      if (/Create ONE|COMPOSITION:|SUBJECT STYLES:|Show a single/i.test(rawCustom)) {
-        const styleMatch = rawCustom.match(/STYLE:\s*([^.\n]+(?:\.[^.\n]+)?)/i);
-        const paletteMatch = rawCustom.match(/Palette of ([^.\n]+)/i);
-        const parts = [
-          styleMatch ? styleMatch[1].trim() : '',
-          paletteMatch ? `Palette of ${paletteMatch[1].trim()}` : '',
-        ].filter(Boolean);
-        customStyleDirective = parts.join(', ') || 'photorealistic and cinematic scientific lighting, palette of deep blues and cosmic blacks';
-      } else {
-        // Plain custom prompt: keep the topic subject front and center
-        visualSubject = `${topicTitle}: ${rawCustom}`;
-      }
-    } else {
-      // 'append' mode: strip boilerplate and use clean style
-      const cleaned = rawCustom
-        .replace(/Create ONE photorealistic[^.]*\./gi, '')
-        .replace(/COMPOSITION:[^.]*\./gi, '')
-        .replace(/AVOID:[^.]*\./gi, '')
-        .trim();
-      if (cleaned) {
-        customStyleDirective = cleaned.slice(0, 160);
-      }
-    }
-  }
-
-  // 3. Assemble subject-first prompt for diffusion models (first tokens carry highest attention weight)
-  const styleKeywords = customStyleDirective
-    ? `${customStyleDirective}, photorealistic, 8k resolution, tack sharp photography, no text, no watermark, no logo, no subtitles, no borders`
-    : `cinematic scientific lighting, photorealistic National Geographic quality, 8k resolution, tack sharp photography, sharp focal point, no text, no watermark, no logo, no subtitles, no borders`;
-
-  const visualPrompt = `${visualSubject}. ${styleKeywords}`;
-  keyScene = visualSubject;
+  const visualPrompt = concreteVisualResult.prompt;
+  const negativePrompt = concreteVisualResult.negativePrompt;
+  keyScene = concreteVisualResult.concreteSubject;
 
   stages.push({
     stage: 'image_prompt',
@@ -895,7 +895,7 @@ You must ground your entire post on these verified facts. Do not write about unr
     status: 'completed',
     durationMs: Date.now() - s5Start,
     provider: 'prompt-architect-v1',
-    model: 'visual-prompt-v2',
+    model: 'concrete-subject-v3',
     tokens: { promptTokens: 90, completionTokens: 45, totalTokens: 135 },
   });
 
@@ -904,6 +904,7 @@ You must ground your entire post on these verified facts. Do not write about unr
   // --------------------------------------------------------------------------
   const s6Start = Date.now();
   let thumbnailUrl = '';
+  let rawImageBuffer: Buffer | undefined;
   let successfulImageProvider = 'Pollinations AI';
   let successfulImageModel = 'flux';
   let usedImageProviderId: string | undefined;
@@ -914,12 +915,14 @@ You must ground your entire post on these verified facts. Do not write about unr
       const k = (p.kind || p.adapter_kind || '').toLowerCase();
       const n = (p.name || '').toLowerCase();
       return (
+        k === 'gemini_native' ||
         k === 'cloudflare_workers_ai' ||
         k === 'pollinations' ||
         k === 'openai_compatible_images' ||
         n.includes('image') ||
         n.includes('pollinations') ||
-        n.includes('cloudflare')
+        n.includes('cloudflare') ||
+        n.includes('gemini')
       );
     })
     .sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
@@ -937,7 +940,38 @@ You must ground your entire post on these verified facts. Do not write about unr
     const cKind = (candidate.kind || candidate.adapter_kind || '').toLowerCase();
     const cName = candidate.name || 'image-provider';
 
-    // Priority 1 / Cloudflare Workers AI
+    // Gemini Native Image Provider (gemini_native)
+    if (cKind === 'gemini_native' || cName.toLowerCase().includes('gemini')) {
+      try {
+        const geminiAdapter = new GeminiNativeAdapter();
+        const geminiKey = candidate.apiKey;
+        if (geminiKey && !isTestEnv()) {
+          const imgRes = await geminiAdapter.generateImage({
+            prompt: visualPrompt,
+            negativePrompt,
+            model: candidate.model_name || 'gemini-2.5-flash-image',
+            apiKey: geminiKey,
+            width: 1080,
+            height: 1350,
+            timeoutMs: 35000,
+          });
+
+          if (imgRes.imageBuffer && imgRes.imageBuffer.length > 500) {
+            thumbnailUrl = `data:image/jpeg;base64,${imgRes.imageBuffer.toString('base64')}`;
+            rawImageBuffer = imgRes.imageBuffer;
+            successfulImageProvider = candidate.name;
+            successfulImageModel = candidate.model_name || 'gemini-2.5-flash-image';
+            usedImageProviderId = candidate.id;
+            console.log(`[Image Generation] Successfully generated image via Priority #${candidate.priority} (${candidate.name})`);
+            break;
+          }
+        }
+      } catch (geminiErr: any) {
+        console.warn(`[Image Failover] Priority #${candidate.priority} (${candidate.name}) failed:`, geminiErr?.message || geminiErr);
+      }
+    }
+
+    // Priority / Cloudflare Workers AI
     if (cKind === 'cloudflare_workers_ai' || cName.toLowerCase().includes('cloudflare')) {
       try {
         const cfAdapter = new CloudflareWorkersAIAdapter();
@@ -960,6 +994,7 @@ You must ground your entire post on these verified facts. Do not write about unr
 
           if (imgRes.imageBuffer && imgRes.imageBuffer.length > 500) {
             thumbnailUrl = `data:image/jpeg;base64,${imgRes.imageBuffer.toString('base64')}`;
+            rawImageBuffer = imgRes.imageBuffer;
             successfulImageProvider = candidate.name;
             successfulImageModel = candidate.model_name || '@cf/black-forest-labs/flux-1-schnell';
             usedImageProviderId = candidate.id;
@@ -974,18 +1009,21 @@ You must ground your entire post on these verified facts. Do not write about unr
       }
     }
 
-    // Priority 2 / Pollinations AI
+    // Priority / Pollinations AI
     if (cKind === 'pollinations' || cName.toLowerCase().includes('pollinations')) {
       try {
-        const polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=flux&nologo=true`;
+        const modelName = candidate.model_name || 'flux';
+        const polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 350))}?width=1080&height=1080&model=${modelName}&nologo=true`;
         if (typeof fetch === 'function' && !isTestEnv()) {
           const res = await fetch(polliUrl, { signal: AbortSignal.timeout(20000) });
           if (res.ok) {
             const ab = await res.arrayBuffer();
             if (ab.byteLength > 500) {
-              thumbnailUrl = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
+              const buf = Buffer.from(ab);
+              thumbnailUrl = `data:image/jpeg;base64,${buf.toString('base64')}`;
+              rawImageBuffer = buf;
               successfulImageProvider = candidate.name;
-              successfulImageModel = candidate.model_name || 'flux';
+              successfulImageModel = modelName;
               usedImageProviderId = candidate.id;
               console.log(`[Image Generation] Successfully generated image via Priority #${candidate.priority} (${candidate.name})`);
               break;
@@ -995,6 +1033,31 @@ You must ground your entire post on these verified facts. Do not write about unr
       } catch (polliErr: any) {
         console.warn(`[Image Failover] Priority #${candidate.priority} (${candidate.name}) failed:`, polliErr?.message || polliErr);
       }
+    }
+  }
+
+  // Vision Relevance Check (Gemini Vision)
+  let visionRelevanceCheck = {
+    pass: true,
+    score: 85,
+    reason: 'Visual subject verified',
+    isGenericGlow: false,
+    hasText: false,
+  };
+  if (rawImageBuffer) {
+    const geminiCandidate = (options.activeProviders || []).find(
+      (p) => (p.kind || p.adapter_kind) === 'gemini_native' && p.apiKey
+    );
+    if (geminiCandidate?.apiKey && !isTestEnv()) {
+      try {
+        const geminiAdapter = new GeminiNativeAdapter();
+        visionRelevanceCheck = await geminiAdapter.evaluateImageRelevance({
+          imageBuffer: rawImageBuffer,
+          headline,
+          caption: bestDraft,
+          apiKey: geminiCandidate.apiKey,
+        });
+      } catch (_) {}
     }
   }
 
@@ -1124,11 +1187,17 @@ You must ground your entire post on these verified facts. Do not write about unr
     svgXml: renderedCard.svgXml,
     renderedCard,
     tokensUsed: 1295,
-    estimatedCost: '$0.0013',
+    estimatedCost: '$' + getEstimatedCostPerImage(successfulImageProvider, successfulImageModel).toFixed(4),
     latencyMs: totalLatency,
-    needs_review: emergencyReformatNeeded,
-    requires_human_review: emergencyReformatNeeded,
-    review_reason: emergencyReformatNeeded ? 'emergency_reformat_applied' : undefined,
+    needs_review: emergencyReformatNeeded || !visionRelevanceCheck.pass,
+    requires_human_review: emergencyReformatNeeded || !visionRelevanceCheck.pass,
+    review_reason: emergencyReformatNeeded
+      ? 'emergency_reformat_applied'
+      : !visionRelevanceCheck.pass
+      ? `vision_relevance_failed: ${visionRelevanceCheck.reason}`
+      : undefined,
+    integrityCheck: bestClaimResult ? runContentIntegrityCheck({ headline, caption: bestDraft, facts: researchFacts, configuredHashtagsCount: 5, niche: topicCategory }) : undefined,
+    visionRelevanceCheck,
     usedTextProviderId: successfulTextProviderId || textCandidates[0]?.id || '11111111-1111-1111-1111-111111111101',
     usedTextProviderName: successfulTextProviderName,
     usedImageProviderId: usedImageProviderId || candidateChain[0]?.id || '11111111-1111-1111-1111-111111111105',

@@ -49,9 +49,11 @@ export * from './adapters/custom-http.js';
 export * from './validation/schemas.js';
 export * from './validation/caption-validator.js';
 export * from './validation/claim-verifier.js';
+export * from './validation/content-integrity.js';
 
 // Unified Generation Pipeline & Headline Card Engine
 export * from './pipeline/generation-pipeline.js';
+export * from './pipeline/image-prompt-builder.js';
 export * from './pipeline/headline-renderer.js';
 export * from './pipeline/headline-layout.js';
 export * from './pipeline/headline-highlighter.js';

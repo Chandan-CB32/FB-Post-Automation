@@ -334,9 +334,13 @@
       kind === 'cloudflare_workers_ai' ||
       kind === 'openai_compatible_images' ||
       name.includes('image') ||
+      model.includes('image') ||
       model.includes('flux') ||
       model.includes('dall-e') ||
-      model.includes('stable-diffusion')
+      model.includes('stable-diffusion') ||
+      model.includes('seedream') ||
+      model.includes('gptimage') ||
+      model.includes('nanobanana')
     );
   }
 
@@ -400,11 +404,23 @@
       }
 
       const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+      const isImg = chainType === 'image';
+      let costHtml = '';
+      if (isImg) {
+        let costPerImg = 0;
+        const kind = (p.adapter_kind || '').toLowerCase();
+        const m = (p.model_name || '').toLowerCase();
+        if (kind.includes('gemini') || m.includes('gemini')) costPerImg = 0.03;
+        else if (m.includes('flux')) costPerImg = 0;
+        else if (m.includes('turbo') || m.includes('gptimage') || m.includes('seedream') || m.includes('nanobanana')) costPerImg = 0.02;
+        else if (kind.includes('cloudflare')) costPerImg = 0.005;
+        costHtml = '<div style="font-size: 11px; color: #a78bfa; margin-top: 3px; font-weight: 500;">💰 Est: $' + costPerImg.toFixed(3) + '/img (~$' + (costPerImg * 5).toFixed(2) + '/day @ 5 posts)</div>';
+      }
 
       return (
         '<tr id="provider-row-' + p.id + '">' +
         '<td><div style="font-weight: 700; font-size: 14px; color: #f3f4f6;">' + escapeHtml(p.name) + '</div>' +
-        '<div style="font-size: 12px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">' + escapeHtml(p.model_name || 'default') + '</div></td>' +
+        '<div style="font-size: 12px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">' + escapeHtml(p.model_name || 'default') + '</div>' + costHtml + '</td>' +
         '<td><code>' + escapeHtml(p.adapter_kind) + '</code></td>' +
         '<td>' + priorityBadge + '</td>' +
         '<td><div style="font-weight: 600;">' + (p.used_today || 0) + ' / ' + p.daily_limit + ' reqs</div>' +
@@ -480,9 +496,14 @@
       }
       renderProvidersTables();
       if (data.success) {
-        showToast('✅ Probe succeeded in ' + (data.latency_ms || 0) + 'ms', 'success');
+        if (data.thumbnail) {
+          showImageProbeModal(target ? target.name : 'Provider', target ? target.model_name : '', data.latency_ms, data.thumbnail);
+        } else {
+          showToast('✅ Probe succeeded in ' + (data.latency_ms || 0) + 'ms', 'success');
+        }
       } else {
         showToast('⚠️ Provider failing: ' + (data.error || 'Connection failed'), 'error');
+        alert('⚠️ Test Probe Failed:\n' + (data.error || 'Connection failed'));
       }
     } catch (e) {
       alert('Network error testing provider: ' + e.message);
@@ -494,6 +515,214 @@
     }
   }
   window.testProviderAction = testProviderAction;
+
+  function showImageProbeModal(providerName, modelName, latencyMs, thumbnail) {
+    let modal = document.getElementById('imageProbeResultModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'imageProbeResultModal';
+      modal.style.cssText = 'display: flex; align-items: center; justify-content: center; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 10005; backdrop-filter: blur(8px); padding: 20px;';
+      document.body.appendChild(modal);
+    }
+    modal.style.display = 'flex';
+    modal.innerHTML = '<div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; max-width: 480px; width: 100%; padding: 24px; text-align: center; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.9);">' +
+      '<h3 style="font-size: 16px; font-weight: 700; color: #f8fafc; margin-bottom: 4px;">✅ Real Image Probe Succeeded (' + latencyMs + 'ms)</h3>' +
+      '<div style="font-size: 12px; color: #94a3b8; margin-bottom: 14px;">' + escapeHtml(providerName) + ' (' + escapeHtml(modelName || 'default') + ')</div>' +
+      '<img src="' + thumbnail + '" style="width: 240px; height: 300px; object-fit: cover; border-radius: 8px; border: 1px solid #334155; margin: 0 auto 16px auto; display: block;" />' +
+      '<button class="btn btn-primary" onclick="document.getElementById(\'imageProbeResultModal\').style.display=\'none\'">Close Preview</button>' +
+      '</div>';
+  }
+  window.showImageProbeModal = showImageProbeModal;
+
+  let imageBenchRunId = null;
+
+  function openImageBenchModal() {
+    const modal = document.getElementById('imageBenchModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+
+    // Populate image provider checkboxes
+    const container = document.getElementById('imageBenchProviderCheckboxes');
+    if (container) {
+      const imageProvs = providersData.filter(function (p) { return isImageProvider(p); });
+      if (imageProvs.length === 0) {
+        container.innerHTML = '<span style="color: #94a3b8; font-size: 12px;">No image providers configured.</span>';
+      } else {
+        container.innerHTML = imageProvs.map(function (p, idx) {
+          return '<label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #f1f5f9; cursor: pointer;">' +
+            '<input type="checkbox" name="benchProvider" value="' + p.id + '" ' + (idx < 3 ? 'checked' : '') + ' style="cursor: pointer;" /> ' +
+            escapeHtml(p.name) + ' (' + escapeHtml(p.model_name || 'default') + ')' +
+            '</label>';
+        }).join('');
+      }
+    }
+  }
+  window.openImageBenchModal = openImageBenchModal;
+
+  function closeImageBenchModal() {
+    const modal = document.getElementById('imageBenchModal');
+    if (modal) modal.style.display = 'none';
+  }
+  window.closeImageBenchModal = closeImageBenchModal;
+
+  async function runImageBenchAction() {
+    const btn = document.getElementById('btnRunImageBench');
+    const checkedBoxes = Array.from(document.querySelectorAll('input[name="benchProvider"]:checked'));
+    const providerIds = checkedBoxes.map(function (cb) { return cb.value; });
+
+    if (providerIds.length === 0) {
+      alert('Please select at least one image provider to benchmark.');
+      return;
+    }
+
+    const resultsContainer = document.getElementById('imageBenchResultsContainer');
+    if (resultsContainer) {
+      resultsContainer.innerHTML = '<div style="text-align: center; padding: 48px 20px; color: #38bdf8;">' +
+        '<div style="font-size: 28px; margin-bottom: 12px;">⏳</div>' +
+        '<div style="font-size: 15px; font-weight: 700;">Running 6-Prompt Scientific Matrix...</div>' +
+        '<div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Generating and evaluating outputs side-by-side across ' + providerIds.length + ' provider(s)...</div>' +
+        '</div>';
+    }
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerText = '⏳ Benchmarking...';
+    }
+
+    try {
+      const res = await fetch('/api/bench/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_ids: providerIds })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Benchmark run failed');
+      }
+
+      imageBenchRunId = data.runId || 'run_' + Date.now();
+      renderImageBenchResults(data);
+    } catch (err) {
+      if (resultsContainer) {
+        resultsContainer.innerHTML = '<div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; padding: 16px; border-radius: 8px;">' +
+          '<strong>Benchmark Error:</strong> ' + escapeHtml(err.message) +
+          '</div>';
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = '▶️ Run Benchmark (6 Prompts)';
+      }
+    }
+  }
+  window.runImageBenchAction = runImageBenchAction;
+
+  function renderImageBenchResults(benchData) {
+    const container = document.getElementById('imageBenchResultsContainer');
+    if (!container) return;
+
+    const prompts = benchData.results || [];
+    if (prompts.length === 0) {
+      container.innerHTML = '<div style="color: #94a3b8;">No results returned.</div>';
+      return;
+    }
+
+    container.innerHTML = prompts.map(function (item, pIdx) {
+      const outputs = item.outputs || [];
+      return '<div style="background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 16px;">' +
+        '<div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">' +
+        '<div>' +
+        '<strong style="font-size: 13px; color: #38bdf8;">Prompt #' + (pIdx + 1) + ': ' + escapeHtml(item.topic || 'Scientific Scene') + '</strong>' +
+        '<div style="font-size: 11px; color: #94a3b8; margin-top: 2px; max-width: 800px; font-family: monospace;">' + escapeHtml(item.prompt) + '</div>' +
+        '</div>' +
+        '</div>' +
+        '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px;">' +
+        outputs.map(function (out) {
+          const prov = providersData.find(function (p) { return p.id === out.providerId; }) || { name: out.providerName || out.providerId, model_name: out.model };
+          return '<div style="background: #0b1120; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; display: flex; flex-direction: column; justify-content: space-between;">' +
+            '<div>' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
+            '<strong style="font-size: 12px; color: #f8fafc;">' + escapeHtml(prov.name) + '</strong>' +
+            '<span class="badge" style="background: #1e293b; color: #93c5fd; font-size: 10px;">' + (out.latencyMs || 0) + 'ms</span>' +
+            '</div>' +
+            (out.imageUrl || out.thumbnail
+              ? '<img src="' + (out.imageUrl || out.thumbnail) + '" style="width: 100%; height: 200px; object-fit: cover; border-radius: 4px; border: 1px solid #334155; margin-bottom: 8px;" />'
+              : '<div style="height: 200px; background: rgba(239, 68, 68, 0.1); border: 1px dashed rgba(239, 68, 68, 0.4); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #f87171; font-size: 11px; padding: 10px; text-align: center; margin-bottom: 8px;">' + escapeHtml(out.error || 'Generation Failed') + '</div>') +
+            '<div style="display: flex; justify-content: space-between; font-size: 11px; color: #cbd5e1; margin-bottom: 8px;">' +
+            '<span>Cost: <strong>$' + (out.cost || 0).toFixed(4) + '</strong></span>' +
+            '<span>' + escapeHtml(prov.model_name || 'default') + '</span>' +
+            '</div>' +
+            '</div>' +
+            '<div style="display: flex; gap: 8px; justify-content: center; border-top: 1px solid #1e293b; padding-top: 8px;">' +
+            '<button class="btn btn-secondary" style="padding: 4px 12px; font-size: 12px;" onclick="rateBenchAction(\'' + pIdx + '\', \'' + out.providerId + '\', 1, this)">👍 Upvote</button>' +
+            '<button class="btn btn-secondary" style="padding: 4px 12px; font-size: 12px;" onclick="rateBenchAction(\'' + pIdx + '\', \'' + out.providerId + '\', -1, this)">👎 Downvote</button>' +
+            '</div>' +
+            '</div>';
+        }).join('') +
+        '</div>' +
+        '</div>';
+    }).join('');
+  }
+
+  async function rateBenchAction(promptIndex, providerId, rating, btn) {
+    if (btn) {
+      btn.style.background = rating > 0 ? '#065f46' : '#7f1d1d';
+      btn.style.color = '#fff';
+    }
+    try {
+      const res = await fetch('/api/bench/rate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          run_id: imageBenchRunId || 'current_bench',
+          prompt_index: Number(promptIndex),
+          provider_id: providerId,
+          rating: rating,
+        })
+      });
+      const data = await res.json();
+      if (data.suggestedOrder && data.suggestedOrder.length > 0) {
+        const banner = document.getElementById('imageBenchOrderBanner');
+        const listEl = document.getElementById('imageBenchSuggestedList');
+        if (banner && listEl) {
+          banner.style.display = 'flex';
+          listEl.innerText = data.suggestedOrder.map(function (id, i) {
+            const p = providersData.find(function (item) { return item.id === id; });
+            return '#' + (i + 1) + ' ' + (p ? p.name : id);
+          }).join('  ➔  ');
+          window.currentSuggestedOrder = data.suggestedOrder;
+        }
+      }
+    } catch (err) {
+      console.error('Rating failed:', err);
+    }
+  }
+  window.rateBenchAction = rateBenchAction;
+
+  async function applySuggestedChainOrder() {
+    if (!window.currentSuggestedOrder || window.currentSuggestedOrder.length === 0) return;
+    try {
+      const res = await fetch('/api/bench/rate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'apply_order',
+          ordered_provider_ids: window.currentSuggestedOrder
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('✅ Applied new image chain failover order based on your ratings!', 'success');
+        await fetchProvidersTab();
+        closeImageBenchModal();
+      } else {
+        alert('Failed to apply order: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Failed to apply order: ' + err.message);
+    }
+  }
+  window.applySuggestedChainOrder = applySuggestedChainOrder;
 
   async function fetchAuditTab() {
     try {
@@ -1428,7 +1657,22 @@
     const baseInput = document.getElementById('newProviderBaseUrl');
     if (baseInput) baseInput.value = baseUrl;
     const modelInput = document.getElementById('newProviderModel');
-    if (modelInput) modelInput.value = model;
+    if (modelInput) {
+      modelInput.value = model;
+      let datalist = document.getElementById('newProviderModelSuggestions');
+      if (!datalist) {
+        datalist = document.createElement('datalist');
+        datalist.id = 'newProviderModelSuggestions';
+        modelInput.setAttribute('list', 'newProviderModelSuggestions');
+        modelInput.parentNode.appendChild(datalist);
+      }
+      let suggestions = [];
+      if (kind.includes('gemini')) suggestions = ['gemini-2.5-flash-image', 'gemini-3-pro-image', 'gemini-2.0-flash'];
+      else if (kind.includes('pollinations')) suggestions = ['flux', 'turbo', 'gptimage', 'seedream', 'nanobanana'];
+      else if (kind.includes('zenmux') || name.toLowerCase().includes('zenmux')) suggestions = ['google/gemini-2.5-flash-image-free', 'openai/gpt-4o-mini', 'deepseek/deepseek-chat'];
+      else if (kind.includes('cloudflare')) suggestions = ['@cf/stabilityai/stable-diffusion-xl-base-1.0', '@cf/black-forest-labs/flux-1-schnell'];
+      datalist.innerHTML = suggestions.map(function(s) { return '<option value="' + s + '">'; }).join('');
+    }
     const limitInput = document.getElementById('newProviderDailyLimit');
     if (limitInput) limitInput.value = limit;
   }
@@ -1692,7 +1936,24 @@
     document.getElementById('editProviderName').value = p.name;
     document.getElementById('editProviderAdapter').value = p.adapter_kind;
     document.getElementById('editProviderBaseUrl').value = p.base_url || '';
-    document.getElementById('editProviderModel').value = p.model_name || '';
+    const editModelInput = document.getElementById('editProviderModel');
+    if (editModelInput) {
+      editModelInput.value = p.model_name || '';
+      let datalist = document.getElementById('editProviderModelSuggestions');
+      if (!datalist) {
+        datalist = document.createElement('datalist');
+        datalist.id = 'editProviderModelSuggestions';
+        editModelInput.setAttribute('list', 'editProviderModelSuggestions');
+        editModelInput.parentNode.appendChild(datalist);
+      }
+      const kind = (p.adapter_kind || '').toLowerCase();
+      let suggestions = [];
+      if (kind.includes('gemini')) suggestions = ['gemini-2.5-flash-image', 'gemini-3-pro-image', 'gemini-2.0-flash'];
+      else if (kind.includes('pollinations')) suggestions = ['flux', 'turbo', 'gptimage', 'seedream', 'nanobanana'];
+      else if (kind.includes('zenmux') || p.name.toLowerCase().includes('zenmux')) suggestions = ['google/gemini-2.5-flash-image-free', 'openai/gpt-4o-mini', 'deepseek/deepseek-chat'];
+      else if (kind.includes('cloudflare')) suggestions = ['@cf/stabilityai/stable-diffusion-xl-base-1.0', '@cf/black-forest-labs/flux-1-schnell'];
+      datalist.innerHTML = suggestions.map(function(s) { return '<option value="' + s + '">'; }).join('');
+    }
     document.getElementById('editProviderPriority').value = p.priority;
     document.getElementById('editProviderDailyLimit').value = p.daily_limit;
     document.getElementById('editProviderEnabled').checked = p.enabled !== false;
@@ -2971,16 +3232,40 @@
       }
 
       if (!res.ok || data.error) {
-        if (data.missingId || (data.error && data.error.includes('profile'))) {
-          var alertBox = document.getElementById('psmAlertNotice');
-          var alertText = document.getElementById('psmAlertNoticeText');
-          if (alertBox && alertText) {
-            alertText.innerText = data.error || 'Selected profile no longer exists. Click "Reload Profiles & Reset to Custom" above to recover.';
-            alertBox.style.display = 'block';
+        if (data.error && data.error.includes('Safety Gate')) {
+          var confirmed = prompt(data.error + '\n\nTo override this safety requirement, type:\nI UNDERSTAND THE RISKS');
+          if (confirmed === 'I UNDERSTAND THE RISKS') {
+            payload.safety_override = 'I UNDERSTAND THE RISKS';
+            payload.override_confirmation = 'I UNDERSTAND THE RISKS';
+            var retryRes = await fetch('/api/pages/update-settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            var retryData = await retryRes.json();
+            if (retryRes.ok && !retryData.error) {
+              data = retryData;
+              res = retryRes;
+            } else {
+              showToast('Safety override failed: ' + (retryData.error || 'Denied'), 'error');
+              return;
+            }
+          } else {
+            showToast('Switch to Auto cancelled. Keeping safe Review mode.', 'info');
+            return;
           }
+        } else {
+          if (data.missingId || (data.error && data.error.includes('profile'))) {
+            var alertBox = document.getElementById('psmAlertNotice');
+            var alertText = document.getElementById('psmAlertNoticeText');
+            if (alertBox && alertText) {
+              alertText.innerText = data.error || 'Selected profile no longer exists. Click "Reload Profiles & Reset to Custom" above to recover.';
+              alertBox.style.display = 'block';
+            }
+          }
+          showToast('Failed to save settings: ' + (data.error || 'Unknown error'), 'error');
+          return;
         }
-        showToast('Failed to save settings: ' + (data.error || 'Unknown error'), 'error');
-        return;
       }
 
       // Update in local pagesData

@@ -170,7 +170,16 @@ export class QualityBenchRunner {
       try {
         let imageBuffer: Buffer | undefined;
 
-        if (provider.kind === 'cloudflare_workers_ai') {
+        if (provider.kind === 'gemini_native' || provider.name.toLowerCase().includes('gemini')) {
+          const res = await this.geminiAdapter.generateImage({
+            prompt,
+            model: model || 'gemini-2.5-flash-image',
+            apiKey: decryptedKey,
+            width: options?.width || 1080,
+            height: options?.height || 1350,
+          });
+          imageBuffer = res.imageBuffer;
+        } else if (provider.kind === 'cloudflare_workers_ai') {
           const res = await this.cloudflareAdapter.generateImage({
             prompt,
             model,

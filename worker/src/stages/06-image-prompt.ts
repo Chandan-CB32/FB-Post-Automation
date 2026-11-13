@@ -3,6 +3,7 @@ import {
   EffectiveSettings,
   PromptInterpolator,
   IMAGE_SAFETY_BASELINE,
+  buildConcreteImagePrompt,
 } from '@fb-auto/core';
 import { ProviderRouter } from '../router/provider-router.js';
 
@@ -137,41 +138,41 @@ function cleanSceneText(text: string): string {
 export async function executeImagePromptStage(
   input: ImagePromptStageInput
 ): Promise<ImagePromptStageResult> {
-  const mode: KeySceneMode =
-    input.keySceneMode || input.effectiveSettings.image.keySceneMode || 'climax';
-
-  const keyScene = extractKeySceneFromProse(
-    input.caption,
-    input.topic,
-    mode,
-    input.visualConcept
-  );
+  const concreteResult = buildConcreteImagePrompt({
+    headline: input.topic,
+    caption: input.caption,
+    facts: [],
+    topic: input.topic,
+    visualConcept: input.visualConcept,
+  });
 
   const rawTemplate =
     input.effectiveSettings.image.template ||
-    input.effectiveSettings.templates.imagePromptTemplate ||
-    'A high-contrast cinematic photograph of {{key_scene}}, dramatic lighting, {{image_style}}.';
+    input.effectiveSettings.templates.imagePromptTemplate;
 
-  const style = input.effectiveSettings.image.style || 'cinematic, photorealistic photography';
+  let finalPrompt = concreteResult.prompt;
+  let style = concreteResult.style;
 
-  const interpolatedPositive = PromptInterpolator.interpolate(rawTemplate, {
-    key_scene: keyScene,
-    topic: input.topic,
-    image_style: style,
-    audience: input.profile.audience,
-    ...input.effectiveSettings.customVariables,
-  });
-
-  // Ensure style is included if template did not have {{image_style}}
-  let positivePrompt = interpolatedPositive;
-  if (!rawTemplate.includes('{{image_style}}') && style && !interpolatedPositive.toLowerCase().includes(style.toLowerCase())) {
-    positivePrompt = `${interpolatedPositive}, ${style}`;
+  if (rawTemplate && rawTemplate !== 'A high-contrast cinematic photograph of {{key_scene}}, dramatic lighting, {{image_style}}.') {
+    style = input.effectiveSettings.image.style || 'cinematic, photorealistic photography';
+    const interpolated = PromptInterpolator.interpolate(rawTemplate, {
+      key_scene: concreteResult.concreteSubject,
+      topic: input.topic,
+      image_style: style,
+      audience: input.profile.audience,
+      ...input.effectiveSettings.customVariables,
+    });
+    let base = interpolated;
+    if (!rawTemplate.includes('{{image_style}}') && style && !interpolated.toLowerCase().includes(style.toLowerCase())) {
+      base = `${interpolated}, ${style}`;
+    }
+    finalPrompt = `${base}. Composition: Place main subject in upper 65% of frame, keep bottom 35% calm and dark for headline overlay.`;
   }
 
   // Permanently append mandatory image safety directives
-  const finalPrompt = positivePrompt.includes(IMAGE_SAFETY_BASELINE)
-    ? positivePrompt
-    : `${positivePrompt}\n\n${IMAGE_SAFETY_BASELINE}`;
+  finalPrompt = finalPrompt.includes(IMAGE_SAFETY_BASELINE)
+    ? finalPrompt
+    : `${finalPrompt}\n\n${IMAGE_SAFETY_BASELINE}`;
 
   // Assemble negative prompt
   const userNegative =
@@ -184,7 +185,7 @@ export async function executeImagePromptStage(
     str.split(',').map((t) => t.trim()).filter(Boolean).forEach((t) => negativePromptTokens.add(t));
   };
 
-  addTokens(DEFAULT_NEGATIVE_PROMPT);
+  addTokens(concreteResult.negativePrompt);
   if (userNegative) {
     addTokens(userNegative);
   }
@@ -208,7 +209,7 @@ export async function executeImagePromptStage(
   }
 
   return {
-    keyScene,
+    keyScene: concreteResult.concreteSubject,
     prompt: finalPrompt,
     negativePrompt: consolidatedNegativePrompt,
     width,

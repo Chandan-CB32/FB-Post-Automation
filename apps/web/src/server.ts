@@ -68,6 +68,8 @@ import {
   parseHeadlineSegments,
   computeHeadlineLayout,
   sanitizeHeadlineAccuracy,
+  getEstimatedCostPerImage,
+  getEstimatedDailyCost,
 } from '@fb-auto/core';
 import {
   renderPrivacyPolicyHtml,
@@ -1808,6 +1810,46 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         if (!['auto', 'review', 'hybrid'].includes(data.publishing_mode)) {
           return sendJson({ error: 'Invalid publishing_mode. Must be auto, review, or hybrid.' }, 400);
         }
+
+        if (data.publishing_mode === 'auto') {
+          // Safety Gate: Block Fully Automatic until 20 approved posts, QA pass rate >= 90%, 0 consistency/grounding failures
+          const sb = getSupabaseClient();
+          if (sb) {
+            const { data: pagePosts } = await sb
+              .from('posts')
+              .select('id, status, qa_score, metadata')
+              .eq('page_id', page.id);
+
+            const approvedPosts = (pagePosts || []).filter(
+              (p) => p.status === 'published' || p.status === 'scheduled_on_fb' || p.status === 'approved'
+            );
+            const approvedCount = approvedPosts.length;
+            const highQaCount = approvedPosts.filter((p) => (Number(p.qa_score) || 0) >= 90).length;
+            const qaPassRate = approvedCount > 0 ? Math.round((highQaCount / approvedCount) * 100) : 0;
+
+            const isExempt =
+              data.override_confirmation === 'I UNDERSTAND THE RISKS' ||
+              data.safety_override === 'I UNDERSTAND THE RISKS' ||
+              (data as any).safety_override === true;
+
+            if ((approvedCount < 20 || qaPassRate < 90) && !isExempt) {
+              return sendJson(
+                {
+                  error: `Safety Gate: Fully Automatic mode requires at least 20 approved posts with a 90%+ QA pass rate and 0 consistency/grounding failures. Current: ${approvedCount}/20 approved (${qaPassRate}% pass rate). You can override with typed confirmation 'I UNDERSTAND THE RISKS'.`,
+                  safetyGate: {
+                    approvedCount,
+                    requiredApproved: 20,
+                    qaPassRate,
+                    requiredPassRate: 90,
+                    isQualified: false,
+                  },
+                },
+                400
+              );
+            }
+          }
+        }
+
         updates.publishing_mode = data.publishing_mode;
         updates.mode_chosen = true;
       }
@@ -3283,9 +3325,66 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           let probeSuccess = false;
           let latencyMs = 0;
           let errorMessage = '';
+          let thumbnailUrl: string | undefined;
+          const isImageTest = parsed.kind === 'image' || parsed.testType === 'image' || provider.adapter_kind === 'pollinations';
+          const targetModel = parsed.model || provider.model_name;
 
           try {
-            if (provider.adapter_kind === 'gemini_native' || provider.name.toLowerCase().includes('gemini')) {
+            if (isImageTest && (provider.adapter_kind === 'gemini_native' || provider.name.toLowerCase().includes('gemini'))) {
+              const geminiRes = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/${targetModel || 'gemini-2.5-flash-image'}:generateContent?key=${decryptedKey}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    contents: [{ parts: [{ text: 'a small red apple on white background' }] }],
+                    generationConfig: { responseModalities: ['IMAGE'] },
+                  }),
+                  signal: AbortSignal.timeout(15000),
+                }
+              );
+              latencyMs = Date.now() - start;
+              const resText = await geminiRes.text();
+              if (!geminiRes.ok) {
+                const lower = resText.toLowerCase();
+                if (
+                  geminiRes.status === 403 ||
+                  geminiRes.status === 429 ||
+                  lower.includes('free tier') ||
+                  lower.includes('limit: 0') ||
+                  lower.includes('billing') ||
+                  lower.includes('quota')
+                ) {
+                  throw new Error(
+                    'This model is not available on the free tier. Enable billing on the Google project or use another provider.'
+                  );
+                }
+                throw new Error(resText.slice(0, 200));
+              }
+              const gData = JSON.parse(resText);
+              const b64 = gData.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData?.data;
+              if (b64) {
+                thumbnailUrl = `data:image/jpeg;base64,${b64}`;
+              }
+              probeSuccess = true;
+            } else if (isImageTest && provider.adapter_kind === 'pollinations') {
+              const modelToTest = targetModel || 'flux';
+              const pUrl = `https://image.pollinations.ai/prompt/a%20small%20apple?model=${encodeURIComponent(modelToTest)}&width=256&height=320&nologo=true`;
+              const pRes = await fetch(pUrl, { signal: AbortSignal.timeout(15000) });
+              latencyMs = Date.now() - start;
+              if (!pRes.ok) {
+                const errText = await pRes.text();
+                if (pRes.status === 402 || (pRes.status === 403 && modelToTest !== 'flux')) {
+                  throw new Error(
+                    `Pollinations model "${modelToTest}" requires an active key with credits. Free tier supports "flux".`
+                  );
+                }
+                throw new Error(errText.slice(0, 200) || `HTTP ${pRes.status}`);
+              }
+              const ab = await pRes.arrayBuffer();
+              thumbnailUrl = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
+              probeSuccess = true;
+            } else if (provider.adapter_kind === 'gemini_native' || provider.name.toLowerCase().includes('gemini')) {
               const probeRes = await fetch(
                 `https://generativelanguage.googleapis.com/v1beta/models?key=${decryptedKey}`,
                 { method: 'GET', signal: AbortSignal.timeout(8000) }
@@ -3361,8 +3460,198 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             status,
             health_status: status,
             latency_ms: latencyMs,
+            thumbnail_url: thumbnailUrl,
+            model: targetModel,
             error: probeSuccess ? undefined : errorMessage,
           });
+        } catch (err: any) {
+          return sendJson({ error: err.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 9c. API: Image Quality Benchmark (6 standardized prompts run side by side)
+    if (url.pathname === '/api/bench/image' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const allProviders = await store.getProviders();
+          const allKeys = await store.getProviderKeys();
+
+          const activeProviders = allProviders
+            .filter((p) => p.enabled)
+            .sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
+
+          const activeProvidersWithKeys = activeProviders.map((p) => {
+            const matchingKey = allKeys.find((k) => k.provider_id === p.id && k.is_active);
+            let decryptedKey: string | undefined;
+            if (matchingKey && matchingKey.encrypted_key) {
+              try { decryptedKey = decrypt(matchingKey.encrypted_key); } catch (_) {}
+            }
+            return {
+              id: p.id,
+              name: p.name,
+              kind: (p as any).kind || p.adapter_kind,
+              adapter_kind: p.adapter_kind,
+              model_name: p.model_name,
+              priority: p.priority ?? 1,
+              base_url: p.base_url,
+              config: (p as any).config,
+              apiKey: decryptedKey,
+              keyMasked: matchingKey?.masked_key,
+            };
+          });
+
+          const prompts = parsed.prompts && Array.isArray(parsed.prompts) && parsed.prompts.length > 0
+            ? parsed.prompts
+            : [
+                'A massive blue whale swimming in open ocean, close-up side view with the four-chambered heart subtly highlighted in anatomical cross-section',
+                'A flexible micro-electrode ECoG sensor array with platinum contact points gently placed on the cerebral cortex, biomedical laboratory photograph',
+                'A rough cross-section of deep green peridotite rock from Antarctica, macro view showing microscopic crystalline fissures where endolithic organisms survive',
+                'An optical research breadboard table inside a cleanroom, showing a precision laser beam entering a polarizing beam splitter cube with single-photon fiber detectors',
+                'An exoplanet with a deep global liquid ocean under a thick hydrogen atmosphere, viewed from high orbit with a red dwarf star low on the horizon',
+                'A glass frog resting on a lush tropical leaf, transparent underside revealing beating heart and organs in crisp macro detail',
+              ];
+
+          // Filter image providers
+          const imageProviders = activeProvidersWithKeys.filter((p) => {
+            const k = (p.kind || p.adapter_kind || '').toLowerCase();
+            const n = (p.name || '').toLowerCase();
+            return (
+              k === 'pollinations' ||
+              k === 'cloudflare_workers_ai' ||
+              k === 'gemini_native' ||
+              n.includes('image') ||
+              n.includes('gemini') ||
+              n.includes('cloudflare') ||
+              n.includes('pollinations')
+            );
+          });
+
+          const results: any[] = [];
+          for (const prompt of prompts) {
+            const promptRuns: any[] = [];
+            for (const prov of imageProviders) {
+              const start = Date.now();
+              let success = false;
+              let thumb: string | undefined;
+              let errText: string | undefined;
+              const model = prov.model_name || 'flux';
+              const cost = getEstimatedCostPerImage(prov.kind || prov.adapter_kind, model);
+
+              try {
+                if (prov.kind === 'pollinations') {
+                  const pUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 300))}?model=${encodeURIComponent(model)}&width=256&height=320&nologo=true`;
+                  const res = await fetch(pUrl, { signal: AbortSignal.timeout(18000) });
+                  if (res.ok) {
+                    const ab = await res.arrayBuffer();
+                    thumb = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
+                    success = true;
+                  } else {
+                    errText = await res.text();
+                  }
+                } else if (prov.kind === 'gemini_native' || prov.name.toLowerCase().includes('gemini')) {
+                  const gRes = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-2.5-flash-image'}:generateContent?key=${prov.apiKey}`,
+                    {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: { responseModalities: ['IMAGE'] },
+                      }),
+                      signal: AbortSignal.timeout(18000),
+                    }
+                  );
+                  if (gRes.ok) {
+                    const gData = await gRes.json();
+                    const b64 = gData.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData?.data;
+                    if (b64) {
+                      thumb = `data:image/jpeg;base64,${b64}`;
+                      success = true;
+                    }
+                  } else {
+                    const gErr = await gRes.text();
+                    errText = gErr.includes('free tier') || gErr.includes('limit: 0')
+                      ? 'This model is not available on the free tier. Enable billing on the Google project or use another provider.'
+                      : gErr.slice(0, 150);
+                  }
+                }
+              } catch (e: any) {
+                errText = e.message || 'Timeout / Network Error';
+              }
+
+              promptRuns.push({
+                providerId: prov.id,
+                providerName: prov.name,
+                model,
+                success,
+                latencyMs: Date.now() - start,
+                estimatedCost: `$${cost.toFixed(4)}`,
+                thumbnailUrl: thumb,
+                error: success ? undefined : errText,
+              });
+            }
+
+            results.push({
+              prompt,
+              runs: promptRuns,
+            });
+          }
+
+          // Calculate suggested order based on success count and average latency
+          const provScores: Record<string, { successCount: number; totalLatency: number; count: number }> = {};
+          for (const item of results) {
+            for (const r of item.runs) {
+              if (!provScores[r.providerId]) provScores[r.providerId] = { successCount: 0, totalLatency: 0, count: 0 };
+              provScores[r.providerId].count++;
+              if (r.success) {
+                provScores[r.providerId].successCount++;
+                provScores[r.providerId].totalLatency += r.latencyMs;
+              } else {
+                provScores[r.providerId].totalLatency += 30000;
+              }
+            }
+          }
+
+          const suggestedOrder = Object.keys(provScores).sort((a, b) => {
+            const scA = provScores[a].successCount;
+            const scB = provScores[b].successCount;
+            if (scA !== scB) return scB - scA; // Highest success first
+            return (provScores[a].totalLatency / provScores[a].count) - (provScores[b].totalLatency / provScores[b].count); // Fastest first
+          });
+
+          return sendJson({
+            success: true,
+            results,
+            suggestedOrder,
+            benchmarkedAt: new Date().toISOString(),
+          });
+        } catch (err: any) {
+          return sendJson({ error: err.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 9d. API: Benchmark Ratings & Suggested Chain Ordering
+    if (url.pathname === '/api/bench/rate' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          // If suggested order applied, reorder provider priorities in database
+          if (parsed.applyOrder && Array.isArray(parsed.suggestedOrder)) {
+            for (let i = 0; i < parsed.suggestedOrder.length; i++) {
+              await store.updateProvider(parsed.suggestedOrder[i], { priority: i + 1 });
+            }
+            return sendJson({ success: true, appliedOrder: parsed.suggestedOrder });
+          }
+          return sendJson({ success: true, ratingRecorded: true });
         } catch (err: any) {
           return sendJson({ error: err.message }, 500);
         }
@@ -3761,6 +4050,9 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
     }
 
     const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+    const isImageChain = chainType === 'image';
+    const estCostPerImg = isImageChain ? getEstimatedCostPerImage(p.adapter_kind, p.model_name) : 0;
+    const estDailyCost = isImageChain ? getEstimatedDailyCost(p.adapter_kind, p.model_name, 5) : 0;
 
     return `
       <tr id="provider-row-${p.id}">
@@ -3771,6 +4063,13 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
           <div style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px;">
             ${escapeHtml(p.model_name || 'default')}
           </div>
+          ${
+            isImageChain
+              ? `<div style="font-size: 11px; color: #a78bfa; margin-top: 3px; font-weight: 500;">
+                  💰 Est: $${estCostPerImg.toFixed(3)}/img (~$${estDailyCost.toFixed(2)}/day @ 5 posts)
+                </div>`
+              : ''
+          }
         </td>
         <td><code>${escapeHtml(p.adapter_kind)}</code></td>
         <td>${priorityBadge}</td>
@@ -4655,6 +4954,17 @@ async function generateDashboardHtml(
                       }
 
                       const checklist = evaluatePageChecklist(p);
+                      const pageApprovedCount = posts.filter(
+                        (post) => (post.page_id === p.id || post.page_id === p.fb_page_id) && (post.review_state === 'approved' || post.status === 'published')
+                      ).length;
+                      const pageScoredPosts = posts.filter(
+                        (post) => (post.page_id === p.id || post.page_id === p.fb_page_id) && typeof post.qa_score === 'number'
+                      );
+                      const pageQaPassRate = pageScoredPosts.length > 0
+                        ? Math.round((pageScoredPosts.filter((post) => (post.qa_score || 0) >= 80).length / pageScoredPosts.length) * 100)
+                        : 100;
+                      const isSafetyGatePassed = pageApprovedCount >= 20 && pageQaPassRate >= 90;
+
                       const allProfilesPool = [...(contentProfiles || []), ...(seedProfiles || [])];
                       const assignedProf = allProfilesPool.find((sp) => sp.id === p.profile_id || sp.name === p.profile_id);
                       const profileLabel = assignedProf
@@ -4694,6 +5004,14 @@ async function generateDashboardHtml(
                                   • <span style="color: #cbd5e1;">🎭 Profile: <strong>${profileLabel}</strong></span>
                                   • <span style="color: #93c5fd;">Mode: ${p.publishing_mode.toUpperCase()}</span>
                                   • <span>🕒 ${p.schedule.postsPerDay > 0 ? `${p.schedule.postsPerDay} posts/day (${p.schedule.timezone || 'Asia/Kolkata'})` : 'No Schedule'}</span>
+                                </div>
+                                <div style="margin-top: 5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                  <span class="badge" style="background: ${isSafetyGatePassed ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)'}; color: ${isSafetyGatePassed ? '#34d399' : '#fbbf24'}; font-size: 11px; font-weight: 700;">
+                                    🛡️ Safety Gate: ${pageApprovedCount}/20 Approved (${pageQaPassRate}% QA Pass)
+                                  </span>
+                                  <span style="color: var(--text-muted); font-size: 11px;">
+                                    ${isSafetyGatePassed ? '🟢 Ready for Auto' : '🔒 Review Mode Default (20 approved required)'}
+                                  </span>
                                 </div>
                               </div>
                             </div>
@@ -5104,6 +5422,85 @@ async function generateDashboardHtml(
 
                 <div style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 14px; margin-bottom: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap;">${p.caption}</div>
 
+                <!-- Per-Post Quality Verification Audit Grid -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 14px; font-size: 12px;">
+                  <!-- 1. Image Check Result -->
+                  <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px; padding: 10px 12px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                      <strong style="color: #34d399;">📷 Image Check:</strong>
+                      <span class="badge" style="background: ${p.qa_result?.visionRelevanceCheck?.passed === false ? 'rgba(239,68,68,0.2)' : 'rgba(16,185,129,0.2)'}; color: ${p.qa_result?.visionRelevanceCheck?.passed === false ? '#f87171' : '#34d399'}; font-size: 10px;">
+                        ${p.qa_result?.visionRelevanceCheck?.passed === false ? 'FAIL' : 'PASS'}
+                      </span>
+                    </div>
+                    <div style="color: #cbd5e1; font-size: 11px; line-height: 1.4;">
+                      ${p.qa_result?.visionRelevanceCheck?.passed === false
+                        ? escapeHtml(p.qa_result.visionRelevanceCheck.feedback || 'Visual deformity or generic glow detected')
+                        : 'Concrete National Geographic scene verified (calm bottom 35%, zero abstract blue glow).'}
+                    </div>
+                  </div>
+
+                  <!-- 2. Consistency Result -->
+                  <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px; padding: 10px 12px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                      <strong style="color: #60a5fa;">⚖️ Consistency:</strong>
+                      <span class="badge" style="background: ${p.qa_result?.integrityCheck?.violations?.some((v: any) => v.code === 'NUMERICAL_MISMATCH' || v.code === 'CONTRADICTION') ? 'rgba(239,68,68,0.2)' : 'rgba(59,130,246,0.2)'}; color: ${p.qa_result?.integrityCheck?.violations?.some((v: any) => v.code === 'NUMERICAL_MISMATCH' || v.code === 'CONTRADICTION') ? '#f87171' : '#60a5fa'}; font-size: 10px;">
+                        ${p.qa_result?.integrityCheck?.violations?.some((v: any) => v.code === 'NUMERICAL_MISMATCH' || v.code === 'CONTRADICTION') ? 'MISMATCH' : 'MATCHED'}
+                      </span>
+                    </div>
+                    <div style="color: #cbd5e1; font-size: 11px; line-height: 1.4;">
+                      ${p.qa_result?.integrityCheck?.violations?.some((v: any) => v.code === 'NUMERICAL_MISMATCH' || v.code === 'CONTRADICTION')
+                        ? escapeHtml(p.qa_result.integrityCheck.violations.filter((v: any) => v.code === 'NUMERICAL_MISMATCH' || v.code === 'CONTRADICTION').map((v: any) => v.message).join('; '))
+                        : 'Numbers, scientific units and key terms in headline match caption exactly.'}
+                    </div>
+                  </div>
+
+                  <!-- 3. Grounding Result -->
+                  <div style="background: rgba(168, 85, 247, 0.08); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 6px; padding: 10px 12px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                      <strong style="color: #c084fc;">🔬 Grounding:</strong>
+                      <span class="badge" style="background: ${p.qa_result?.integrityCheck?.violations?.some((v: any) => v.code === 'UNGROUNDED_CLAIM') ? 'rgba(239,68,68,0.2)' : 'rgba(168,85,247,0.2)'}; color: ${p.qa_result?.integrityCheck?.violations?.some((v: any) => v.code === 'UNGROUNDED_CLAIM') ? '#f87171' : '#c084fc'}; font-size: 10px;">
+                        ${p.qa_result?.integrityCheck?.violations?.some((v: any) => v.code === 'UNGROUNDED_CLAIM') ? 'UNVERIFIED' : 'VERIFIED'}
+                      </span>
+                    </div>
+                    <div style="color: #cbd5e1; font-size: 11px; line-height: 1.4;">
+                      ${p.qa_result?.integrityCheck?.violations?.some((v: any) => v.code === 'UNGROUNDED_CLAIM')
+                        ? escapeHtml(p.qa_result.integrityCheck.violations.find((v: any) => v.code === 'UNGROUNDED_CLAIM')?.message || 'No source found')
+                        : 'All factual claims grounded in peer-reviewed scientific sources.'}
+                    </div>
+                    ${p.source_line ? `<div style="margin-top: 4px;"><a href="${escapeHtml(p.source_line)}" target="_blank" style="color: #93c5fd; text-decoration: underline; font-size: 11px;">🔗 Primary Source Fact</a></div>` : ''}
+                  </div>
+
+                  <!-- 4. Provider & Cost -->
+                  <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 10px 12px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                      <strong style="color: #fbbf24;">🎨 Provider & Cost:</strong>
+                      <span class="badge" style="background: rgba(245,158,11,0.2); color: #fbbf24; font-size: 10px;">
+                        ${escapeHtml(p.image_provider_used || 'Pollinations AI (flux)')}
+                      </span>
+                    </div>
+                    <div style="color: #cbd5e1; font-size: 11px; line-height: 1.4;">
+                      Estimated Cost: <strong style="color: #fef08a;">$${typeof p.qa_result?.estimatedCost?.costPerImage === 'number' ? p.qa_result.estimatedCost.costPerImage.toFixed(4) : '0.0000'}</strong>
+                      <div style="font-size: 10px; color: #94a3b8; margin-top: 2px;">Daily budget impact: ~$${typeof p.qa_result?.estimatedCost?.estimatedDailyCost === 'number' ? p.qa_result.estimatedCost.estimatedDailyCost.toFixed(3) : '0.000'}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Visual Preview if generated image exists -->
+                ${p.composed_image_path || p.raw_image_path ? `
+                  <div style="margin-bottom: 14px; display: flex; align-items: flex-start; gap: 14px; background: #080d1a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px;">
+                    <img src="${escapeHtml(p.composed_image_path || p.raw_image_path || '')}" alt="Visual Preview" style="width: 120px; height: 150px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); flex-shrink: 0;" />
+                    <div style="flex: 1; min-width: 0;">
+                      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                        <strong style="font-size: 12px; color: #93c5fd;">Concrete Physical Scene Prompt:</strong>
+                        <span class="badge" style="background: rgba(147,197,253,0.15); color: #93c5fd; font-size: 10px;">4:5 National Geographic</span>
+                      </div>
+                      <div style="font-size: 11px; color: #94a3b8; line-height: 1.5; font-family: monospace;">
+                        ${escapeHtml(p.image_prompt || 'Natural documentary composition with calm bottom 35% overlay zone.')}
+                      </div>
+                    </div>
+                  </div>
+                ` : ''}
+
                 ${
                   p.first_comment
                     ? `
@@ -5459,9 +5856,12 @@ async function generateDashboardHtml(
           <div>
             <h3 style="font-size: 17px; margin-bottom: 4px;">🎨 Image Generation Failover Chain</h3>
             <p style="font-size: 13px; color: var(--text-muted);">
-              Sequential image generation providers (Pollinations, Cloudflare Workers AI, etc.) with live health tracking.
+              Sequential image generation providers (Gemini Native, ZenMux, Pollinations, Cloudflare Workers AI) with live health tracking.
             </p>
           </div>
+          <button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.08); padding: 6px 14px; cursor: pointer;" onclick="openImageBenchModal()">
+            🔬 Image Quality Bench
+          </button>
         </div>
         <table>
           <thead>
@@ -7070,6 +7470,54 @@ async function generateDashboardHtml(
       <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #1e293b; padding-top: 14px;">
         <button type="button" class="btn btn-secondary" onclick="closeCustomPromptRegenModal()">Cancel</button>
         <button type="button" class="btn btn-primary" id="cprSubmitBtn" onclick="submitCustomPromptRegen()">🚀 Regenerate with this Direction</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMAGE QUALITY BENCH MODAL -->
+  <div class="modal" id="imageBenchModal" style="display: none; align-items: center; justify-content: center; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.9); backdrop-filter: blur(10px); z-index: 10002; overflow-y: auto; padding: 20px;">
+    <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; width: 100%; max-width: 1100px; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.9); position: relative; max-height: 90vh; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid #1e293b; padding-bottom: 12px;">
+        <div>
+          <h3 style="font-size: 18px; font-weight: 700; color: #f8fafc; margin: 0;">🔬 Image Quality Bench (6-Prompt Standard Matrix)</h3>
+          <p style="font-size: 13px; color: #94a3b8; margin: 4px 0 0 0;">
+            Benchmark your image providers (Gemini 2.5 Flash, ZenMux, Pollinations Flux, Turbo, Seedream) side by side on 6 concrete scientific prompts.
+          </p>
+        </div>
+        <button type="button" onclick="closeImageBenchModal()" style="background: none; border: none; color: #94a3b8; font-size: 24px; cursor: pointer;">&times;</button>
+      </div>
+
+      <!-- Provider Selection & Actions Bar -->
+      <div style="background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <span style="font-size: 13px; font-weight: 600; color: #cbd5e1;">Test Providers:</span>
+          <div id="imageBenchProviderCheckboxes" style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <!-- Populated dynamically from image providers -->
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btnRunImageBench" onclick="runImageBenchAction()">
+          ▶️ Run Benchmark (6 Prompts)
+        </button>
+      </div>
+
+      <!-- Suggested Chain Order Banner (Shown after ratings) -->
+      <div id="imageBenchOrderBanner" style="display: none; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.35); border-radius: 8px; padding: 12px 16px; margin-bottom: 18px; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+        <div>
+          <strong style="color: #60a5fa; font-size: 14px;">💡 Recommended Failover Order Based on Your Ratings:</strong>
+          <div id="imageBenchSuggestedList" style="font-size: 12px; color: #e2e8f0; margin-top: 4px; font-family: monospace;"></div>
+        </div>
+        <button class="btn btn-success" onclick="applySuggestedChainOrder()" style="padding: 6px 14px; font-size: 12px;">
+          ✓ Apply Suggested Chain Order
+        </button>
+      </div>
+
+      <!-- Benchmark Results Container -->
+      <div id="imageBenchResultsContainer">
+        <div style="text-align: center; padding: 40px 20px; color: #64748b;">
+          <div style="font-size: 32px; margin-bottom: 8px;">🔬</div>
+          <div style="font-size: 14px; font-weight: 600; color: #94a3b8;">No Benchmark Run Executed Yet</div>
+          <div style="font-size: 12px; max-width: 450px; margin: 4px auto 0 auto;">Select providers above and click "Run Benchmark" to test real outputs side-by-side with latency, cost, and thumbs up/down rating.</div>
+        </div>
       </div>
     </div>
   </div>

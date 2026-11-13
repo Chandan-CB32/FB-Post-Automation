@@ -55,7 +55,7 @@ export class ProviderRouter {
   private providers = new Map<string, ProviderDefinition>();
   private chains = new Map<PipelineStage, ChainDefinition>();
   private defaultTextAdapter: TextProviderAdapter = new OpenAIChatAdapter();
-  private geminiAdapter: TextProviderAdapter = new GeminiNativeAdapter();
+  private geminiAdapter: GeminiNativeAdapter = new GeminiNativeAdapter();
   private cloudflareAdapter = new CloudflareWorkersAIAdapter();
   private pollinationsAdapter: ImageProviderAdapter = new PollinationsImageAdapter();
 
@@ -95,6 +95,8 @@ export class ProviderRouter {
 
   private resolveImageAdapter(provider: ProviderDefinition): ImageProviderAdapter {
     switch (provider.kind) {
+      case 'gemini_native':
+        return this.geminiAdapter;
       case 'cloudflare_workers_ai':
         return this.cloudflareAdapter;
       case 'pollinations':
@@ -102,6 +104,9 @@ export class ProviderRouter {
       case 'custom_http':
         return new CustomHttpAdapter(provider.config as any);
       default:
+        if (provider.name.toLowerCase().includes('gemini')) {
+          return this.geminiAdapter;
+        }
         return this.pollinationsAdapter;
     }
   }
@@ -227,6 +232,7 @@ export class ProviderRouter {
           p.active &&
           (p.kind === 'pollinations' ||
             p.kind === 'cloudflare_workers_ai' ||
+            p.kind === 'gemini_native' ||
             p.kind === 'custom_http' ||
             p.kind === 'openai_compatible_images')
       );
@@ -277,6 +283,17 @@ export class ProviderRouter {
 
         if (keyItem) {
           recordKeyFailure(keyItem, errorKind, retryAfter);
+        }
+
+        // If free-tier limit or billing error, mark provider failing and skip immediately
+        if (
+          errorMsg.includes('not available on the free tier') ||
+          errorMsg.includes('free tier') ||
+          errorMsg.includes('limit: 0')
+        ) {
+          provider.active = false;
+          (provider as any).health_status = 'failing';
+          (provider as any).status = 'failing';
         }
 
         attempts.push({
