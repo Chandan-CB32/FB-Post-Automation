@@ -371,14 +371,16 @@ export class TestRunRunner {
           });
 
           const imageDuration = Date.now() - imageStartTime;
-          imageUrl = imageResult.imageUrl || (imageResult.imageBuffer ? `data:image/png;base64,${imageResult.imageBuffer.toString('base64')}` : null);
+          imageUrl = imageResult.imageUrl || (imageResult.imageBuffer ? `data:image/jpeg;base64,${imageResult.imageBuffer.toString('base64')}` : null);
+          const triedCount = (imageResult as any).auditTrail?.length || 1;
+          const auditSummary = `Image provider: ${imageResult.providerName} / ${imageResult.modelUsed}, tried ${triedCount} entry(ies). Estimated cost: $${((imageResult as any).estimatedCostUsd || 0).toFixed(4)}`;
 
           stages.push({
             stageName: 'image_generate',
             providerId: imageResult.providerId,
             model: imageResult.modelUsed,
             prompt: safeImagePrompt,
-            rawOutput: imageUrl || 'Image generated successfully',
+            rawOutput: `${auditSummary}\n\n${imageUrl || 'Image generated and normalized successfully'}`,
             durationMs: imageDuration,
             tokensUsed: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
           });

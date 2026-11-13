@@ -63,6 +63,10 @@ import {
   getSupabaseClient,
   GeminiNativeAdapter,
   OpenAIChatAdapter,
+  CloudflareWorkersAIAdapter,
+  OpenAICompatibleImageAdapter,
+  globalBudgetTracker,
+  KNOWN_IMAGE_MODEL_LICENSES,
   renderHeadlineCard,
   verifyFontLoading,
   parseHeadlineSegments,
@@ -501,18 +505,23 @@ export function lookupOfficialFreeQuota(provider: string | { name?: string; adap
   return null;
 }
 
-export function getProviderChain(provider: { name?: string; adapter_kind?: string; model_name?: string }): 'text' | 'image' {
-  const kind = (provider.adapter_kind || '').toLowerCase();
+export function getProviderChain(provider: { name?: string; adapter_kind?: string; model_name?: string; config?: any }): 'text' | 'image' {
+  if (provider.config?.chain_type === 'image') return 'image';
+  if (provider.config?.chain_type === 'text') return 'text';
+  const kind = (provider.adapter_kind || (provider as any).kind || '').toLowerCase();
   const name = (provider.name || '').toLowerCase();
   const model = (provider.model_name || '').toLowerCase();
   if (
     kind === 'pollinations' ||
-    kind === 'cloudflare_workers_ai' ||
     kind === 'openai_compatible_images' ||
     name.includes('image') ||
     model.includes('flux') ||
     model.includes('dall-e') ||
-    model.includes('stable-diffusion')
+    model.includes('stable-diffusion') ||
+    model.includes('lucid') ||
+    model.includes('phoenix') ||
+    model.includes('wanx') ||
+    model.includes('riverflow')
   ) {
     return 'image';
   }
@@ -3384,6 +3393,34 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               const ab = await pRes.arrayBuffer();
               thumbnailUrl = `data:image/jpeg;base64,${Buffer.from(ab).toString('base64')}`;
               probeSuccess = true;
+            } else if (isImageTest && provider.adapter_kind === 'openai_compatible_images') {
+              const imageAdapter = new OpenAICompatibleImageAdapter((provider.config as any) || {});
+              const imgRes = await imageAdapter.generateImage({
+                prompt: 'a small red apple on clean white background, educational photo',
+                model: targetModel,
+                apiKey: decryptedKey,
+                baseUrl: provider.base_url,
+                timeoutMs: 20000,
+                width: 256,
+                height: 320,
+              });
+              latencyMs = Date.now() - start;
+              thumbnailUrl = imgRes.imageUrl || (imgRes.imageBuffer ? `data:image/jpeg;base64,${imgRes.imageBuffer.toString('base64')}` : undefined);
+              probeSuccess = true;
+            } else if (isImageTest && provider.adapter_kind === 'cloudflare_workers_ai') {
+              const cfAdapter = new CloudflareWorkersAIAdapter();
+              const imgRes = await cfAdapter.generateImage({
+                prompt: 'a small red apple on clean white background',
+                model: targetModel,
+                apiKey: decryptedKey,
+                baseUrl: provider.base_url,
+                timeoutMs: 20000,
+                width: 256,
+                height: 320,
+              });
+              latencyMs = Date.now() - start;
+              thumbnailUrl = imgRes.imageBuffer ? `data:image/jpeg;base64,${imgRes.imageBuffer.toString('base64')}` : undefined;
+              probeSuccess = true;
             } else if (provider.adapter_kind === 'gemini_native' || provider.name.toLowerCase().includes('gemini')) {
               const probeRes = await fetch(
                 `https://generativelanguage.googleapis.com/v1beta/models?key=${decryptedKey}`,
@@ -3451,6 +3488,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             latency_ms: latencyMs,
             test_error: probeSuccess ? undefined : errorMessage,
             last_tested_at: new Date().toISOString(),
+            enabled: probeSuccess,
           });
 
           return sendJson({
@@ -3702,6 +3740,76 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
                 label,
               });
               addedKeys.push(newKey);
+            }
+
+            // Rule A: Run Test automatically when key is added. Enable only if test passes.
+            let autoTestPassed = false;
+            let autoTestError = '';
+            try {
+              const targetProv = await store.getProviderById(providerId);
+              if (targetProv) {
+                const isImage = getProviderChain(targetProv) === 'image';
+                const firstKey = parsedKeys[0];
+                if (isImage && targetProv.adapter_kind === 'openai_compatible_images') {
+                  const imageAdapter = new OpenAICompatibleImageAdapter((targetProv.config as any) || {});
+                  await imageAdapter.generateImage({
+                    prompt: 'a small red apple on clean white background',
+                    model: targetProv.model_name,
+                    apiKey: firstKey,
+                    baseUrl: targetProv.base_url,
+                    timeoutMs: 15000,
+                    width: 256,
+                    height: 320,
+                  });
+                  autoTestPassed = true;
+                } else if (isImage && targetProv.adapter_kind === 'cloudflare_workers_ai') {
+                  const cfAdapter = new CloudflareWorkersAIAdapter();
+                  await cfAdapter.generateImage({
+                    prompt: 'a small red apple on clean white background',
+                    model: targetProv.model_name,
+                    apiKey: firstKey,
+                    timeoutMs: 15000,
+                    width: 256,
+                    height: 320,
+                  });
+                  autoTestPassed = true;
+                } else if (targetProv.adapter_kind === 'gemini_native' || targetProv.name.toLowerCase().includes('gemini')) {
+                  const probeRes = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models?key=${firstKey}`,
+                    { method: 'GET', signal: AbortSignal.timeout(8000) }
+                  );
+                  autoTestPassed = probeRes.ok;
+                  if (!probeRes.ok) autoTestError = `Probe returned status ${probeRes.status}`;
+                } else {
+                  const baseUrl = (targetProv.base_url || 'https://api.openai.com/v1').replace(/\/+$/, '');
+                  const probeRes = await fetch(`${baseUrl}/models`, {
+                    method: 'GET',
+                    headers: { Authorization: `Bearer ${firstKey}` },
+                    signal: AbortSignal.timeout(8000),
+                  });
+                  autoTestPassed = probeRes.ok;
+                  if (!probeRes.ok) autoTestError = `Probe returned status ${probeRes.status}`;
+                }
+              }
+            } catch (probeErr: any) {
+              autoTestPassed = false;
+              autoTestError = probeErr.message || 'Auto-test failed';
+            }
+
+            if (autoTestPassed) {
+              await store.updateProvider(providerId, {
+                enabled: true,
+                health_status: 'healthy',
+                test_error: undefined,
+                last_tested_at: new Date().toISOString(),
+              });
+            } else if (autoTestError) {
+              await store.updateProvider(providerId, {
+                enabled: false,
+                health_status: 'failing',
+                test_error: autoTestError,
+                last_tested_at: new Date().toISOString(),
+              });
             }
 
             const currentKeys = await store.getProviderKeys(providerId);
@@ -4014,6 +4122,8 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
     </td></tr>`;
   }
 
+  const isImageChain = chainType === 'image';
+
   return chainProviders.map((p, idx) => {
     const keys = providerKeys.filter((k) => k.provider_id === p.id);
     const activeKeys = keys.filter((k) => k.is_active);
@@ -4027,21 +4137,20 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
       (officialQuota.rpdLimit === 0 && (p.daily_limit || 0) > 0)
     );
 
-    let priorityBadge = '';
-    if (idx === 0) {
-      priorityBadge = '<span class="badge" style="background: #064e3b; color: #34d399; font-weight: 700; padding: 3px 8px; font-size: 11px;">#1 Primary</span>';
-    } else if (idx === 1) {
-      priorityBadge = '<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-weight: 700; padding: 3px 8px; font-size: 11px;">#2 Secondary</span>';
-    } else if (idx === 2) {
-      priorityBadge = '<span class="badge" style="background: #78350f; color: #fbbf24; font-weight: 700; padding: 3px 8px; font-size: 11px;">#3 Fallback</span>';
-    } else {
-      priorityBadge = `<span class="badge" style="background: #27272a; color: #a1a1aa; font-weight: 600; padding: 3px 8px; font-size: 11px;">#${idx + 1} Fallback</span>`;
-    }
+    // Explicit position number #1 through #8
+    const posColors = ['#064e3b', '#1e3a8a', '#78350f', '#3b0764', '#1e293b', '#374151', '#065f46', '#1e1b4b'];
+    const textColors = ['#34d399', '#60a5fa', '#fbbf24', '#c084fc', '#93c5fd', '#d1d5db', '#6ee7b7', '#a5b4fc'];
+    const priorityBadge = `<span class="badge" style="background: ${posColors[idx % posColors.length]}; color: ${textColors[idx % textColors.length]}; font-weight: 800; padding: 4px 10px; font-size: 12px; border-radius: 6px;">#${idx + 1} Priority</span>`;
+
+    const isPollinations = p.adapter_kind === 'pollinations';
+    const isNeedsKey = (p.config as any)?.status === 'needs_key' || (activeKeys.length === 0 && !isPollinations);
 
     let statusDisplay = '';
-    if (p.health_status === 'failing') {
+    if (isNeedsKey) {
+      statusDisplay = '<span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; font-weight: 700; padding: 4px 8px; font-size: 11px;">● Needs API Key</span>';
+    } else if (p.health_status === 'failing' || (p.config as any)?.health_status === 'failing') {
       statusDisplay = `<div style="color: #ef4444; font-weight: 700; font-size: 12px;">● Failing (skipped)</div><div style="font-size: 10px; color: #f87171;" title="${escapeHtml(p.test_error || '')}">${escapeHtml((p.test_error || 'Probe failed').slice(0, 30))}</div>`;
-    } else if (p.health_status === 'healthy') {
+    } else if (p.health_status === 'healthy' || (p.config as any)?.health_status === 'healthy') {
       statusDisplay = `<div style="color: #34d399; font-weight: 600; font-size: 12px;">● Healthy (${p.latency_ms || 120}ms)</div><div style="font-size: 10px; color: #94a3b8;">${p.last_tested_at ? 'Tested ' + new Date(p.last_tested_at).toLocaleTimeString() : 'Verified'}</div>`;
     } else if (p.enabled) {
       statusDisplay = '<span style="color: #34d399; font-weight: 600; font-size: 12px;">● Active</span>';
@@ -4050,12 +4159,14 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
     }
 
     const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
-    const isImageChain = chainType === 'image';
     const estCostPerImg = isImageChain ? getEstimatedCostPerImage(p.adapter_kind, p.model_name) : 0;
     const estDailyCost = isImageChain ? getEstimatedDailyCost(p.adapter_kind, p.model_name, 5) : 0;
 
+    // License metadata
+    const licenseInfo = KNOWN_IMAGE_MODEL_LICENSES[p.model_name || ''];
+
     return `
-      <tr id="provider-row-${p.id}">
+      <tr id="provider-row-${p.id}" class="provider-draggable-row" data-provider-id="${p.id}" data-chain="${chainType}">
         <td>
           <div style="display: flex; align-items: center; gap: 8px;">
             <div style="font-weight: 700; font-size: 14px; color: #f3f4f6;">${escapeHtml(p.name)}</div>
@@ -4063,6 +4174,14 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
           <div style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px;">
             ${escapeHtml(p.model_name || 'default')}
           </div>
+          ${
+            licenseInfo
+              ? `<div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
+                  <span class="badge" style="background: #1e293b; color: #cbd5e1; font-size: 10px; padding: 2px 6px;">📜 ${escapeHtml(licenseInfo.license)}</span>
+                  ${!licenseInfo.commercialUseAllowed ? '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-size: 10px; padding: 2px 6px;">⚠️ Non-Commercial</span>' : ''}
+                </div>`
+              : ''
+          }
           ${
             isImageChain
               ? `<div style="font-size: 11px; color: #a78bfa; margin-top: 3px; font-weight: 500;">
@@ -4099,6 +4218,7 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
         <td id="provider-status-${p.id}">${statusDisplay}</td>
         <td style="text-align: right; white-space: nowrap;">
           <div style="display: inline-flex; gap: 4px;">
+            ${isNeedsKey ? `<button class="btn btn-primary" style="padding: 4px 8px; font-size: 11px; background: #f59e0b; color: #1e1e24; font-weight: 700;" onclick="openManageKeysModal('${p.id}')">➕ Add Key</button>` : ''}
             <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="moveProviderPriority('${p.id}', 'up')" title="Move up in failover chain" ${idx === 0 ? 'disabled style="opacity: 0.35; cursor: not-allowed; padding: 4px 8px; font-size: 11px;"' : ''}>⬆️</button>
             <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="moveProviderPriority('${p.id}', 'down')" title="Move down in failover chain" ${idx === chainProviders.length - 1 ? 'disabled style="opacity: 0.35; cursor: not-allowed; padding: 4px 8px; font-size: 11px;"' : ''}>⬇️</button>
             <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="testProviderAction('${p.id}', this)" title="Test latency and live connection">🩺 Test</button>
@@ -4110,6 +4230,97 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
       </tr>
     `;
   }).join('');
+}
+
+function renderBudgetTrackerBanner(): string {
+  const b = globalBudgetTracker.getDashboardSummary();
+  const warnHtml = b.warnings.length > 0
+    ? `<div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; display: flex; align-items: center; gap: 8px;">
+        <span>⚠️</span>
+        <div><strong>Budget Warnings (&gt;= 80% used):</strong> ${b.warnings.map((w: string) => escapeHtml(w)).join(' • ')}</div>
+      </div>`
+    : '';
+
+  return `
+    <div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 10px; padding: 16px; margin-bottom: 20px;">
+      ${warnHtml}
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 20px;">⚡</span>
+          <div>
+            <div style="font-size: 15px; font-weight: 800; color: #f8fafc;">
+              Images you can still generate today: <span style="color: #34d399; font-size: 16px;">~${b.imagesRemainingToday} images</span>
+            </div>
+            <div style="font-size: 11px; color: #94a3b8;">
+              Combined capacity across all active free pools and credit reserves
+            </div>
+          </div>
+        </div>
+        <div style="font-size: 11px; color: #cbd5e1; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); padding: 4px 10px; border-radius: 6px;">
+          🛡️ 1,500 Cloudflare reserve protected for text & FLUX schnell fallback
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px;">
+        <!-- Cloudflare Neurons -->
+        <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.5); border-radius: 8px; padding: 10px 12px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+            <strong style="color: #f97316;">Cloudflare Neurons</strong>
+            <span style="color: #94a3b8;">${b.cloudflare.used} / ${b.cloudflare.total}</span>
+          </div>
+          <div style="width: 100%; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; margin-bottom: 4px;">
+            <div style="width: ${b.cloudflare.percent}%; height: 100%; background: ${b.cloudflare.percent >= 80 ? '#ef4444' : '#f97316'};"></div>
+          </div>
+          <div style="font-size: 10px; color: #64748b; display: flex; justify-content: space-between;">
+            <span>Cap Lucid: ${b.cloudflare.lucidUsedToday}/${b.cloudflare.lucidCap}</span>
+            <span>Reserve: ${b.cloudflare.reserve}</span>
+          </div>
+        </div>
+
+        <!-- Vercel AI Gateway -->
+        <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.5); border-radius: 8px; padding: 10px 12px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+            <strong style="color: #38bdf8;">Vercel AI Credit</strong>
+            <span style="color: #94a3b8;">$${b.vercel.usedUsd} / $${b.vercel.totalUsd}</span>
+          </div>
+          <div style="width: 100%; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; margin-bottom: 4px;">
+            <div style="width: ${b.vercel.percent}%; height: 100%; background: ${b.vercel.percent >= 80 ? '#ef4444' : '#38bdf8'};"></div>
+          </div>
+          <div style="font-size: 10px; color: #64748b;">
+            <span>$${b.vercel.remainingUsd} remaining (FLUX.2 klein 4B)</span>
+          </div>
+        </div>
+
+        <!-- Alibaba Model Studio -->
+        <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.5); border-radius: 8px; padding: 10px 12px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+            <strong style="color: #a855f7;">Alibaba 90-Day Pool</strong>
+            <span style="color: #94a3b8;">${b.alibaba.used} / ${b.alibaba.total}</span>
+          </div>
+          <div style="width: 100%; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; margin-bottom: 4px;">
+            <div style="width: ${b.alibaba.percent}%; height: 100%; background: ${b.alibaba.percent >= 80 ? '#ef4444' : '#a855f7'};"></div>
+          </div>
+          <div style="font-size: 10px; color: #64748b;">
+            <span>Expires ${b.alibaba.expiresAt}</span>
+          </div>
+        </div>
+
+        <!-- OpenRouter Free -->
+        <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(51, 65, 85, 0.5); border-radius: 8px; padding: 10px 12px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+            <strong style="color: #34d399;">OpenRouter Free</strong>
+            <span style="color: #94a3b8;">${b.openRouter.used} / ${b.openRouter.limit}</span>
+          </div>
+          <div style="width: 100%; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; margin-bottom: 4px;">
+            <div style="width: ${b.openRouter.percent}%; height: 100%; background: ${b.openRouter.percent >= 80 ? '#ef4444' : '#34d399'};"></div>
+          </div>
+          <div style="font-size: 10px; color: #64748b;">
+            <span>Riverflow Fast Free (20 RPM limit)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 async function generateDashboardHtml(
@@ -5863,6 +6074,7 @@ async function generateDashboardHtml(
             🔬 Image Quality Bench
           </button>
         </div>
+        ${renderBudgetTrackerBanner()}
         <table>
           <thead>
             <tr>

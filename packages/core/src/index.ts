@@ -34,6 +34,7 @@ export * from './settings-resolver/resolver.js';
 // Provider Key Pool & Presets
 export * from './providers/key-pool.js';
 export * from './providers/presets.js';
+export * from './providers/budget-tracker.js';
 
 // Provider Adapters
 export * from './adapters/types.js';
@@ -44,12 +45,14 @@ export * from './adapters/gemini.js';
 export * from './adapters/cloudflare.js';
 export * from './adapters/pollinations.js';
 export * from './adapters/custom-http.js';
+export * from './adapters/openai-image.js';
 
 // Validation Schemas & Caption Validator
 export * from './validation/schemas.js';
 export * from './validation/caption-validator.js';
 export * from './validation/claim-verifier.js';
 export * from './validation/content-integrity.js';
+export * from './validation/image-validator.js';
 
 // Unified Generation Pipeline & Headline Card Engine
 export * from './pipeline/generation-pipeline.js';

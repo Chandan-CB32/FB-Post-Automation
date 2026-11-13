@@ -8,6 +8,8 @@ import {
   ProviderError,
 } from './types.js';
 import { extractJsonFromText } from './json-extractor.js';
+import { validateAndNormalizeImage } from '../validation/image-validator.js';
+import { globalBudgetTracker } from '../providers/budget-tracker.js';
 
 export interface CloudflareConfig {
   accountId?: string;
@@ -99,9 +101,23 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
     const model = options.model || '@cf/black-forest-labs/flux-1-schnell';
     const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`;
 
+    const isLeonardo = model.includes('lucid') || model.includes('phoenix') || model.includes('leonardo');
+    const requiredSteps = isLeonardo ? 20 : 4;
+
+    // Check Cloudflare neuron budget and daily caps
+    const budgetCheck = globalBudgetTracker.canUseCloudflareModel(model);
+    if (!budgetCheck.allowed) {
+      throw new ProviderError(
+        `Cloudflare neuron budget check blocked: ${budgetCheck.reason}`,
+        'rate_limit',
+        429
+      );
+    }
+
     const body: Record<string, unknown> = {
       prompt: options.prompt,
-      steps: 4, // Recommended standard steps for schnell
+      steps: requiredSteps,
+      num_steps: requiredSteps,
     };
 
     const startTime = Date.now();
@@ -111,17 +127,27 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
 
     const contentType = response.headers.get('content-type') || 'image/png';
     const arrayBuffer = await response.arrayBuffer();
-    const imageBuffer = Buffer.from(arrayBuffer);
+    const rawBuffer = Buffer.from(arrayBuffer);
 
-    if (imageBuffer.length < 100) {
+    if (rawBuffer.length < 100) {
       throw new ProviderError('Cloudflare returned an empty or truncated image buffer.', 'invalid_output');
     }
 
+    // Validate and cover-crop to 4:5 1080x1350
+    const normalized = await validateAndNormalizeImage(rawBuffer, {
+      targetWidth: options.width || 1080,
+      targetHeight: options.height || 1350,
+      rejectWatermarks: true,
+    });
+
+    // Record neuron usage
+    globalBudgetTracker.recordCloudflareUsage(model);
+
     return {
-      imageBuffer,
+      imageBuffer: normalized.sanitizedBuffer,
       mimeType: contentType.includes('jpeg') ? 'image/jpeg' : 'image/png',
-      width: options.width || 1080,
-      height: options.height || 1350,
+      width: normalized.width,
+      height: normalized.height,
       latencyMs,
       modelUsed: model,
     };

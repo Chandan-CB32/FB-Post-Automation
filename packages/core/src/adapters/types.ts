@@ -79,6 +79,7 @@ export interface ImageGenerateResult {
   latencyMs: number;
   modelUsed: string;
   imageUrl?: string;
+  rawResponse?: unknown;
 }
 
 export interface TextProviderAdapter {

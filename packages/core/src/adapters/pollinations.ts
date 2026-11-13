@@ -4,6 +4,7 @@ import {
   ImageGenerateResult,
   ProviderError,
 } from './types.js';
+import { validateAndNormalizeImage } from '../validation/image-validator.js';
 
 export const POLLINATIONS_MODELS = [
   { id: 'flux', name: 'FLUX.1 Schnell (Default, Free)', cost: 0.0 },
@@ -110,17 +111,24 @@ export class PollinationsImageAdapter implements ImageProviderAdapter {
 
     const contentType = response.headers.get('content-type') || 'image/jpeg';
     const arrayBuffer = await response.arrayBuffer();
-    const imageBuffer = Buffer.from(arrayBuffer);
+    const rawBuffer = Buffer.from(arrayBuffer);
 
-    if (imageBuffer.length < 500) {
+    if (rawBuffer.length < 500) {
       throw new ProviderError('Pollinations returned an empty or truncated image buffer.', 'invalid_output');
     }
 
+    // Validate image integrity, check for blank renders / watermarks, cover-crop to 4:5 1080x1350
+    const normalized = await validateAndNormalizeImage(rawBuffer, {
+      targetWidth: width,
+      targetHeight: height,
+      rejectWatermarks: true,
+    });
+
     return {
-      imageBuffer,
-      mimeType: contentType.includes('png') ? 'image/png' : 'image/jpeg',
-      width,
-      height,
+      imageBuffer: normalized.sanitizedBuffer,
+      mimeType: normalized.mimeType,
+      width: normalized.width,
+      height: normalized.height,
       latencyMs,
       modelUsed: model,
       imageUrl: url.toString(),

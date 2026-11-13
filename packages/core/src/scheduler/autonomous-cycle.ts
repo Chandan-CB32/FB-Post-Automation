@@ -424,19 +424,26 @@ export async function runAutonomousCycle(
                   }
                 : undefined;
 
-              const pubRes = await publisher.publishFeedPost(
-                page.fb_page_id,
-                rawToken,
-                {
-                  message: pipelineResult.caption,
-                  photo: photoInput,
-                  scheduledPublishTime: slot,
-                }
-              );
+              // RULE D.6: If image is missing, NEVER publish text-only to Facebook! Route to Review Inbox.
+              if (!photoInput) {
+                console.warn('[Autonomous Worker] Image missing: Refusing to publish text-only post to Facebook. Routing to Review Inbox.');
+                postStatus = 'pending_review';
+                errors.push('failed: no image - Refusing to publish text-only post to Facebook.');
+              } else {
+                const pubRes = await publisher.publishFeedPost(
+                  page.fb_page_id,
+                  rawToken,
+                  {
+                    message: pipelineResult.caption,
+                    photo: photoInput,
+                    scheduledPublishTime: slot,
+                  }
+                );
 
-              fbPostId = pubRes.postId;
-              fbPermalink = pubRes.permalinkUrl || null;
-              postStatus = pubRes.isScheduled ? 'scheduled_on_fb' : 'published';
+                fbPostId = pubRes.postId;
+                fbPermalink = pubRes.permalinkUrl || null;
+                postStatus = pubRes.isScheduled ? 'scheduled_on_fb' : 'published';
+              }
             } catch (fbPubErr: any) {
               console.error(`[Autonomous Worker] Facebook schedule/publish error:`, fbPubErr?.message || fbPubErr);
               postStatus = 'pending_review';

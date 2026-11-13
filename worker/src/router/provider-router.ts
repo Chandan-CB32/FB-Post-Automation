@@ -14,6 +14,10 @@ import {
   CloudflareWorkersAIAdapter,
   PollinationsImageAdapter,
   CustomHttpAdapter,
+  OpenAICompatibleImageAdapter,
+  validateAndNormalizeImage,
+  globalBudgetTracker,
+  KNOWN_IMAGE_MODEL_LICENSES,
   KeyPoolItem,
   getNextAvailableKey,
   recordKeySuccess,
@@ -33,6 +37,8 @@ export interface ProviderDefinition extends ProviderCandidateMeta {
   active: boolean;
   keys: KeyPoolItem[];
   defaultModel?: string;
+  priority?: number;
+  health_status?: string;
 }
 
 export interface ChainDefinition {
@@ -101,6 +107,8 @@ export class ProviderRouter {
         return this.cloudflareAdapter;
       case 'pollinations':
         return this.pollinationsAdapter;
+      case 'openai_compatible_images':
+        return new OpenAICompatibleImageAdapter(provider.config as any);
       case 'custom_http':
         return new CustomHttpAdapter(provider.config as any);
       default:
@@ -207,94 +215,311 @@ export class ProviderRouter {
   }
 
   /**
-   * Executes an image generation stage across the configured provider chain with automatic failover.
+   * Executes an image generation stage across the configured provider chain with strict priority failover.
    */
   async executeImage(
     stage: PipelineStage,
     options: Omit<ImageGenerateOptions, 'apiKey' | 'baseUrl'> & {
       encryptionKey?: string;
+      pageOverrides?: {
+        image_chain_override?: string[];
+        isMonetized?: boolean;
+      };
     }
-  ): Promise<ImageGenerateResult & { providerId: string; providerName: string; keyMasked?: string }> {
+  ): Promise<
+    ImageGenerateResult & {
+      providerId: string;
+      providerName: string;
+      keyMasked?: string;
+      auditTrail: Array<{
+        provider: string;
+        model: string;
+        status: 'success' | 'skipped' | 'failed';
+        error?: string;
+        skippedReason?: string;
+        latencyMs?: number;
+      }>;
+      estimatedCostUsd: number;
+    }
+  > {
     const chain = this.chains.get(stage);
     let candidateProviders: ProviderDefinition[] = [];
 
-    if (chain && chain.providerIds.length > 0) {
+    // Support per-Page image chain override
+    const pageOverrideIds = options.pageOverrides?.image_chain_override;
+    if (pageOverrideIds && Array.isArray(pageOverrideIds) && pageOverrideIds.length > 0) {
+      for (const id of pageOverrideIds) {
+        const prov = this.providers.get(id);
+        if (prov) candidateProviders.push(prov);
+      }
+    } else if (chain && chain.providerIds.length > 0) {
       for (const id of chain.providerIds) {
         const prov = this.providers.get(id);
-        if (prov && prov.active) {
-          candidateProviders.push(prov);
-        }
+        if (prov) candidateProviders.push(prov);
       }
     } else {
-      // Fallback: image-capable providers
-      candidateProviders = Array.from(this.providers.values()).filter(
-        (p) =>
-          p.active &&
-          (p.kind === 'pollinations' ||
+      // Fallback: image-capable providers ordered strictly by priority
+      candidateProviders = Array.from(this.providers.values())
+        .filter(
+          (p) =>
+            p.kind === 'pollinations' ||
             p.kind === 'cloudflare_workers_ai' ||
             p.kind === 'gemini_native' ||
             p.kind === 'custom_http' ||
-            p.kind === 'openai_compatible_images')
-      );
+            p.kind === 'openai_compatible_images'
+        )
+        .sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
     }
 
-    const strategy = chain?.strategy || 'priority';
-    const ordered = orderCandidatesByStrategy(candidateProviders, strategy);
-
-    if (ordered.length === 0) {
-      throw new ProviderRouterError(`No available image providers in chain for stage '${stage}'.`, []);
+    if (candidateProviders.length === 0) {
+      throw new ProviderRouterError(`failed: no image - No image providers configured for stage '${stage}'.`, []);
     }
 
+    const auditTrail: Array<{
+      provider: string;
+      model: string;
+      status: 'success' | 'skipped' | 'failed';
+      error?: string;
+      skippedReason?: string;
+      latencyMs?: number;
+    }> = [];
     const attempts: Array<{ provider: string; error: string; kind: string }> = [];
 
-    for (const provider of ordered) {
-      const keyInfo = getNextAvailableKey(provider.keys, new Date(), options.encryptionKey);
-      const decryptedKey = keyInfo ? keyInfo.decryptedKey : undefined;
-      const keyItem = keyInfo ? keyInfo.item : undefined;
-
-      const adapter = this.resolveImageAdapter(provider);
+    for (const provider of candidateProviders) {
       const model = options.model || provider.defaultModel || 'flux';
 
-      try {
-        const result = await adapter.generateImage({
-          ...options,
+      // 1. Check if provider explicitly marked as needs_key or missing active key
+      const isPollinations = provider.kind === 'pollinations';
+      const hasKeysInPool = Array.isArray(provider.keys) && provider.keys.length > 0;
+      const isNeedsKeyStatus = (provider as any).status === 'needs_key' || (provider as any).health_status === 'needs_key';
+
+      if ((isNeedsKeyStatus || (!hasKeysInPool && !isPollinations)) && !isPollinations) {
+        auditTrail.push({
+          provider: provider.name,
           model,
-          apiKey: decryptedKey,
-          baseUrl: provider.baseUrl,
-          customHeaders: (provider.config?.customHeaders as Record<string, string>) || undefined,
-          ...(provider.config as any),
+          status: 'skipped',
+          skippedReason: 'Needs API Key (Missing key, skipped silently)',
         });
+        continue;
+      }
+
+      // 2. Check if provider is disabled
+      if (!provider.active) {
+        auditTrail.push({
+          provider: provider.name,
+          model,
+          status: 'skipped',
+          skippedReason: 'Provider is disabled',
+        });
+        continue;
+      }
+
+      // 3. License compliance check
+      if (options.pageOverrides?.isMonetized) {
+        const licenseCheck = globalBudgetTracker.checkLicenseCompliance(model, true);
+        if (!licenseCheck.compliant) {
+          auditTrail.push({
+            provider: provider.name,
+            model,
+            status: 'skipped',
+            skippedReason: `License non-compliant for monetized page: ${licenseCheck.warning}`,
+          });
+          continue;
+        }
+      }
+
+      // 4. Budget & Quota checks
+      const provLower = provider.name.toLowerCase();
+      const kindLower = provider.kind.toLowerCase();
+
+      if (kindLower === 'cloudflare_workers_ai' || provLower.includes('cloudflare')) {
+        const cfCheck = globalBudgetTracker.canUseCloudflareModel(model);
+        if (!cfCheck.allowed) {
+          auditTrail.push({
+            provider: provider.name,
+            model,
+            status: 'skipped',
+            skippedReason: cfCheck.reason,
+          });
+          continue;
+        }
+      } else if (provLower.includes('vercel') || model.includes('flux-2-klein-4b')) {
+        const vercelCheck = globalBudgetTracker.canUseVercel();
+        if (!vercelCheck.allowed) {
+          auditTrail.push({
+            provider: provider.name,
+            model,
+            status: 'skipped',
+            skippedReason: vercelCheck.reason,
+          });
+          continue;
+        }
+      } else if (provLower.includes('alibaba') || model.includes('wanx') || kindLower.includes('dashscope')) {
+        const aliCheck = globalBudgetTracker.canUseAlibaba();
+        if (!aliCheck.allowed) {
+          auditTrail.push({
+            provider: provider.name,
+            model,
+            status: 'skipped',
+            skippedReason: aliCheck.reason,
+          });
+          continue;
+        }
+      } else if (provLower.includes('openrouter') || model.includes('riverflow')) {
+        const orCheck = globalBudgetTracker.canUseOpenRouter();
+        if (!orCheck.allowed) {
+          auditTrail.push({
+            provider: provider.name,
+            model,
+            status: 'skipped',
+            skippedReason: orCheck.reason,
+          });
+          continue;
+        }
+      }
+
+      // 5. Key retrieval & cooldown check
+      const keyInfo = getNextAvailableKey(provider.keys, new Date(), options.encryptionKey);
+      if (!keyInfo && !isPollinations) {
+        auditTrail.push({
+          provider: provider.name,
+          model,
+          status: 'skipped',
+          skippedReason: 'All keys in cooldown or exhausted',
+        });
+        continue;
+      }
+
+      const decryptedKey = keyInfo ? keyInfo.decryptedKey : undefined;
+      const keyItem = keyInfo ? keyInfo.item : undefined;
+      const adapter = this.resolveImageAdapter(provider);
+
+      // Determine timeout: Alibaba async tasks allow up to 120s; others 60s
+      const isAlibabaAsync = provLower.includes('alibaba') || model.includes('wanx');
+      const timeoutMs = options.timeoutMs || (isAlibabaAsync ? 120000 : 60000);
+
+      // Generation attempt with transient network retry (at most 1) & policy rewrite (at most 1)
+      let candidateSuccess = false;
+      let lastCandidateError: any = null;
+      let activePrompt = options.prompt;
+      let hasRewrittenPolicy = false;
+      let attemptsCount = 0;
+      const startCandidateTime = Date.now();
+
+      while (attemptsCount < 2 && !candidateSuccess) {
+        attemptsCount++;
+        try {
+          const result = await adapter.generateImage({
+            ...options,
+            prompt: activePrompt,
+            model,
+            apiKey: decryptedKey,
+            baseUrl: provider.baseUrl,
+            timeoutMs,
+            customHeaders: (provider.config?.customHeaders as Record<string, string>) || undefined,
+            ...(provider.config as any),
+          });
+
+          // Validate buffer via Sharp
+          const normalized = await validateAndNormalizeImage(result.imageBuffer, {
+            targetWidth: options.width || 1080,
+            targetHeight: options.height || 1350,
+            rejectWatermarks: true,
+          });
+
+          // Success! Record usage
+          if (keyItem) {
+            recordKeySuccess(keyItem);
+          }
+          provider.requestsToday += 1;
+
+          // Track usage in budget tracker
+          if (provLower.includes('vercel') || model.includes('flux-2-klein-4b')) {
+            globalBudgetTracker.recordVercelUsage(0.003);
+          } else if (provLower.includes('alibaba') || model.includes('wanx')) {
+            globalBudgetTracker.recordAlibabaUsage();
+          } else if (provLower.includes('openrouter') || model.includes('riverflow')) {
+            globalBudgetTracker.recordOpenRouterUsage();
+          }
+
+          const durationMs = Date.now() - startCandidateTime;
+          auditTrail.push({
+            provider: provider.name,
+            model,
+            status: 'success',
+            latencyMs: durationMs,
+          });
+
+          candidateSuccess = true;
+          return {
+            ...result,
+            imageBuffer: normalized.sanitizedBuffer,
+            mimeType: normalized.mimeType,
+            width: normalized.width,
+            height: normalized.height,
+            providerId: provider.providerId,
+            providerName: provider.name,
+            keyMasked: keyItem?.keyMasked,
+            auditTrail,
+            estimatedCostUsd: provLower.includes('vercel') ? 0.003 : 0.0,
+          };
+        } catch (err: unknown) {
+          lastCandidateError = err;
+          const errorKind = err instanceof ProviderError ? err.kind : 'network_error';
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const lowerMsg = errorMsg.toLowerCase();
+          const retryAfter = err instanceof ProviderError ? err.retryAfterSeconds : undefined;
+
+          // 401/403: Disable key immediately and alert
+          if (errorKind === 'auth' || lowerMsg.includes('unauthorized') || lowerMsg.includes('forbidden') || lowerMsg.includes('api key')) {
+            if (keyItem) {
+              keyItem.status = 'disabled';
+              (keyItem as any).active = false;
+            }
+            break; // No retry for auth errors
+          }
+
+          // 429: Rate limit or quota error -> record cooldown
+          if (errorKind === 'rate_limit' || lowerMsg.includes('rate limit') || lowerMsg.includes('quota') || lowerMsg.includes('429')) {
+            if (keyItem) {
+              recordKeyFailure(keyItem, 'rate_limit', retryAfter || 300);
+            }
+            break; // No retry on rate limit
+          }
+
+          // Content policy refusal: Rewrite prompt more conservatively once
+          if (!hasRewrittenPolicy && (errorKind === 'invalid_output' || lowerMsg.includes('policy') || lowerMsg.includes('safety') || lowerMsg.includes('moderation') || lowerMsg.includes('nsfw'))) {
+            hasRewrittenPolicy = true;
+            activePrompt = `Photorealistic educational scene depicting the scientific subject: ${options.prompt.slice(0, 160)}. Clean composition, natural lighting, documentary style, no text, no symbols.`;
+            continue; // Retry with conservative prompt
+          }
+
+          // Transient network error: Retry the SAME entry at most ONCE
+          if (errorKind === 'network_error' && attemptsCount === 1) {
+            continue; // Retry once
+          }
+
+          // Otherwise, break and move to next candidate in chain
+          break;
+        }
+      }
+
+      if (!candidateSuccess) {
+        const errorMsg = lastCandidateError instanceof Error ? lastCandidateError.message : String(lastCandidateError);
+        const errorKind = lastCandidateError instanceof ProviderError ? lastCandidateError.kind : 'network_error';
+        const durationMs = Date.now() - startCandidateTime;
 
         if (keyItem) {
-          recordKeySuccess(keyItem);
-        }
-        provider.requestsToday += 1;
-
-        return {
-          ...result,
-          providerId: provider.providerId,
-          providerName: provider.name,
-          keyMasked: keyItem?.keyMasked,
-        };
-      } catch (err: unknown) {
-        const errorKind = err instanceof ProviderError ? err.kind : 'network_error';
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        const retryAfter = err instanceof ProviderError ? err.retryAfterSeconds : undefined;
-
-        if (keyItem) {
-          recordKeyFailure(keyItem, errorKind, retryAfter);
+          recordKeyFailure(keyItem, errorKind);
         }
 
-        // If free-tier limit or billing error, mark provider failing and skip immediately
-        if (
-          errorMsg.includes('not available on the free tier') ||
-          errorMsg.includes('free tier') ||
-          errorMsg.includes('limit: 0')
-        ) {
-          provider.active = false;
-          (provider as any).health_status = 'failing';
-          (provider as any).status = 'failing';
-        }
+        auditTrail.push({
+          provider: provider.name,
+          model,
+          status: 'failed',
+          error: errorMsg,
+          latencyMs: durationMs,
+        });
 
         attempts.push({
           provider: provider.name,
@@ -304,8 +529,9 @@ export class ProviderRouter {
       }
     }
 
+    // Every entry in chain failed -> mark post "failed: no image" and NEVER publish text-only!
     throw new ProviderRouterError(
-      `All image providers in chain for stage '${stage}' failed. Attempts: ${attempts.length}`,
+      `failed: no image - All ${candidateProviders.length} image provider(s) in priority chain failed. Refusing to publish text-only post.`,
       attempts
     );
   }

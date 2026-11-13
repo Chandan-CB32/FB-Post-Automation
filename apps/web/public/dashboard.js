@@ -326,21 +326,25 @@
   }
 
   function isImageProvider(p) {
-    const kind = (p.adapter_kind || '').toLowerCase();
+    if (p.config && p.config.chain_type === 'image') return true;
+    if (p.config && p.config.chain_type === 'text') return false;
+    const kind = (p.adapter_kind || p.kind || '').toLowerCase();
     const name = (p.name || '').toLowerCase();
     const model = (p.model_name || '').toLowerCase();
     return (
       kind === 'pollinations' ||
-      kind === 'cloudflare_workers_ai' ||
       kind === 'openai_compatible_images' ||
       name.includes('image') ||
-      model.includes('image') ||
       model.includes('flux') ||
       model.includes('dall-e') ||
       model.includes('stable-diffusion') ||
       model.includes('seedream') ||
       model.includes('gptimage') ||
-      model.includes('nanobanana')
+      model.includes('nanobanana') ||
+      model.includes('lucid') ||
+      model.includes('phoenix') ||
+      model.includes('wanx') ||
+      model.includes('riverflow')
     );
   }
 
@@ -381,21 +385,19 @@
         (officialQuota.limit === 0 && (p.daily_limit || 0) > 0)
       );
 
-      let priorityBadge = '';
-      if (idx === 0) {
-        priorityBadge = '<span class="badge" style="background: #064e3b; color: #34d399; font-weight: 700; padding: 3px 8px; font-size: 11px;">#1 Primary</span>';
-      } else if (idx === 1) {
-        priorityBadge = '<span class="badge" style="background: #1e3a8a; color: #60a5fa; font-weight: 700; padding: 3px 8px; font-size: 11px;">#2 Secondary</span>';
-      } else if (idx === 2) {
-        priorityBadge = '<span class="badge" style="background: #78350f; color: #fbbf24; font-weight: 700; padding: 3px 8px; font-size: 11px;">#3 Fallback</span>';
-      } else {
-        priorityBadge = '<span class="badge" style="background: #27272a; color: #a1a1aa; font-weight: 600; padding: 3px 8px; font-size: 11px;">#' + (idx + 1) + ' Fallback</span>';
-      }
+      const posColors = ['#064e3b', '#1e3a8a', '#78350f', '#3b0764', '#1e293b', '#374151', '#065f46', '#1e1b4b'];
+      const textColors = ['#34d399', '#60a5fa', '#fbbf24', '#c084fc', '#93c5fd', '#d1d5db', '#6ee7b7', '#a5b4fc'];
+      const priorityBadge = '<span class="badge" style="background: ' + posColors[idx % posColors.length] + '; color: ' + textColors[idx % textColors.length] + '; font-weight: 800; padding: 4px 10px; font-size: 12px; border-radius: 6px;">#' + (idx + 1) + ' Priority</span>';
+
+      const isPollinations = (p.adapter_kind || p.kind) === 'pollinations';
+      const isNeedsKey = (p.config && p.config.status === 'needs_key') || (p.status === 'needs_key') || (activeKeys.length === 0 && !isPollinations);
 
       let statusDisplay = '';
-      if (p.health_status === 'failing') {
+      if (isNeedsKey) {
+        statusDisplay = '<span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; font-weight: 700; padding: 4px 8px; font-size: 11px;">● Needs API Key</span>';
+      } else if (p.health_status === 'failing' || (p.config && p.config.health_status === 'failing')) {
         statusDisplay = '<div style="color: #ef4444; font-weight: 700; font-size: 12px;">● Failing (skipped)</div><div style="font-size: 10px; color: #f87171;" title="' + escapeHtml(p.test_error || '') + '">' + escapeHtml((p.test_error || 'Probe failed').slice(0, 30)) + '</div>';
-      } else if (p.health_status === 'healthy') {
+      } else if (p.health_status === 'healthy' || (p.config && p.config.health_status === 'healthy')) {
         statusDisplay = '<div style="color: #34d399; font-weight: 600; font-size: 12px;">● Healthy (' + (p.latency_ms || 120) + 'ms)</div><div style="font-size: 10px; color: #94a3b8;">' + (p.last_tested_at ? 'Tested ' + new Date(p.last_tested_at).toLocaleTimeString() : 'Verified') + '</div>';
       } else if (p.enabled) {
         statusDisplay = '<span style="color: #34d399; font-weight: 600; font-size: 12px;">● Active</span>';
@@ -408,20 +410,21 @@
       let costHtml = '';
       if (isImg) {
         let costPerImg = 0;
-        const kind = (p.adapter_kind || '').toLowerCase();
+        const kind = (p.adapter_kind || p.kind || '').toLowerCase();
         const m = (p.model_name || '').toLowerCase();
-        if (kind.includes('gemini') || m.includes('gemini')) costPerImg = 0.03;
-        else if (m.includes('flux')) costPerImg = 0;
-        else if (m.includes('turbo') || m.includes('gptimage') || m.includes('seedream') || m.includes('nanobanana')) costPerImg = 0.02;
-        else if (kind.includes('cloudflare')) costPerImg = 0.005;
+        if (m.includes('flux-2-klein-4b')) costPerImg = 0.003;
+        else if (kind.includes('gemini') || m.includes('gemini')) costPerImg = 0.0;
+        else if (m.includes('flux')) costPerImg = 0.0;
+        else if (m.includes('turbo') || m.includes('gptimage') || m.includes('seedream') || m.includes('nanobanana')) costPerImg = 0.003;
+        else if (kind.includes('cloudflare')) costPerImg = 0.001;
         costHtml = '<div style="font-size: 11px; color: #a78bfa; margin-top: 3px; font-weight: 500;">💰 Est: $' + costPerImg.toFixed(3) + '/img (~$' + (costPerImg * 5).toFixed(2) + '/day @ 5 posts)</div>';
       }
 
       return (
-        '<tr id="provider-row-' + p.id + '">' +
+        '<tr id="provider-row-' + p.id + '" class="provider-draggable-row" data-provider-id="' + p.id + '" data-chain="' + chainType + '" draggable="true" style="cursor: grab;">' +
         '<td><div style="font-weight: 700; font-size: 14px; color: #f3f4f6;">' + escapeHtml(p.name) + '</div>' +
         '<div style="font-size: 12px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">' + escapeHtml(p.model_name || 'default') + '</div>' + costHtml + '</td>' +
-        '<td><code>' + escapeHtml(p.adapter_kind) + '</code></td>' +
+        '<td><code>' + escapeHtml(p.adapter_kind || p.kind) + '</code></td>' +
         '<td>' + priorityBadge + '</td>' +
         '<td><div style="font-weight: 600;">' + (p.used_today || 0) + ' / ' + p.daily_limit + ' reqs</div>' +
         '<div style="width: 100px; height: 5px; background: #374151; border-radius: 3px; margin-top: 4px; overflow: hidden;">' +
@@ -433,6 +436,7 @@
         '<span style="font-size: 11px; color: ' + (activeKeys.length > 0 ? '#34d399' : '#f59e0b') + ';">● ' + activeKeys.length + ' active key' + (activeKeys.length === 1 ? '' : 's') + '</span></td>' +
         '<td id="provider-status-' + p.id + '">' + statusDisplay + '</td>' +
         '<td style="text-align: right; white-space: nowrap;"><div style="display: inline-flex; gap: 4px;">' +
+        (isNeedsKey ? '<button class="btn btn-primary" style="padding: 4px 8px; font-size: 11px; background: #f59e0b; color: #1e1e24; font-weight: 700;" onclick="openManageKeysModal(\'' + p.id + '\')">➕ Add Key</button>' : '') +
         '<button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="moveProviderPriority(\'' + p.id + '\', \'up\')" title="Move up in chain" ' + (idx === 0 ? 'disabled style="opacity: 0.35; cursor: not-allowed; padding: 4px 8px; font-size: 11px;"' : '') + '>⬆️</button>' +
         '<button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="moveProviderPriority(\'' + p.id + '\', \'down\')" title="Move down in chain" ' + (idx === chainProviders.length - 1 ? 'disabled style="opacity: 0.35; cursor: not-allowed; padding: 4px 8px; font-size: 11px;"' : '') + '>⬇️</button>' +
         '<button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="testProviderAction(\'' + p.id + '\', this)" title="Test latency & connection">🩺 Test</button>' +
@@ -445,11 +449,64 @@
     }).join('');
   }
 
+  function setupDragAndDrop(tbodyId, chainType) {
+    const tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
+    let draggedRow = null;
+
+    tbody.querySelectorAll('tr.provider-draggable-row').forEach(function (row) {
+      row.addEventListener('dragstart', function (e) {
+        draggedRow = row;
+        e.dataTransfer.effectAllowed = 'move';
+        row.style.opacity = '0.4';
+      });
+
+      row.addEventListener('dragend', function () {
+        row.style.opacity = '1';
+        draggedRow = null;
+      });
+
+      row.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const targetRow = e.target.closest('tr.provider-draggable-row');
+        if (targetRow && targetRow !== draggedRow && targetRow.parentElement === tbody) {
+          const rect = targetRow.getBoundingClientRect();
+          const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+          tbody.insertBefore(draggedRow, next && targetRow.nextSibling || targetRow);
+        }
+      });
+
+      row.addEventListener('drop', async function (e) {
+        e.preventDefault();
+        const rows = Array.from(tbody.querySelectorAll('tr.provider-draggable-row'));
+        const orderedIds = rows.map(function (r) { return r.getAttribute('data-provider-id'); });
+        try {
+          const res = await fetch('/api/providers/reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ordered_ids: orderedIds, chain: chainType }),
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            providersData = data.providers;
+            renderProvidersTables();
+            showToast('Saved and verified priority order', 'success');
+          }
+        } catch (err) {
+          console.error('Drag and drop reorder failed:', err);
+        }
+      });
+    });
+  }
+
   function renderProvidersTables() {
     const textProvs = providersData.filter(function (p) { return !isImageProvider(p); }).sort(function (a, b) { return a.priority - b.priority; });
     const imageProvs = providersData.filter(function (p) { return isImageProvider(p); }).sort(function (a, b) { return a.priority - b.priority; });
     renderChainTableBody('textProvidersTableBody', textProvs, 'text');
     renderChainTableBody('imageProvidersTableBody', imageProvs, 'image');
+    setupDragAndDrop('textProvidersTableBody', 'text');
+    setupDragAndDrop('imageProvidersTableBody', 'image');
   }
   window.renderProvidersTables = renderProvidersTables;
 

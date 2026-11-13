@@ -246,3 +246,4 @@ export function buildConcreteImagePrompt(input: BuildImagePromptInput): Concrete
     aspectRatio: '4:5',
   };
 }
+

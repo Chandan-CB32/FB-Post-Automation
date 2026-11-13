@@ -105,11 +105,13 @@ export interface StoredProvider {
   adapter_kind: string;
   base_url?: string;
   model_name?: string;
+  config?: Record<string, any>;
   daily_limit: number;
   used_today?: number;
   enabled: boolean;
   priority: number;
-  health_status?: 'healthy' | 'failing' | 'unknown';
+  status?: string;
+  health_status?: 'healthy' | 'failing' | 'unknown' | 'needs_key';
   latency_ms?: number;
   test_error?: string;
   last_tested_at?: string;
