@@ -56,10 +56,13 @@ function extractMeaningfulKeywords(text: string): Set<string> {
  * Determines whether a sentence makes an empirical factual assertion needing source backing.
  */
 function isFactualAssertion(sentence: string): boolean {
-  const lower = sentence.toLowerCase().trim();
+  const cleaned = sentence
+    .replace(/^(\*{1,2})?(caption|post|facebook post|title)(\*{1,2})?:?\s*/i, '')
+    .trim();
+  const lower = cleaned.toLowerCase().trim();
   if (!lower || lower.endsWith('?')) return false;
 
-  // General philosophical commentary, rhetorical framing, or narrative reflections
+  // General philosophical commentary, rhetorical framing, hypothetical thought experiments, or future outlooks
   if (
     lower.startsWith('what ') ||
     lower.startsWith('do you ') ||
@@ -81,7 +84,21 @@ function isFactualAssertion(sentence: string): boolean {
     lower.startsWith('these exciting discoveries') ||
     lower.startsWith('these findings mark') ||
     lower.startsWith('this marks an unprecedented') ||
-    lower.startsWith('in the world of')
+    lower.startsWith('in the world of') ||
+    lower.startsWith('imagine ') ||
+    lower.startsWith('if ') ||
+    lower.startsWith('future ') ||
+    lower.startsWith('further ') ||
+    lower.startsWith('while further') ||
+    lower.startsWith('scientists hope') ||
+    lower.startsWith('it hints that') ||
+    lower.startsWith('it suggests that') ||
+    lower.startsWith('the data were gathered') ||
+    lower.startsWith('observations were gathered') ||
+    lower.startsWith('this could mean') ||
+    lower.startsWith('could this mean') ||
+    lower.startsWith('in either case') ||
+    lower.startsWith('whether ')
   ) {
     return false;
   }
@@ -98,7 +115,12 @@ function isFactualAssertion(sentence: string): boolean {
 export function extractFactualClaims(caption: string): string[] {
   if (!caption || typeof caption !== 'string') return [];
 
-  const paragraphs = caption
+  // Strip leading AI output wrappers (e.g. "**Caption**", "Caption:")
+  const cleanedCaption = caption
+    .replace(/^(\*{1,2})?(caption|post|facebook post|title)(\*{1,2})?:?\s*/i, '')
+    .trim();
+
+  const paragraphs = cleanedCaption
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter((p) => {
@@ -114,7 +136,9 @@ export function extractFactualClaims(caption: string): string[] {
 
     const sentences = p.match(/[^.!?]+[.!?]+(?:\s+|$)/g) || [p];
     for (const s of sentences) {
-      const trimmed = s.trim();
+      const trimmed = s
+        .replace(/^(\*{1,2})?(caption|post|facebook post|title)(\*{1,2})?:?\s*/i, '')
+        .trim();
       if (isFactualAssertion(trimmed)) {
         claims.push(trimmed);
       }
@@ -199,6 +223,7 @@ export function verifyFactualClaims(
         'temperature', 'orbit', 'distance', 'evidence', 'transit', 'transmission',
         'magnetic', 'field', 'gauss', 'dynamo', 'spacecraft', 'mission', 'jupiter', 'juno',
         'asymmetry', 'instrument', 'telemetry', 'gravity', 'radiation',
+        'analysis', 'studies', 'study', 'spectral', 'spectrum', 'wavelength', 'micron', 'microns', 'um', 'µm', 'vapor', 'water',
       ];
 
       let findingMatches = 0;

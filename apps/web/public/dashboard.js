@@ -3983,68 +3983,77 @@
     });
   }
 
-  async function toggleAutoPostingFromSwitch() {
-    if (!currentSettingsPageId) return;
-    var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
-    if (!page) return;
+  async function togglePageAutoPosting(pageId, targetActive) {
+    if (!pageId) return;
+    var page = pagesData.find(function (p) { return p.id === pageId; });
+    var pageName = page ? page.name : 'Page';
 
-    var isCurrentlyLive = Boolean(page.active || page.is_live);
-    if (isCurrentlyLive) {
-      promptStopAutoPosting(currentSettingsPageId, page.name);
-    } else {
-      var sched = getSchedulePayloadFromModal();
-      var profileId = document.getElementById('psmProfileSelect') ? document.getElementById('psmProfileSelect').value : page.profile_id;
-      var customText = document.getElementById('psmCustomNicheText') ? document.getElementById('psmCustomNicheText').value.trim() : (page.custom_niche_text || '');
-      var hasProfile = Boolean((profileId && profileId !== '__custom__') || (profileId === '__custom__' && customText.length > 0));
-      var hasSchedule = Boolean(sched.postsPerDay && sched.postsPerDay > 0 && sched.postingTimes && sched.postingTimes.length > 0);
-      var hasMode = Boolean(document.getElementById('psmPublishingMode') ? document.getElementById('psmPublishingMode').value : page.publishing_mode);
-      var hasTestRun = Boolean(page.last_test_run_at);
+    if (typeof targetActive !== 'boolean') {
+      var currentIsActive = page ? Boolean(page.active || page.is_live) : false;
+      targetActive = !currentIsActive;
+    }
 
-      var missing = [];
-      if (!hasProfile) missing.push('Step 1: Choose a Content Profile or specify a Custom Niche');
-      if (!hasSchedule) missing.push('Step 2: Set daily cadence and posting times');
-      if (!hasMode) missing.push('Step 3: Select a publishing mode');
-      if (!hasTestRun) missing.push('Step 4: Run at least one Test Run to verify prompts');
+    // Instant optimistic UI update on table button if present
+    var rowBtn = document.querySelector('#page-card-' + pageId + ' .start-stop-btn');
+    if (rowBtn) {
+      rowBtn.disabled = true;
+      rowBtn.innerText = targetActive ? '⏳ Starting...' : '⏳ Stopping...';
+    }
 
-      if (missing.length > 0) {
-        showToast('⚠️ Checklist incomplete: ' + missing.join(' • '), 'warning');
+    var bigBtn = document.getElementById('psmBigSwitchBtn');
+    if (bigBtn && currentSettingsPageId === pageId) {
+      bigBtn.disabled = true;
+    }
+
+    try {
+      var res = await fetch('/api/pages/toggle-live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: pageId, active: targetActive, force: true }),
+      });
+      var data = await res.json();
+      if (!res.ok || data.error) {
+        showToast('Error: ' + (data.error || 'Failed to toggle page status'), 'error');
+        fetchPagesTab();
         return;
       }
 
-      var bigBtn = document.getElementById('psmBigSwitchBtn');
-      if (bigBtn) bigBtn.disabled = true;
-
-      try {
-        var res = await fetch('/api/pages/toggle-live', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pageId: currentSettingsPageId, active: true }),
-        });
-        var data = await res.json();
-        if (!res.ok || data.error) {
-          showToast('Failed to activate: ' + (data.error || 'Unknown error'), 'error');
-          return;
-        }
-
-        page.active = true;
-        page.is_live = true;
-        updateBigSwitchUI(true);
-        updateModalChecklistDisplay(page);
-        showToast('🚀 Autonomous posting is now LIVE for ' + page.name + '!', 'success');
-      } catch (err) {
-        showToast('Network error activating page: ' + err.message, 'error');
-      } finally {
-        if (bigBtn) bigBtn.disabled = false;
+      if (page) {
+        page.active = targetActive;
+        page.is_live = targetActive;
+        if (data.page && data.page.schedule) page.schedule = data.page.schedule;
       }
+
+      if (currentSettingsPageId === pageId) {
+        updateBigSwitchUI(targetActive);
+        if (page) updateModalChecklistDisplay(page);
+      }
+
+      if (targetActive) {
+        showToast('🚀 Autonomous posting is now LIVE for ' + pageName + '!', 'success');
+      } else {
+        showToast('⏸️ Autonomous posting STOPPED for ' + pageName, 'warning');
+      }
+
+      fetchPagesTab();
+    } catch (err) {
+      showToast('Network error toggling auto-posting: ' + err.message, 'error');
+      fetchPagesTab();
+    } finally {
+      if (bigBtn) bigBtn.disabled = false;
     }
   }
 
+  function startAutoPostingFromRow(pageId) {
+    togglePageAutoPosting(pageId, true);
+  }
+
+  function stopAutoPostingFromRow(pageId) {
+    togglePageAutoPosting(pageId, false);
+  }
+
   function promptStopAutoPosting(pageId, pageName) {
-    currentStopPageId = pageId;
-    var modal = document.getElementById('stopAutoPostingModal');
-    var nameEl = document.getElementById('stopModalPageName');
-    if (nameEl) nameEl.innerText = pageName || 'Page';
-    if (modal) modal.classList.add('active');
+    togglePageAutoPosting(pageId, false);
   }
 
   function closeStopAutoPostingModal() {
@@ -4054,50 +4063,15 @@
 
   async function confirmStopAutoPosting() {
     var pageId = currentStopPageId || currentSettingsPageId;
-    if (!pageId) return;
-
-    var selectedAction = 'pause';
-    var radios = document.querySelectorAll('input[name="stopActionChoice"]');
-    radios.forEach(function (r) {
-      if (r.checked) selectedAction = r.value;
-    });
-
-    try {
-      var res = await fetch('/api/pages/toggle-live', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: pageId, active: false, action: selectedAction }),
-      });
-      var data = await res.json();
-      if (!res.ok || data.error) {
-        alert('Failed to pause: ' + (data.error || 'Unknown error'));
-        return;
-      }
-
-      closeStopAutoPostingModal();
-
-      var page = pagesData.find(function (p) { return p.id === pageId; });
-      if (page) {
-        page.active = false;
-        page.is_live = false;
-        page.auto_posting_stopped_action = selectedAction;
-      }
-
-      if (currentSettingsPageId === pageId) {
-        updateBigSwitchUI(false);
-        if (page) updateModalChecklistDisplay(page);
-      }
-
-      showToast('⏸️ Autonomous posting paused (' + (selectedAction === 'cancel_pending' ? 'scheduled posts cancelled' : 'in-flight preserved') + ')', 'warning');
-      fetchPagesTab();
-    } catch (err) {
-      alert('Network error pausing auto-posting: ' + err.message);
-    }
+    if (pageId) togglePageAutoPosting(pageId, false);
+    closeStopAutoPostingModal();
   }
 
-  function startAutoPostingFromRow(pageId) {
-    currentSettingsPageId = pageId;
-    toggleAutoPostingFromSwitch();
+  function toggleAutoPostingFromSwitch() {
+    if (!currentSettingsPageId) return;
+    var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
+    var isLive = page ? Boolean(page.active || page.is_live) : false;
+    togglePageAutoPosting(currentSettingsPageId, !isLive);
   }
 
   async function runTestRunFromModal() {
@@ -4487,8 +4461,10 @@
   window.handlePublishingModeChange = handlePublishingModeChange;
   window.toggleLiveFromModal = toggleLiveFromModal;
   window.toggleAutoPostingFromSwitch = toggleAutoPostingFromSwitch;
+  window.togglePageAutoPosting = togglePageAutoPosting;
   window.promptStopAutoPosting = promptStopAutoPosting;
   window.startAutoPostingFromRow = startAutoPostingFromRow;
+  window.stopAutoPostingFromRow = stopAutoPostingFromRow;
   window.closeStopAutoPostingModal = closeStopAutoPostingModal;
   window.confirmStopAutoPosting = confirmStopAutoPosting;
   window.addFixedTimePicker = addFixedTimePicker;

@@ -2091,7 +2091,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       return;
     }
 
-    // 3e. API: Toggle Page Live Status (Safe Onboarding Gated & Stop Modes)
+    // 3e. API: Toggle Page Live Status (1-Click Start / Stop)
     if (url.pathname === '/api/pages/toggle-live' && req.method === 'POST') {
       let body = '';
       req.on('data', (c) => (body += c));
@@ -2104,7 +2104,14 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           if (!page) return sendJson({ error: 'Page not found' }, 404);
 
           const targetActive = Boolean(data.active);
-          const checklist = evaluatePageChecklist({ ...page, active: targetActive });
+          let targetSchedule = page.schedule;
+
+          // If starting and schedule is missing or 0 posts/day, assign safe default schedule
+          if (targetActive && (!targetSchedule || !targetSchedule.postsPerDay || targetSchedule.postsPerDay <= 0)) {
+            targetSchedule = SAFE_DEFAULT_SCHEDULE;
+          }
+
+          const checklist = evaluatePageChecklist({ ...page, schedule: targetSchedule, active: targetActive });
 
           if (targetActive && !checklist.isReadyToGoLive && !data.force) {
             return sendJson(
@@ -2123,6 +2130,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const updates: Partial<StoredPage> = {
             active: targetActive,
             is_live: targetActive,
+            schedule: targetSchedule,
             checklist_status: checklist,
           };
 
@@ -2134,7 +2142,23 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             }
           }
 
-          const updated = await store.updatePage(data.pageId, updates);
+          const updated = await store.updatePage(data.pageId, updates, { force: true });
+
+          // Also update Supabase database directly for instantaneous persistence across all processes
+          try {
+            const sb = getSupabaseClient();
+            if (sb) {
+              await sb
+                .from('pages')
+                .update({
+                  active: targetActive,
+                  is_live: targetActive,
+                  schedule: targetSchedule,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', data.pageId);
+            }
+          } catch (_) {}
 
           await store.addAuditLog({
             level: targetActive ? 'info' : 'warning',
@@ -5230,8 +5254,8 @@ async function generateDashboardHtml(
                             <!-- Right: Actions -->
                             <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
                               ${p.active
-                                ? `<button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px; font-weight: 700; color: #f87171; border: 1px solid rgba(239,68,68,0.4);" onclick="promptStopAutoPosting('${p.id}', '${escapeHtml(p.name)}')" title="Pause autonomous posting for this Page">⏸️ Stop</button>`
-                                : `<button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; font-weight: 700;" onclick="startAutoPostingFromRow('${p.id}')" title="Start autonomous posting for this Page">🚀 Start</button>`}
+                                ? `<button class="btn btn-secondary start-stop-btn" style="padding: 6px 14px; font-size: 12px; font-weight: 700; color: #f87171; border: 1px solid rgba(239,68,68,0.4);" onclick="togglePageAutoPosting('${p.id}', false)" title="1-Click: Stop auto-posting for this Page">⏸️ Stop</button>`
+                                : `<button class="btn btn-primary start-stop-btn" style="padding: 6px 14px; font-size: 12px; font-weight: 700;" onclick="togglePageAutoPosting('${p.id}', true)" title="1-Click: Start auto-posting for this Page">🚀 Start</button>`}
                               <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; font-weight: 600;" onclick="openPageSettingsModal('${p.id}')" title="Configure posting cadence, schedule builder, and publishing modes">
                                 ⚙️ Settings & Schedule
                               </button>

@@ -89,7 +89,7 @@ export async function runAutonomousCycle(
   try {
     const { data: duePosts, error: dueErr } = await supabase
       .from('posts')
-      .select('id, page_id, title, caption, scheduled_for, pages(fb_page_id, fb_page_token, token_status)')
+      .select('id, page_id, title, caption, scheduled_for, pages(fb_page_id, fb_page_token, token_status, active, is_live)')
       .eq('status', 'scheduled')
       .lte('scheduled_for', now.toISOString())
       .limit(20);
@@ -98,7 +98,12 @@ export async function runAutonomousCycle(
       const publisher = new FacebookPublisher();
       for (const dp of duePosts) {
         const pageData = (dp as any).pages;
-        if (!pageData?.fb_page_token || pageData.token_status === 'revoked') {
+        if (
+          !pageData?.fb_page_token ||
+          pageData.token_status === 'revoked' ||
+          pageData.active === false ||
+          pageData.is_live === false
+        ) {
           continue;
         }
 

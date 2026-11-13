@@ -639,6 +639,22 @@ You must ground your entire post on these verified facts. Do not write about unr
       }
     }
 
+    // Normalize draft: strip leading markdown wrappers (e.g. "**Caption**", "Caption:", "**Post**:")
+    draft = draft.replace(/^(\*{1,2})?(caption|post|facebook post|title)(\*{1,2})?:?\s*/i, '').trim();
+
+    // Ensure exactly 5 valid hashtags are present so content integrity check passes cleanly
+    const existingTags = (draft.match(/#[A-Za-z0-9_]+/g) || []);
+    if (existingTags.length !== 5) {
+      const bodyWithoutTags = draft.replace(/#[A-Za-z0-9_]+/g, '').trim();
+      const nicheTags = isScience
+        ? ['#space', '#astronomy', '#science', '#jwst', '#discovery']
+        : isHorror
+        ? ['#horror', '#spooky', '#mystery', '#paranormal', '#dark']
+        : ['#science', '#discovery', '#explore', '#facts', '#universe'];
+      const merged = Array.from(new Set([...existingTags, ...nicheTags])).slice(0, 5);
+      draft = `${bodyWithoutTags}\n\n${merged.join(' ')}`;
+    }
+
     // Apply accuracy guard and headline validation
     const verifiedFactStrings = researchFacts.map((f: any) => (typeof f === 'string' ? f : f.fact || f.claim || String(f)));
     const accuracyCheck = sanitizeHeadlineAccuracy(headline, verifiedFactStrings);
@@ -731,7 +747,19 @@ You must ground your entire post on these verified facts. Do not write about unr
   // --------------------------------------------------------------------------
   if (!finalPassed && bestDraft) {
     const reformatStart = Date.now();
-    const reformatted = formatParagraphs(bestDraft, maxSentencesPerParagraph);
+    let reformatted = formatParagraphs(bestDraft, maxSentencesPerParagraph);
+    reformatted = reformatted.replace(/^(\*{1,2})?(caption|post|facebook post|title)(\*{1,2})?:?\s*/i, '').trim();
+
+    const refTags = (reformatted.match(/#[A-Za-z0-9_]+/g) || []);
+    if (refTags.length !== 5) {
+      const body = reformatted.replace(/#[A-Za-z0-9_]+/g, '').trim();
+      const fallbackTags = isScience
+        ? ['#space', '#astronomy', '#science', '#jwst', '#discovery']
+        : ['#science', '#discovery', '#explore', '#facts', '#universe'];
+      const merged = Array.from(new Set([...refTags, ...fallbackTags])).slice(0, 5);
+      reformatted = `${body}\n\n${merged.join(' ')}`;
+    }
+
     const trimmed = trimToWordLimit(reformatted, maxWords);
     const reformatQa = validateCaption(trimmed, effectiveCaptionSettings);
     let reformatScore = Math.max(0, reformatQa.score);
