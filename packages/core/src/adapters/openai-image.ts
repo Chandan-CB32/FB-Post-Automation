@@ -58,7 +58,7 @@ export class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
     model: string,
     explicit?: string
   ): 'standard_images' | 'openrouter_chat_modalities' | 'nvidia_nim' | 'alibaba_dashscope_async' {
-    if (explicit) return explicit;
+    if (explicit) return explicit as 'standard_images' | 'openrouter_chat_modalities' | 'nvidia_nim' | 'alibaba_dashscope_async';
     const lowerUrl = baseUrl.toLowerCase();
     const lowerModel = model.toLowerCase();
 
