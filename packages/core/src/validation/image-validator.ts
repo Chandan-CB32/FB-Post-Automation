@@ -1,4 +1,4 @@
-import sharp, { type Metadata } from 'sharp';
+import sharp from 'sharp';
 import { ProviderError } from '../adapters/types.js';
 
 export interface ImageValidationOptions {
@@ -44,27 +44,7 @@ export async function validateAndNormalizeImage(
     );
   }
 
-  // Gracefully accept synthetic mock buffers in automated test suites
-  if (process.env.NODE_ENV === 'test') {
-    let canDecode = false;
-    try {
-      await sharp(inputBuffer).metadata();
-      canDecode = true;
-    } catch (_) {}
-    if (!canDecode) {
-      return {
-        valid: true,
-        sanitizedBuffer: inputBuffer,
-        width: targetWidth,
-        height: targetHeight,
-        mimeType: 'image/jpeg',
-        entropy: 25.0,
-        isCoverCropped: false,
-      };
-    }
-  }
-
-  let metadata: Metadata;
+  let metadata: sharp.Metadata;
   try {
     metadata = await sharp(inputBuffer).metadata();
   } catch (err: any) {
@@ -142,3 +122,4 @@ export async function validateAndNormalizeImage(
     isCoverCropped,
   };
 }
+

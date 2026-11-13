@@ -58,7 +58,7 @@ export class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
     model: string,
     explicit?: string
   ): 'standard_images' | 'openrouter_chat_modalities' | 'nvidia_nim' | 'alibaba_dashscope_async' {
-    if (explicit) return explicit as any;
+    if (explicit) return explicit;
     const lowerUrl = baseUrl.toLowerCase();
     const lowerModel = model.toLowerCase();
 
@@ -505,3 +505,4 @@ export class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
     throw new ProviderError(`${providerName} error (${status}): ${msg}`, 'invalid_output', status);
   }
 }
+
