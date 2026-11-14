@@ -25,16 +25,16 @@ export interface ConcreteImagePromptResult {
 }
 
 const MANDATORY_NEGATIVE_PROMPT =
-  'text, letters, words, numbers, watermark, signature, logo, banner, blurry, deformed anatomy, extra limbs, bad proportions, generic blue glow, abstract light vortex, digital lines, CGI swirl, neon bloom, childish, cartoon, 3d render, oversaturated bloom, low resolution';
+  'text, letters, words, numbers, watermark, signature, logo, banner, blurry, deformed anatomy, extra limbs, bad proportions, generic blue glow, glowing orb, central glowing circle, abstract light vortex, digital lines, CGI swirl, neon bloom, childish, cartoon, 3d render, oversaturated bloom, low resolution, dark glowing ball, electric heart, energy portal, generic fantasy energy';
 
-// Palette options for visual variety across posts
+// Palette options for visual variety across posts - vivid, real documentary lighting
 const VARIETY_PALETTES = [
-  'natural deep ocean twilight with subtle bioluminescent green accents',
-  'warm amber and golden directional sunlight with deep shadow contrast',
-  'crisp scientific cleanroom lighting with brushed titanium and optic glass highlights',
+  'sun-drenched crystal turquoise and azure ocean water with brilliant light rays',
+  'warm amber and golden directional sunlight with deep authentic shadow contrast',
+  'crisp scientific cleanroom daylight with brushed titanium and optic glass highlights',
   'polar glacial ice with crystalline white, pale turquoise, and dark volcanic rock',
   'terracotta and oxidized iron red-browns with harsh atmospheric sunlight',
-  'deep cosmic obsidian and starlight with subtle planetary atmospheric glow',
+  'vibrant planetary clouds, deep violet and ochre hues with brilliant distant starlight',
   'emerald rainforest canopy with filtered dappled natural daylight',
 ];
 
@@ -51,16 +51,16 @@ export function extractConcreteSubject(
 
   // 1. Biological / Animal subjects
   if (combined.includes('blue whale') || combined.includes('whale heart')) {
-    return 'a massive blue whale swimming in open ocean, close-up side view with the enormous four-chambered heart subtly highlighted in anatomical cross-section';
+    return 'an enormous blue whale swimming majestically near the surface of clear sunlit ocean waters, authentic textured whale skin with barnacles and water ripples, National Geographic marine wildlife photography';
   }
   if (combined.includes('octopus') || combined.includes('three hearts')) {
-    return 'an octopus underwater on coral substrate, translucent mantle revealing internal biological structures with macro focus';
+    return 'a realistic living octopus perched on vibrant ocean coral reef, detailed suction cups and skin camouflage textures in natural sunlit seawater';
   }
   if (combined.includes('frog') || combined.includes('glass frog')) {
-    return 'a glass frog resting on a lush tropical leaf, transparent underside revealing beating heart and organs in crisp macro detail';
+    return 'a glass frog resting on a lush tropical rainforest leaf, transparent belly revealing beating heart and organs in sharp macro photography';
   }
 
-  // 2. Neuroscience & BCI subjects (strictly avoid "thoughts" or "abstract brain glow")
+  // 2. Neuroscience & BCI subjects (strictly real laboratory hardware, no abstract energy)
   if (
     combined.includes('ecog') ||
     combined.includes('electrocorticography') ||
@@ -68,7 +68,7 @@ export function extractConcreteSubject(
     combined.includes('speech cortex') ||
     combined.includes('neural interface')
   ) {
-    return 'a flexible micro-electrode ECoG sensor array with platinum contact points gently placed on the cerebral cortex, biomedical laboratory photograph';
+    return 'macro photograph of a precision micro-electrode clinical sensor grid resting in a biomedical research laboratory with titanium tools and microchips, clean scientific documentary photo';
   }
 
   // 3. Geology, Microbes & Extremophiles (rocks vs microbes)
@@ -93,10 +93,13 @@ export function extractConcreteSubject(
 
   // 5. Space, Astronomy & Exoplanets
   if (combined.includes('k2-18b') || combined.includes('hycean')) {
-    return 'an exoplanet with a deep global liquid ocean under a thick hydrogen atmosphere, viewed from high orbit with a red dwarf star low on the horizon';
+    return 'exoplanet K2-18b with a deep turbulent liquid ocean under atmospheric clouds, seen with its massive reddish dwarf star on the horizon, realistic space science visualization';
+  }
+  if (combined.includes('white dwarf') || combined.includes('planet survives')) {
+    return 'an astronomical visualization of an intact gas giant planet closely orbiting a brilliant white dwarf stellar core, reflective cloud bands and stark cosmic illumination';
   }
   if (combined.includes('jupiter') || combined.includes('juno')) {
-    return 'scientific visualization of Jupiter as seen by the Juno spacecraft, showing swirling polar cyclones and deep atmospheric bands with accurate NASA telemetry';
+    return 'realistic scientific visualization of Jupiter as seen by the Juno spacecraft, showing swirling polar cyclones and deep atmospheric bands with accurate NASA telemetry';
   }
 
   // Fallback: extract specific scientific noun phrases
@@ -225,13 +228,13 @@ export function buildConcreteImagePrompt(input: BuildImagePromptInput): Concrete
 
   // 5. Construct the full positive prompt with Calm Bottom rule
   const promptParts = [
-    `Photograph of ${concreteSubject}.`,
-    `Setting: ${setting}.`,
-    `Lighting & Palette: ${selectedPalette}.`,
-    `Camera: Cinematic telephoto composition, sharp focal point with natural depth of field.`,
-    `Style: ${style}.`,
+    `Authentic, high-detail documentary photograph of ${concreteSubject}.`,
+    `Environment: ${setting}.`,
+    `Visual palette: ${selectedPalette}.`,
+    `Shot on telephoto lens with natural cinematic depth of field and tack-sharp textures.`,
     `Composition Rule: Place the main focal subject in the upper 65% of the frame. Keep the bottom 35% calm, uncluttered, dark, and clear of high-contrast details for text typography overlay.`,
     `NO generic glowing blue energy, NO abstract light vortex, NO fantasy CGI, NO text, NO watermarks.`,
+    `Editorial photography style, realistic, 8k resolution, authentic lighting, zero artificial glowing energy, zero text.`,
   ];
 
   const fullPrompt = promptParts.join(' ');

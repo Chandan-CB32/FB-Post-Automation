@@ -4133,16 +4133,25 @@
       bigBtn.disabled = true;
     }
 
+    var timeoutHandle = null;
     try {
+      var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      if (controller) {
+        timeoutHandle = setTimeout(function () { controller.abort(); }, 12000);
+      }
+
       var res = await fetch('/api/pages/toggle-live', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pageId: pageId, active: targetActive, force: true }),
+        signal: controller ? controller.signal : undefined,
       });
-      var data = await res.json();
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+
+      var data = await res.json().catch(function () { return {}; });
       if (!res.ok || data.error) {
         showToast('Error: ' + (data.error || 'Failed to toggle page status'), 'error');
-        fetchPagesTab();
+        if (page) updatePageCardDom(page);
         return;
       }
 
@@ -4165,13 +4174,15 @@
       } else {
         showToast('⏸️ Autonomous posting STOPPED for ' + pageName, 'warning');
       }
-
-      fetchPagesTab();
     } catch (err) {
-      showToast('Network error toggling auto-posting: ' + err.message, 'error');
-      fetchPagesTab();
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      var msg = err.name === 'AbortError' ? 'Request timed out after 12s. Reverting button.' : err.message;
+      showToast('Error toggling auto-posting: ' + msg, 'error');
+      if (page) updatePageCardDom(page);
     } finally {
       if (bigBtn) bigBtn.disabled = false;
+      var freshBtn = document.querySelector('#page-card-' + pageId + ' .start-stop-btn');
+      if (freshBtn) freshBtn.disabled = false;
     }
   }
 

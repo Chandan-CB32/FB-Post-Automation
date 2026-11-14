@@ -279,6 +279,23 @@ export function sanitizeHeadlineAccuracy(
   let modified = false;
   let reason: string | undefined;
 
+  // Auto-correct common typographical and scientific spelling errors
+  const typoPatterns: Array<[RegExp, string]> = [
+    [/\bEXTREMOPOLES\b/gi, 'EXTREMOPHILES'],
+    [/\bEXTREMOPOLE\b/gi, 'EXTREMOPHILE'],
+    [/\bMILLENIA\b/gi, 'MILLENNIA'],
+    [/\bPHOSPHENE\b/gi, 'PHOSPHINE'],
+    [/\bSPECTROSOPY\b/gi, 'SPECTROSCOPY'],
+    [/\bTEMPARATURE\b/gi, 'TEMPERATURE'],
+    [/\bMICROSOPIC\b/gi, 'MICROSCOPIC'],
+  ];
+  for (const [tRegex, tRepl] of typoPatterns) {
+    if (tRegex.test(clean)) {
+      clean = clean.replace(tRegex, tRepl);
+      modified = true;
+    }
+  }
+
   // Check if any fact explicitly confirms 100% definitive proof
   const hasDefinitiveProof = verifiedFacts.some((f) => {
     const fl = f.toLowerCase();

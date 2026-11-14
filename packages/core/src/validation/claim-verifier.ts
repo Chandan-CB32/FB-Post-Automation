@@ -57,7 +57,7 @@ function extractMeaningfulKeywords(text: string): Set<string> {
  */
 function isFactualAssertion(sentence: string): boolean {
   const cleaned = sentence
-    .replace(/^(\*{1,2})?(caption|post|facebook post|title)(\*{1,2})?:?\s*/i, '')
+    .replace(/^(?:#{1,3}\s*)?(?:\*{1,2})?(?:caption|post|facebook post|title)(?:\*{1,2})?:?\s*/i, '')
     .trim();
   const lower = cleaned.toLowerCase().trim();
   if (!lower || lower.endsWith('?')) return false;
@@ -115,9 +115,9 @@ function isFactualAssertion(sentence: string): boolean {
 export function extractFactualClaims(caption: string): string[] {
   if (!caption || typeof caption !== 'string') return [];
 
-  // Strip leading AI output wrappers (e.g. "**Caption**", "Caption:")
+  // Strip leading AI output wrappers (e.g. "**Caption**", "Caption:", "### Caption")
   const cleanedCaption = caption
-    .replace(/^(\*{1,2})?(caption|post|facebook post|title)(\*{1,2})?:?\s*/i, '')
+    .replace(/^(?:#{1,3}\s*)?(?:\*{1,2})?(?:caption|post|facebook post|title)(?:\*{1,2})?:?\s*/im, '')
     .trim();
 
   const paragraphs = cleanedCaption
@@ -137,7 +137,7 @@ export function extractFactualClaims(caption: string): string[] {
     const sentences = p.match(/[^.!?]+[.!?]+(?:\s+|$)/g) || [p];
     for (const s of sentences) {
       const trimmed = s
-        .replace(/^(\*{1,2})?(caption|post|facebook post|title)(\*{1,2})?:?\s*/i, '')
+        .replace(/^(?:#{1,3}\s*)?(?:\*{1,2})?(?:caption|post|facebook post|title)(?:\*{1,2})?:?\s*/i, '')
         .trim();
       if (isFactualAssertion(trimmed)) {
         claims.push(trimmed);
@@ -208,7 +208,14 @@ export function verifyFactualClaims(
       const lowerClaim = claim.toLowerCase();
       const lowerFact = ft.fact.text.toLowerCase();
 
-      const entities = ['webb', 'jwst', 'k2-18b', 'methane', 'carbon dioxide', 'hycean', 'dimethyl sulfide', 'leo', 'light-years'];
+      const entities = [
+        'webb', 'jwst', 'k2-18b', 'methane', 'carbon dioxide', 'hycean', 'dimethyl sulfide', 'leo', 'light-years',
+        'juno', 'jupiter', 'magnetic', 'dynamo', 'gauss',
+        'antarctic', 'peridotite', 'extremophile', 'extremophiles', 'microbe', 'microbes', 'mars', 'europa', 'enceladus',
+        'whale', 'heart', 'beats', 'bpm', 'liters', 'pnas',
+        'ecog', 'sensorimotor', 'speech', 'neural', 'electrodes', 'cortex',
+        'planck', 'photon', 'optics', 'laser', 'quantum',
+      ];
       let entityOverlap = 0;
       for (const ent of entities) {
         if (lowerClaim.includes(ent) && lowerFact.includes(ent)) {

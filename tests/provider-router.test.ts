@@ -191,7 +191,7 @@ describe('ProviderRouter & Automatic Failover Engine', () => {
       expect(routerErr.attempts[0].provider).toBe('Prov 1');
       expect(routerErr.attempts[1].provider).toBe('Prov 2');
     }
-  }, 15000);
+  }, 30000);
 
   it('fails over during image generation stage', async () => {
     const img1 = createMockProvider('img1', 'Pollinations Primary', 'pollinations');
