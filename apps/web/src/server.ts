@@ -3347,7 +3347,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const targetModel = parsed.model || provider.model_name;
 
           try {
-            if (isImageTest && (provider.adapter_kind === 'gemini_native' || provider.name.toLowerCase().includes('gemini'))) {
+            if (isImageTest && provider.adapter_kind === 'gemini_native') {
               const geminiRes = await fetch(
                 `https://generativelanguage.googleapis.com/v1beta/models/${targetModel || 'gemini-2.5-flash-image'}:generateContent?key=${decryptedKey}`,
                 {
@@ -3429,7 +3429,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               latencyMs = Date.now() - start;
               thumbnailUrl = imgRes.imageBuffer ? `data:image/jpeg;base64,${imgRes.imageBuffer.toString('base64')}` : undefined;
               probeSuccess = true;
-            } else if (provider.adapter_kind === 'gemini_native' || provider.name.toLowerCase().includes('gemini')) {
+            } else if (provider.adapter_kind === 'gemini_native') {
               const probeRes = await fetch(
                 `https://generativelanguage.googleapis.com/v1beta/models?key=${decryptedKey}`,
                 { method: 'GET', signal: AbortSignal.timeout(8000) }

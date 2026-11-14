@@ -1033,8 +1033,8 @@ You must ground your entire post on these verified facts. Do not write about unr
     const cKind = (candidate.kind || candidate.adapter_kind || '').toLowerCase();
     const cName = candidate.name || 'image-provider';
 
-    // Gemini Native Image Provider (gemini_native)
-    if (cKind === 'gemini_native' || cName.toLowerCase().includes('gemini')) {
+    // 1. Gemini Native Image Provider (gemini_native strictly)
+    if (cKind === 'gemini_native') {
       try {
         const geminiAdapter = new GeminiNativeAdapter();
         const geminiKey = candidate.apiKey;
@@ -1063,9 +1063,8 @@ You must ground your entire post on these verified facts. Do not write about unr
         console.warn(`[Image Failover] Priority #${candidate.priority} (${candidate.name}) failed:`, geminiErr?.message || geminiErr);
       }
     }
-
-    // Priority / Cloudflare Workers AI
-    if (cKind === 'cloudflare_workers_ai' || cName.toLowerCase().includes('cloudflare')) {
+    // 2. Cloudflare Workers AI (cloudflare_workers_ai strictly)
+    else if (cKind === 'cloudflare_workers_ai') {
       try {
         const cfAdapter = new CloudflareWorkersAIAdapter();
         const cfToken = candidate.apiKey || process.env.CLOUDFLARE_API_TOKEN;
@@ -1101,9 +1100,8 @@ You must ground your entire post on these verified facts. Do not write about unr
         console.warn(`[Image Failover] Priority #${candidate.priority} (${candidate.name}) failed:`, cfErr?.message || cfErr);
       }
     }
-
-    // OpenAI-Compatible Images (Vercel, ZenMux, OpenRouter, NVIDIA, Custom HTTP)
-    if (cKind === 'openai_compatible_images' || cKind === 'custom_http') {
+    // 3. OpenAI-Compatible Images (ZenMux, Vercel, NVIDIA NIM, OpenRouter, Custom HTTP)
+    else if (cKind === 'openai_compatible_images' || cKind === 'custom_http') {
       try {
         const oaiAdapter = new OpenAICompatibleImageAdapter({
           baseUrl: candidate.base_url || undefined,
@@ -1136,9 +1134,8 @@ You must ground your entire post on these verified facts. Do not write about unr
         console.warn(`[Image Failover] Priority #${candidate.priority} (${candidate.name}) failed:`, oaiErr?.message || oaiErr);
       }
     }
-
-    // Priority / Pollinations AI
-    if (cKind === 'pollinations' || cName.toLowerCase().includes('pollinations')) {
+    // 4. Pollinations AI (pollinations strictly)
+    else if (cKind === 'pollinations') {
       try {
         const modelName = candidate.model_name || 'flux';
         const apiKey = candidate.apiKey;
@@ -1218,6 +1215,10 @@ You must ground your entire post on these verified facts. Do not write about unr
       thumbnailUrl = isTestEnv()
         ? generateThumbnailSvg({ headline, themeColor: isHorror ? '#e11d48' : '#38bdf8' })
         : `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 1000))}?width=1080&height=1350&model=flux&nologo=true`;
+      successfulImageProvider = 'Pollinations AI';
+      successfulImageModel = 'flux';
+      const polliCandidate = (options.activeProviders || []).find((p) => (p.kind || p.adapter_kind) === 'pollinations');
+      if (polliCandidate) usedImageProviderId = polliCandidate.id;
     }
   }
 
@@ -1228,8 +1229,9 @@ You must ground your entire post on these verified facts. Do not write about unr
       if (imgRes.ok) {
         const ab = await imgRes.arrayBuffer();
         if (ab.byteLength > 500) {
+          rawImageBuffer = Buffer.from(ab);
           const mime = imgRes.headers.get('content-type') || 'image/jpeg';
-          thumbnailUrl = `data:${mime};base64,${Buffer.from(ab).toString('base64')}`;
+          thumbnailUrl = `data:${mime};base64,${rawImageBuffer.toString('base64')}`;
         }
       }
     } catch (fErr) {
@@ -1350,7 +1352,11 @@ You must ground your entire post on these verified facts. Do not write about unr
     visionRelevanceCheck,
     usedTextProviderId: successfulTextProviderId || textCandidates[0]?.id || '11111111-1111-1111-1111-111111111101',
     usedTextProviderName: successfulTextProviderName,
-    usedImageProviderId: usedImageProviderId || candidateChain[0]?.id || '11111111-1111-1111-1111-111111111105',
+    usedImageProviderId:
+      usedImageProviderId ||
+      (successfulImageProvider.toLowerCase().includes('pollinations')
+        ? ((options.activeProviders || []).find((p) => (p.kind || p.adapter_kind) === 'pollinations')?.id || '11111111-1111-1111-1111-111111111105')
+        : candidateChain[0]?.id || '11111111-1111-1111-1111-111111111105'),
     usedImageProviderName: successfulImageProvider,
   };
 }

@@ -65,7 +65,7 @@ export class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
     if (lowerUrl.includes('dashscope') || lowerUrl.includes('aliyuncs') || lowerModel.includes('wanx') || lowerModel.includes('qwen-image')) {
       return 'alibaba_dashscope_async';
     }
-    if (lowerUrl.includes('openrouter') || lowerModel.includes('riverflow') || lowerModel.includes(':free')) {
+    if (lowerUrl.includes('openrouter') || lowerModel.includes('riverflow')) {
       return 'openrouter_chat_modalities';
     }
     if (lowerUrl.includes('nvidia') || lowerModel.includes('stabilityai') || lowerModel.includes('stable-diffusion')) {
@@ -89,16 +89,21 @@ export class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
       ? baseUrl
       : `${baseUrl}/images/generations`;
 
+    const isZenMux = baseUrl.toLowerCase().includes('zenmux');
+
+    // Build base request payload
     const requestBody: Record<string, any> = {
       model,
       prompt: options.prompt,
-      n: 1,
-      size: '1024x1024',
-      response_format: 'b64_json',
     };
 
-    if (options.negativePrompt) {
-      requestBody.negative_prompt = options.negativePrompt;
+    if (!isZenMux) {
+      requestBody.n = 1;
+      requestBody.size = '1024x1024';
+      requestBody.response_format = 'b64_json';
+      if (options.negativePrompt) {
+        requestBody.negative_prompt = options.negativePrompt;
+      }
     }
 
     const headers: Record<string, string> = {
@@ -119,6 +124,33 @@ export class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
         body: JSON.stringify(requestBody),
         signal: AbortSignal.timeout(timeoutMs),
       });
+
+      // If ZenMux or gateway failed on model id or parameters, retry with simplified payload or fallback model
+      if (!response.ok && (response.status === 400 || response.status === 404)) {
+        const errText = await response.clone().text().catch(() => '');
+        // If google/gemini-2.5-flash-image-free was rejected, retry with google/gemini-2.5-flash-image
+        const altModel = model.endsWith('-free')
+          ? model.replace(/-free$/, '')
+          : model.endsWith(':free')
+          ? model.replace(/:free$/, '')
+          : undefined;
+
+        if (altModel || isZenMux || errText.includes('parameter') || errText.includes('model')) {
+          const retryBody: Record<string, any> = {
+            model: altModel || model,
+            prompt: options.prompt,
+          };
+          const retryRes = await fetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(retryBody),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (retryRes.ok) {
+            response = retryRes;
+          }
+        }
+      }
     } catch (err: any) {
       if (err.name === 'AbortError' || err.name === 'TimeoutError') {
         throw new ProviderError(`OpenAI image provider timed out after ${timeoutMs}ms`, 'timeout', 504);
@@ -127,7 +159,7 @@ export class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
     }
 
     if (!response.ok) {
-      await this.handleHttpError(response, 'OpenAI-Compatible');
+      await this.handleHttpError(response, isZenMux ? 'ZenMux' : 'OpenAI-Compatible');
     }
 
     const data: any = await response.json();

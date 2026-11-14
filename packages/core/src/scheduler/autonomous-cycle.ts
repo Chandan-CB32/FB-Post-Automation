@@ -389,51 +389,26 @@ export async function runAutonomousCycle(
                 }
               }
 
-              // 2. Fallback photo: raw AI image (buffer or URL)
-              let fallbackBuffer: Buffer | undefined;
-              let fallbackUrl: string | undefined;
-
-              if (pipelineResult.thumbnailUrl) {
-                if (pipelineResult.thumbnailUrl.startsWith('data:image/')) {
-                  try {
-                    const parts = pipelineResult.thumbnailUrl.split(',');
-                    const isB64 = parts[0].includes(';base64');
-                    fallbackBuffer = isB64
-                      ? Buffer.from(parts[1], 'base64')
-                      : Buffer.from(decodeURIComponent(parts[1]), 'utf-8');
-                  } catch (_) {}
-                } else if (
-                  pipelineResult.thumbnailUrl.startsWith('http://') ||
-                  pipelineResult.thumbnailUrl.startsWith('https://')
-                ) {
-                  fallbackUrl = pipelineResult.thumbnailUrl;
-                }
+              // Fallback: extract buffer from compositeImageUrl if available
+              if (!photoBuffer && pipelineResult.compositeImageUrl?.startsWith('data:image/')) {
+                try {
+                  const parts = pipelineResult.compositeImageUrl.split(',');
+                  photoBuffer = Buffer.from(parts[1], 'base64');
+                } catch (_) {}
               }
 
               const photoInput: PhotoInput | undefined = photoBuffer
                 ? {
                     buffer: photoBuffer,
                     filename: 'composed_card.jpg',
-                    fallbackBuffer,
-                    fallbackUrl,
-                  }
-                : fallbackBuffer
-                ? {
-                    buffer: fallbackBuffer,
-                    filename: 'post_photo.jpg',
-                    fallbackUrl,
-                  }
-                : fallbackUrl
-                ? {
-                    url: fallbackUrl,
                   }
                 : undefined;
 
-              // RULE D.6: If image is missing, NEVER publish text-only to Facebook! Route to Review Inbox.
+              // RULE D.6: If composed card is missing, NEVER publish uncomposed or text-only to Facebook! Route to Review Inbox.
               if (!photoInput) {
-                console.warn('[Autonomous Worker] Image missing: Refusing to publish text-only post to Facebook. Routing to Review Inbox.');
+                console.warn('[Autonomous Worker] Composed headline card missing: Refusing to publish uncomposed post to Facebook. Routing to Review Inbox.');
                 postStatus = 'pending_review';
-                errors.push('failed: no image - Refusing to publish text-only post to Facebook.');
+                errors.push('failed: composed card missing - Refusing to publish uncomposed post to Facebook.');
               } else {
                 const pubRes = await publisher.publishFeedPost(
                   page.fb_page_id,
