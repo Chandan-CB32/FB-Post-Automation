@@ -124,7 +124,7 @@ export function renderHeadlineCard(
   // 5. Visual top area: full-bleed AI image or clean fallback
   const topImageMarkup = options.imageUrl
     ? `<!-- Photorealistic Scene Cover-Cropped to Upper Area -->
-  <image href="${options.imageUrl}" x="0" y="0" width="${canvasWidth}" height="${layout.panelTop}" preserveAspectRatio="xMidYMid slice" />`
+  <image href="${escapeXml(options.imageUrl)}" x="0" y="0" width="${canvasWidth}" height="${layout.panelTop}" preserveAspectRatio="xMidYMid slice" />`
     : `<!-- Rich Space Atmosphere Scene Fallback -->
   <defs>
     <radialGradient id="topGlow" cx="50%" cy="45%" r="60%">

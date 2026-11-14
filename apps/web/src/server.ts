@@ -5767,32 +5767,34 @@ async function generateDashboardHtml(
           ${(() => {
             const userTz = 'Asia/Kolkata';
             const defaultTz = pages[0]?.schedule?.timezone || 'America/New_York';
+            const pageTz = defaultTz;
             const now = new Date();
-            const todayUserStr = new Intl.DateTimeFormat('en-CA', {
-              timeZone: userTz,
+            const todayPageStr = new Intl.DateTimeFormat('en-CA', {
+              timeZone: pageTz,
               year: 'numeric',
               month: '2-digit',
               day: '2-digit',
             }).format(now);
-            const [tYear, tMonth, tDay] = todayUserStr.split('-').map(Number);
+            const [pYear, pMonth, pDay] = todayPageStr.split('-').map(Number);
 
             return Array.from({ length: 7 })
               .map((_, idx) => {
-                const slotDate = new Date(Date.UTC(tYear, tMonth - 1, tDay + idx, 12, 0, 0));
+                const slotDate = new Date(Date.UTC(pYear, pMonth - 1, pDay + idx, 12, 0, 0));
                 const dayDateStr = new Intl.DateTimeFormat('en-CA', {
-                  timeZone: userTz,
+                  timeZone: pageTz,
                   year: 'numeric',
                   month: '2-digit',
                   day: '2-digit',
                 }).format(slotDate);
-                const dayName = slotDate.toLocaleDateString('en-US', { timeZone: userTz, weekday: 'short' });
-                const dayMonthStr = slotDate.toLocaleDateString('en-US', { timeZone: userTz, month: 'short', day: 'numeric' });
+                const dayName = slotDate.toLocaleDateString('en-US', { timeZone: pageTz, weekday: 'short' });
+                const dayMonthStr = slotDate.toLocaleDateString('en-US', { timeZone: pageTz, month: 'short', day: 'numeric' });
 
+                // Find all posts scheduled for this day in audience timezone (pageTz)
                 const dayPosts = posts.filter((p) => {
                   if (!p.scheduled_for) return false;
                   try {
                     const pTzDate = new Intl.DateTimeFormat('en-CA', {
-                      timeZone: userTz,
+                      timeZone: pageTz,
                       year: 'numeric',
                       month: '2-digit',
                       day: '2-digit',
@@ -5803,51 +5805,125 @@ async function generateDashboardHtml(
                   }
                 });
 
-                // Check planned slots for active live pages
+                // Build chronological list of cards for this day (all actual posts + remaining unfilled planned slots)
                 const activePages = pages.filter((pg) => pg.active === true || (pg.schedule as any)?.is_live === true);
-                const plannedSlotsForDay: Array<{ timeStr: string; localTimeStr: string; pageName: string }> = [];
+                const pageForSlots = activePages[0] || pages[0];
+                const times: string[] = pageForSlots?.schedule?.postingTimes || (pageForSlots?.schedule as any)?.times || ['08:00', '10:00', '12:00', '15:00', '17:00'];
 
-                for (const ap of activePages) {
-                  const pageTz = ap.schedule?.timezone || defaultTz;
-                  const times: string[] = ap.schedule?.postingTimes || (ap.schedule as any)?.times || ['08:00', '10:00', '12:00', '15:00', '17:00'];
-                  for (const t of times) {
-                    const [tHour, tMin] = t.split(':').map(Number);
-                    // Check if there is already a post scheduled for this slot (matching hour and minute within 20m)
-                    const hasPost = dayPosts.some((dp) => {
-                      try {
-                        const dpTzDate = new Date(dp.scheduled_for);
-                        const dpParts = new Intl.DateTimeFormat('en-US', {
-                          timeZone: pageTz,
-                          hour: 'numeric',
-                          minute: 'numeric',
-                          hour12: false,
-                        }).formatToParts(dpTzDate);
-                        const dpHour = Number(dpParts.find((p) => p.type === 'hour')?.value || 0);
-                        const dpMin = Number(dpParts.find((p) => p.type === 'minute')?.value || 0);
-                        return dpHour === tHour && Math.abs(dpMin - tMin) <= 20;
-                      } catch (_) {
-                        return false;
+                interface DayCardItem {
+                  totalMinutes: number;
+                  html: string;
+                }
+
+                const dayCards: DayCardItem[] = [];
+
+                // Track which slot times are fulfilled by day posts
+                const fulfilledSlots = new Set<string>();
+
+                // 1. Add all posts scheduled for this day
+                for (const p of dayPosts) {
+                  try {
+                    const dpDate = new Date(p.scheduled_for);
+                    const dpParts = new Intl.DateTimeFormat('en-US', {
+                      timeZone: pageTz,
+                      hour: 'numeric',
+                      minute: 'numeric',
+                      hour12: false,
+                    }).formatToParts(dpDate);
+                    const pHour = Number(dpParts.find((x) => x.type === 'hour')?.value || 0);
+                    const pMin = Number(dpParts.find((x) => x.type === 'minute')?.value || 0);
+                    const pTotalMin = pHour * 60 + pMin;
+
+                    // Check if this post fulfills any of the 5 slots (within 60m)
+                    for (const t of times) {
+                      const [tH, tM] = t.split(':').map(Number);
+                      const sTotalMin = tH * 60 + tM;
+                      if (Math.abs(pTotalMin - sTotalMin) <= 60) {
+                        fulfilledSlots.add(t);
                       }
-                    });
-
-                    if (!hasPost) {
-                      const audTimeFmt = `${tHour % 12 || 12}:${tMin.toString().padStart(2, '0')} ${tHour >= 12 ? 'PM' : 'AM'}`;
-                      // IST time (+10h30m relative to EST)
-                      const istMinutes = (tHour * 60 + tMin + 630) % 1440;
-                      const istH = Math.floor(istMinutes / 60);
-                      const istM = istMinutes % 60;
-                      const istTimeFmt = `${istH % 12 || 12}:${istM.toString().padStart(2, '0')} ${istH >= 12 ? 'PM' : 'AM'}`;
-
-                      plannedSlotsForDay.push({
-                        timeStr: audTimeFmt,
-                        localTimeStr: istTimeFmt,
-                        pageName: ap.name,
-                      });
                     }
+
+                    const audTime = `${pHour % 12 || 12}:${pMin.toString().padStart(2, '0')} ${pHour >= 12 ? 'PM' : 'AM'}`;
+
+                    // IST time from actual date
+                    const istParts = new Intl.DateTimeFormat('en-US', {
+                      timeZone: userTz,
+                      hour: 'numeric',
+                      minute: 'numeric',
+                      hour12: false,
+                    }).formatToParts(dpDate);
+                    const istHour = Number(istParts.find((x) => x.type === 'hour')?.value || 0);
+                    const istMin = Number(istParts.find((x) => x.type === 'minute')?.value || 0);
+                    const locTime = `${istHour % 12 || 12}:${istMin.toString().padStart(2, '0')} ${istHour >= 12 ? 'PM' : 'AM'}`;
+
+                    const pg = pages.find((page) => page.id === p.page_id);
+                    const isPub = p.status === 'published';
+                    const isSched = p.status === 'scheduled_on_fb';
+                    const bg = isPub ? '#064e3b' : isSched ? '#1e3a8a' : '#78350f';
+                    const borderC = isPub ? '#059669' : isSched ? '#2563eb' : '#d97706';
+                    const textC = isPub ? '#34d399' : isSched ? '#93c5fd' : '#f59e0b';
+                    const badgeLabel = isPub ? 'PUBLISHED' : isSched ? 'ON FB' : 'REVIEW';
+
+                    dayCards.push({
+                      totalMinutes: pTotalMin,
+                      html: `
+                    <div
+                      class="calendar-post-card"
+                      onclick="openPostDetailsModal('${p.id}')"
+                      title="Click to view full post content, caption and Facebook link"
+                      style="background: #111827; border: 1px solid ${borderC}; border-radius: 6px; padding: 9px; font-size: 11px; cursor: pointer; transition: all 0.2s ease; position: relative;"
+                      onmouseover="this.style.borderColor='#38bdf8'; this.style.transform='translateY(-2px)';"
+                      onmouseout="this.style.borderColor='${borderC}'; this.style.transform='none';"
+                    >
+                      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
+                        <div>
+                          <span style="font-weight: 700; color: ${textC}; font-size: 12px;">${audTime} EST</span>
+                          <div style="font-size: 9px; color: #94a3b8;">${locTime} IST</div>
+                        </div>
+                        <span style="font-size: 9px; background: ${bg}; color: white; padding: 2px 5px; border-radius: 4px; font-weight: 700; border: 1px solid ${borderC};">${badgeLabel}</span>
+                      </div>
+                      <div style="font-weight: 600; color: #f3f4f6; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(p.title || '')}">${escapeHtml(p.title || 'Scheduled Post')}</div>
+                      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px; border-top: 1px solid #1f2937; padding-top: 3px;">
+                        <span style="color: var(--text-muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px;">${escapeHtml(pg?.name?.split('&')[0] || 'Beyond the Known')}</span>
+                        <span style="color: #38bdf8; font-size: 10px; font-weight: 600;">View &rarr;</span>
+                      </div>
+                    </div>`,
+                    });
+                  } catch (_) {}
+                }
+
+                // 2. Add unfilled planned slots for active pages
+                if (pageForSlots) {
+                  for (const t of times) {
+                    if (fulfilledSlots.has(t)) continue;
+                    const [tHour, tMin] = t.split(':').map(Number);
+                    const sTotalMin = tHour * 60 + tMin;
+                    const audTimeFmt = `${tHour % 12 || 12}:${tMin.toString().padStart(2, '0')} ${tHour >= 12 ? 'PM' : 'AM'}`;
+                    const istMinutes = (tHour * 60 + tMin + 630) % 1440;
+                    const istH = Math.floor(istMinutes / 60);
+                    const istM = istMinutes % 60;
+                    const istTimeFmt = `${istH % 12 || 12}:${istM.toString().padStart(2, '0')} ${istH >= 12 ? 'PM' : 'AM'}`;
+
+                    dayCards.push({
+                      totalMinutes: sTotalMin,
+                      html: `
+                    <div style="background: rgba(15, 23, 42, 0.6); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 6px; padding: 8px; font-size: 11px;">
+                      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
+                        <div>
+                          <span style="font-weight: 700; color: #38bdf8; font-size: 12px;">${audTimeFmt} EST</span>
+                          <div style="font-size: 9px; color: #94a3b8;">${istTimeFmt} IST</div>
+                        </div>
+                        <span style="font-size: 9px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 5px; border-radius: 4px; font-weight: 700; border: 1px solid rgba(56, 189, 248, 0.3);">PLANNED</span>
+                      </div>
+                      <div style="font-weight: 600; color: #cbd5e1; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(pageForSlots?.name || 'Beyond the Known')}</div>
+                      <div style="font-size: 10px; color: #64748b; margin-top: 4px;">Pre-generates T-30m</div>
+                    </div>`,
+                    });
                   }
                 }
 
-                const hasItems = dayPosts.length > 0 || plannedSlotsForDay.length > 0;
+                // 3. Sort cards chronologically by time
+                dayCards.sort((a, b) => a.totalMinutes - b.totalMinutes);
 
                 return `
                 <div style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; min-width: 140px;">
@@ -5855,79 +5931,10 @@ async function generateDashboardHtml(
                   <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">${dayMonthStr}</div>
 
                   <div style="display: flex; flex-direction: column; gap: 8px;">
-                    ${
-                      dayPosts.map((p) => {
-                        const pg = pages.find((page) => page.id === p.page_id);
-                        const pageTz = pg?.schedule?.timezone || defaultTz;
-                        const audTime = new Date(p.scheduled_for).toLocaleTimeString('en-US', {
-                          timeZone: pageTz,
-                          hour: 'numeric',
-                          minute: '2-digit',
-                          hour12: true,
-                        });
-                        const locTime = new Date(p.scheduled_for).toLocaleTimeString('en-US', {
-                          timeZone: userTz,
-                          hour: 'numeric',
-                          minute: '2-digit',
-                          hour12: true,
-                        });
-                        const isPub = p.status === 'published';
-                        const isSched = p.status === 'scheduled_on_fb';
-                        const bg = isPub ? '#064e3b' : isSched ? '#1e3a8a' : '#78350f';
-                        const borderC = isPub ? '#059669' : isSched ? '#2563eb' : '#d97706';
-                        const textC = isPub ? '#34d399' : isSched ? '#93c5fd' : '#f59e0b';
-                        const badgeLabel = isPub ? 'PUBLISHED' : isSched ? 'ON FB' : 'REVIEW';
-
-                        return `
-                        <div
-                          class="calendar-post-card"
-                          onclick="openPostDetailsModal('${p.id}')"
-                          title="Click to view full post content, caption and Facebook link"
-                          style="background: #111827; border: 1px solid ${borderC}; border-radius: 6px; padding: 9px; font-size: 11px; cursor: pointer; transition: all 0.2s ease; position: relative;"
-                          onmouseover="this.style.borderColor='#38bdf8'; this.style.transform='translateY(-2px)';"
-                          onmouseout="this.style.borderColor='${borderC}'; this.style.transform='none';"
-                        >
-                          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
-                            <div>
-                              <span style="font-weight: 700; color: ${textC}; font-size: 12px;">${audTime} EST</span>
-                              <div style="font-size: 9px; color: #94a3b8;">${locTime} IST</div>
-                            </div>
-                            <span style="font-size: 9px; background: ${bg}; color: white; padding: 2px 5px; border-radius: 4px; font-weight: 700; border: 1px solid ${borderC};">${badgeLabel}</span>
-                          </div>
-                          <div style="font-weight: 600; color: #f3f4f6; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(p.title || '')}">${escapeHtml(p.title || 'Scheduled Post')}</div>
-                          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px; border-top: 1px solid #1f2937; padding-top: 3px;">
-                            <span style="color: var(--text-muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px;">${escapeHtml(pg?.name.split('&')[0] || 'Beyond the Known')}</span>
-                            <span style="color: #38bdf8; font-size: 10px; font-weight: 600;">View &rarr;</span>
-                          </div>
-                        </div>
-                        `;
-                      }).join('')
-                    }
-                    ${
-                      plannedSlotsForDay.map((ps) => {
-                        return `
-                        <div style="background: rgba(15, 23, 42, 0.6); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 6px; padding: 8px; font-size: 11px;">
-                          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
-                            <div>
-                              <span style="font-weight: 700; color: #38bdf8; font-size: 11px;">${ps.timeStr} EST</span>
-                              <div style="font-size: 9px; color: #64748b;">${ps.localTimeStr} IST</div>
-                            </div>
-                            <span style="font-size: 9px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 1px 4px; border-radius: 4px; font-weight: 600;">PLANNED</span>
-                          </div>
-                          <div style="font-weight: 600; color: #cbd5e1; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(ps.pageName)}">${escapeHtml(ps.pageName)}</div>
-                          <div style="color: var(--text-muted); font-size: 9px;">Pre-generates T-30m</div>
-                        </div>
-                        `;
-                      }).join('')
-                    }
-                    ${
-                      !hasItems
-                        ? '<div style="color: #4b5563; font-size: 11px; font-style: italic; padding: 8px 0;">No active slots</div>'
-                        : ''
-                    }
+                    ${dayCards.map((c) => c.html).join('')}
+                    ${dayCards.length === 0 ? '<div style="color: #4b5563; font-size: 11px; font-style: italic; padding: 8px 0;">No active slots</div>' : ''}
                   </div>
-                </div>
-              `;
+                </div>`;
               })
               .join('');
           })()}
