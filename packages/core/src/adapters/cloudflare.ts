@@ -116,18 +116,32 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
 
     const body: Record<string, unknown> = {
       prompt: options.prompt,
-      steps: requiredSteps,
-      num_steps: requiredSteps,
     };
+    if (isLeonardo) {
+      body.num_steps = requiredSteps;
+    } else {
+      body.steps = requiredSteps;
+    }
 
     const startTime = Date.now();
     const apiKey = options.apiKey || process.env.CLOUDFLARE_API_TOKEN || '';
     const response = await this.executeFetch(endpoint, apiKey, body, options.timeoutMs);
     const latencyMs = Date.now() - startTime;
 
-    const contentType = response.headers.get('content-type') || 'image/png';
-    const arrayBuffer = await response.arrayBuffer();
-    const rawBuffer = Buffer.from(arrayBuffer);
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    let rawBuffer: Buffer;
+
+    if (contentType.includes('application/json')) {
+      const json = (await response.json()) as any;
+      const b64 = json?.result?.image || json?.image;
+      if (!b64 || typeof b64 !== 'string') {
+        throw new ProviderError('Cloudflare returned invalid JSON without base64 image data.', 'invalid_output');
+      }
+      rawBuffer = Buffer.from(b64, 'base64');
+    } else {
+      const arrayBuffer = await response.arrayBuffer();
+      rawBuffer = Buffer.from(arrayBuffer);
+    }
 
     if (rawBuffer.length < 100) {
       throw new ProviderError('Cloudflare returned an empty or truncated image buffer.', 'invalid_output');
