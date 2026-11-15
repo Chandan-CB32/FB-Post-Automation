@@ -746,7 +746,9 @@ You must ground your entire post on these verified facts. Do not write about unr
     if (isFactual) {
       claimResult = verifyFactualClaims(draft, researchFacts);
       if (!claimResult.allVerified) {
-        qaScore -= 25;
+        const unverifiedRatio = claimResult.claimsCount > 0 ? (claimResult.unverifiedCount / claimResult.claimsCount) : 1;
+        const penalty = Math.min(25, Math.max(5, Math.round(unverifiedRatio * 20)));
+        qaScore -= penalty;
         for (const unv of claimResult.unsupportedClaims) {
           violations.push(
             `Claim-by-claim verification failed: Factual claim '${unv}' is not supported by any verified research source URL.`
@@ -834,7 +836,9 @@ You must ground your entire post on these verified facts. Do not write about unr
     if (isFactual) {
       reformatClaimResult = verifyFactualClaims(trimmed, researchFacts);
       if (!reformatClaimResult.allVerified) {
-        reformatScore -= 25;
+        const unverifiedRatio = reformatClaimResult.claimsCount > 0 ? (reformatClaimResult.unverifiedCount / reformatClaimResult.claimsCount) : 1;
+        const penalty = Math.min(25, Math.max(5, Math.round(unverifiedRatio * 20)));
+        reformatScore -= penalty;
         for (const unv of reformatClaimResult.unsupportedClaims) {
           reformatViolations.push(
             `Claim-by-claim verification failed: Factual claim '${unv}' is not supported by any verified research source URL.`
@@ -1264,6 +1268,7 @@ You must ground your entire post on these verified facts. Do not write about unr
     themeColor: isHorror ? '#e11d48' : '#38bdf8',
     niche: topicCategory,
     imageUrl: thumbnailUrl,
+    imageBuffer: rawImageBuffer,
     matchNiche: true,
   });
 
@@ -1271,7 +1276,10 @@ You must ground your entire post on these verified facts. Do not write about unr
   let compositeJpegBuffer: Buffer | undefined;
   let compositeImageUrl = renderedCard.svgDataUri;
   try {
-    compositeJpegBuffer = await rasterizeHeadlineCardToJpeg(renderedCard.svgXml);
+    compositeJpegBuffer = await rasterizeHeadlineCardToJpeg(renderedCard, 95, {
+      imageBuffer: rawImageBuffer,
+      imageUrl: thumbnailUrl,
+    });
     if (compositeJpegBuffer && compositeJpegBuffer.byteLength > 500) {
       compositeImageUrl = `data:image/jpeg;base64,${compositeJpegBuffer.toString('base64')}`;
     }

@@ -119,8 +119,8 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
     };
     if (isLeonardo) {
       body.num_steps = requiredSteps;
-    } else {
-      body.steps = requiredSteps;
+    } else if (model.includes('flux')) {
+      body.steps = 4;
     }
 
     const startTime = Date.now();

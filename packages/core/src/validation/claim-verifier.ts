@@ -98,7 +98,15 @@ function isFactualAssertion(sentence: string): boolean {
     lower.startsWith('this could mean') ||
     lower.startsWith('could this mean') ||
     lower.startsWith('in either case') ||
-    lower.startsWith('whether ')
+    lower.startsWith('whether ') ||
+    lower.includes('future observation') ||
+    lower.includes('will aim to') ||
+    lower.includes('will look for') ||
+    lower.includes('aim to probe') ||
+    lower.includes('data were gathered') ||
+    lower.includes('data was gathered') ||
+    lower.includes('is confirmed by the data') ||
+    lower.includes('studies suggest')
   ) {
     return false;
   }

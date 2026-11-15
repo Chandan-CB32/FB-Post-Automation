@@ -6,6 +6,7 @@ export interface HeadlineRendererOptions extends HeadlineLayoutOptions, Highligh
   panelColor?: string; // default '#000000'
   textColor?: string; // default '#FFFFFF'
   imageUrl?: string;
+  imageBuffer?: Buffer;
   themeColor?: string;
 }
 
@@ -17,6 +18,10 @@ export interface RenderedHeadlineResult {
   segments: HeadlineSegment[];
   layout: HeadlineLayoutResult;
   fontFamily: SupportedFontFamily;
+  imageBuffer?: Buffer;
+  imageUrl?: string;
+  canvasWidth: number;
+  canvasHeight: number;
 }
 
 function escapeXml(unsafe: string): string {
@@ -122,9 +127,23 @@ export function renderHeadlineCard(
   }
 
   // 5. Visual top area: full-bleed AI image or clean fallback
-  const topImageMarkup = options.imageUrl
+  let resolvedImageUrl = mergedOptions.imageUrl;
+  let resolvedImageBuffer = mergedOptions.imageBuffer;
+
+  if (resolvedImageBuffer && !resolvedImageUrl) {
+    resolvedImageUrl = `data:image/jpeg;base64,${resolvedImageBuffer.toString('base64')}`;
+  } else if (resolvedImageUrl?.startsWith('data:') && !resolvedImageBuffer) {
+    try {
+      const b64Part = resolvedImageUrl.split(',')[1];
+      if (b64Part) {
+        resolvedImageBuffer = Buffer.from(b64Part, 'base64');
+      }
+    } catch (_) {}
+  }
+
+  const topImageMarkup = resolvedImageUrl
     ? `<!-- Photorealistic Scene Cover-Cropped to Upper Area -->
-  <image href="${escapeXml(options.imageUrl)}" x="0" y="0" width="${canvasWidth}" height="${layout.panelTop}" preserveAspectRatio="xMidYMid slice" />`
+  <image href="${escapeXml(resolvedImageUrl)}" xlink:href="${escapeXml(resolvedImageUrl)}" x="0" y="0" width="${canvasWidth}" height="${layout.panelTop}" preserveAspectRatio="xMidYMid slice" />`
     : `<!-- Rich Space Atmosphere Scene Fallback -->
   <defs>
     <radialGradient id="topGlow" cx="50%" cy="45%" r="60%">
@@ -173,6 +192,10 @@ export function renderHeadlineCard(
     segments: parsed.segments,
     layout,
     fontFamily,
+    imageBuffer: resolvedImageBuffer,
+    imageUrl: resolvedImageUrl,
+    canvasWidth,
+    canvasHeight,
   };
 }
 
@@ -187,16 +210,110 @@ async function getSharpInstance(): Promise<any> {
   }
 }
 
+export interface RasterizeHeadlineOptions {
+  imageBuffer?: Buffer;
+  imageUrl?: string;
+  quality?: number;
+  canvasWidth?: number;
+  canvasHeight?: number;
+  panelTop?: number;
+}
+
 /**
  * Asynchronously rasterizes a rendered headline card SVG into a high-quality 1080x1350 JPEG buffer.
- * Compatible with Facebook Graph API /{page-id}/photos requirement (JPEG/PNG only).
+ * Performs native Sharp compositing when a top photo buffer/URL is available, preventing
+ * empty/black boxes caused by librsvg network sandboxing.
  */
 export async function rasterizeHeadlineCardToJpeg(
   svgXmlOrResult: string | RenderedHeadlineResult,
-  quality = 95
+  qualityOrOptions: number | RasterizeHeadlineOptions = 95,
+  legacyOptions?: RasterizeHeadlineOptions
 ): Promise<Buffer> {
   const sharp = await getSharpInstance();
-  const svgString = typeof svgXmlOrResult === 'string' ? svgXmlOrResult : svgXmlOrResult.svgXml;
+
+  const isResultObject = typeof svgXmlOrResult === 'object' && svgXmlOrResult !== null;
+  const svgString = isResultObject ? svgXmlOrResult.svgXml : String(svgXmlOrResult);
+
+  const opts: RasterizeHeadlineOptions =
+    typeof qualityOrOptions === 'number'
+      ? { quality: qualityOrOptions, ...legacyOptions }
+      : { ...qualityOrOptions, ...legacyOptions };
+
+  const quality = opts.quality ?? 95;
+  const canvasWidth = opts.canvasWidth ?? (isResultObject ? svgXmlOrResult.canvasWidth : 1080) ?? 1080;
+  const canvasHeight = opts.canvasHeight ?? (isResultObject ? svgXmlOrResult.canvasHeight : 1350) ?? 1350;
+  const panelTop = opts.panelTop ?? (isResultObject ? svgXmlOrResult.layout?.panelTop : 837) ?? 837;
+
+  let photoBuffer = opts.imageBuffer || (isResultObject ? svgXmlOrResult.imageBuffer : undefined);
+  const photoUrl = opts.imageUrl || (isResultObject ? svgXmlOrResult.imageUrl : undefined);
+
+  // If no buffer provided but data URI exists, decode synchronously
+  if (!photoBuffer && photoUrl?.startsWith('data:')) {
+    try {
+      const b64 = photoUrl.split(',')[1];
+      if (b64) photoBuffer = Buffer.from(b64, 'base64');
+    } catch (_) {}
+  }
+
+  // If no buffer provided and SVG contains an embedded data URI, extract it
+  if (!photoBuffer && svgString.includes('data:image/')) {
+    try {
+      const match = svgString.match(/data:image\/[^;]+;base64,([a-zA-Z0-9+/=]+)/);
+      if (match && match[1]) {
+        photoBuffer = Buffer.from(match[1], 'base64');
+      }
+    } catch (_) {}
+  }
+
+  // If still no buffer but an HTTP URL is given, pre-fetch it
+  if (!photoBuffer && photoUrl?.startsWith('http')) {
+    try {
+      const res = await fetch(photoUrl, { signal: AbortSignal.timeout(15000) });
+      if (res.ok) {
+        const ab = await res.arrayBuffer();
+        if (ab.byteLength > 500) {
+          photoBuffer = Buffer.from(ab);
+        }
+      }
+    } catch (fErr) {
+      console.warn('[HeadlineRenderer] Could not fetch remote photo for compositing:', fErr);
+    }
+  }
+
+  // If we have a valid photo buffer (>500 bytes), use native Sharp compositing!
+  if (photoBuffer && photoBuffer.byteLength > 500) {
+    try {
+      // 1. Cover-crop photo to exact upper dimensions (canvasWidth x panelTop)
+      const croppedPhoto = await sharp(photoBuffer)
+        .resize(canvasWidth, panelTop, { fit: 'cover', position: 'center' })
+        .toBuffer();
+
+      // 2. Strip <image .../> from SVG so librsvg doesn't attempt to render it again
+      const textOverlaySvg = svgString.replace(/<image\b[^>]*\/>/gi, '');
+
+      // 3. Composite photo at top: 0, left: 0 and SVG text overlay on top
+      const compositeBuffer = await sharp({
+        create: {
+          width: canvasWidth,
+          height: canvasHeight,
+          channels: 3,
+          background: { r: 0, g: 0, b: 0 },
+        },
+      })
+        .composite([
+          { input: croppedPhoto, top: 0, left: 0 },
+          { input: Buffer.from(textOverlaySvg), top: 0, left: 0 },
+        ])
+        .jpeg({ quality, chromaSubsampling: '4:4:4' })
+        .toBuffer();
+
+      return compositeBuffer;
+    } catch (cErr) {
+      console.warn('[HeadlineRenderer] Native Sharp compositing failed, falling back to direct SVG:', cErr);
+    }
+  }
+
+  // Direct SVG fallback
   return await sharp(Buffer.from(svgString))
     .jpeg({ quality, chromaSubsampling: '4:4:4' })
     .toBuffer();
