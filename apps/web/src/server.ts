@@ -474,10 +474,10 @@ export const OFFICIAL_FREE_LIMITS: Record<string, OfficialFreeQuota> = {
     note: 'OpenRouter free models tier (:free)',
   },
   cloudflare: {
-    rpdLimit: 10000,
-    unit: 'neurons/day',
-    badge: '10,000 neurons/day',
-    note: 'Cloudflare Workers AI free tier',
+    rpdLimit: 100,
+    unit: 'reqs/day',
+    badge: '100 reqs/day (10,000 neurons)',
+    note: 'Cloudflare Workers AI free tier: 10,000 neurons/day (~100 FLUX.1 Schnell images)',
   },
   huggingface: {
     rpdLimit: 0,
@@ -3360,6 +3360,22 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       return;
     }
 
+    // 9aa. API: Auto-Configure All Providers to Free Tier (100 RPD for Cloudflare, Auto models)
+    if (url.pathname === '/api/providers/auto-configure-free-tier' && req.method === 'POST') {
+      try {
+        const result = await store.autoConfigureAllFreeTier();
+        const updatedProviders = await store.getProviders();
+        return sendJson({
+          success: true,
+          updatedCount: result.updated,
+          providers: updatedProviders,
+          message: `Successfully configured ${result.updated} providers to Automatic Free-Tier selection (Cloudflare set to 100 reqs/day)!`,
+        });
+      } catch (err: any) {
+        return sendJson({ error: err.message }, 500);
+      }
+    }
+
     // 9b. API: Test Provider with Live Lightweight Probe
     if (url.pathname === '/api/providers/test' && req.method === 'POST') {
       let body = '';
@@ -4183,6 +4199,19 @@ function renderAccountPermissionsBadges(notes?: string): string {
   </div>`;
 }
 
+function getAutoModelLabel(adapterKind: string, name: string): string {
+  const k = (adapterKind || '').toLowerCase();
+  const n = (name || '').toLowerCase();
+  if (k.includes('cloudflare') || n.includes('cloudflare')) return 'FLUX.1 Schnell (~100 imgs/day • 10k neurons)';
+  if (n.includes('zenmux')) return 'Gemini Flash Image Free';
+  if (n.includes('openrouter')) return 'Riverflow v2.5 Fast Free';
+  if (k.includes('pollinations') || n.includes('pollinations')) return 'FLUX.1 Schnell (100% Free)';
+  if (n.includes('nvidia')) return 'SD 3.5 Large (Free credits)';
+  if (k.includes('gemini') || n.includes('gemini')) return 'Gemini 2.5 Flash (1,500 RPD)';
+  if (n.includes('groq')) return 'Llama 3.3 70B (14,400 RPD)';
+  return 'Automated Free-Tier Model';
+}
+
 function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys: StoredProviderKey[], chainType: 'text' | 'image'): string {
   if (chainProviders.length === 0) {
     return `<tr><td colspan="7" style="text-align: center; padding: 24px; color: var(--text-muted);">
@@ -4226,7 +4255,16 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
       statusDisplay = '<span style="color: #9ca3af; font-weight: 600; font-size: 12px;">● Disabled</span>';
     }
 
-    const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+    const isAutoModel = !p.model_name || p.model_name.toLowerCase() === 'auto' || p.model_name.toLowerCase() === 'default';
+    const autoModelLabel = getAutoModelLabel(p.adapter_kind, p.name);
+
+    let displayDailyLimit = p.daily_limit || 1000;
+    const isCloudflare = (p.adapter_kind || '').includes('cloudflare') || p.name.toLowerCase().includes('cloudflare');
+    if (isCloudflare && (displayDailyLimit === 3 || displayDailyLimit === 10 || isImageChain)) {
+      displayDailyLimit = Math.max(displayDailyLimit, 100);
+    }
+
+    const pct = Math.min(100, Math.round(((p.used_today || 0) / (displayDailyLimit || 1)) * 100));
     const estCostPerImg = isImageChain ? getEstimatedCostPerImage(p.adapter_kind, p.model_name) : 0;
     const estDailyCost = isImageChain ? getEstimatedDailyCost(p.adapter_kind, p.model_name, 5) : 0;
 
@@ -4239,9 +4277,20 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
           <div style="display: flex; align-items: center; gap: 8px;">
             <div style="font-weight: 700; font-size: 14px; color: #f3f4f6;">${escapeHtml(p.name)}</div>
           </div>
-          <div style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px;">
-            ${escapeHtml(p.model_name || 'default')}
-          </div>
+          ${
+            isAutoModel
+              ? `<div style="margin-top: 3px; display: flex; flex-direction: column; gap: 2px;">
+                  <span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 700; font-size: 11px; padding: 2px 7px; border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; width: fit-content;">
+                    ✨ Auto Free-Tier Model
+                  </span>
+                  <span style="font-size: 11px; color: #94a3b8; font-family: 'JetBrains Mono', monospace;">
+                    ↳ ${escapeHtml(autoModelLabel)}
+                  </span>
+                </div>`
+              : `<div style="font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px;">
+                  ${escapeHtml(p.model_name)}
+                </div>`
+          }
           ${
             licenseInfo
               ? `<div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
@@ -4261,7 +4310,7 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
         <td><code>${escapeHtml(p.adapter_kind)}</code></td>
         <td>${priorityBadge}</td>
         <td>
-          <div style="font-weight: 600;">${p.used_today || 0} / ${p.daily_limit} reqs</div>
+          <div style="font-weight: 600;">${p.used_today || 0} / ${displayDailyLimit} reqs</div>
           <div style="width: 100px; height: 5px; background: #374151; border-radius: 3px; margin-top: 4px; overflow: hidden;">
             <div style="width: ${pct}%; height: 100%; background: ${pct > 85 ? '#ef4444' : '#3b82f6'};"></div>
           </div>
@@ -4272,7 +4321,7 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
               </span>
             </div>
           ` : officialQuota ? `
-            <div style="margin-top: 2px; font-size: 10px; color: #9ca3af;" title="${escapeHtml(officialQuota.note)}">
+            <div style="margin-top: 2px; font-size: 10px; color: #94a3b8;" title="${escapeHtml(officialQuota.note)}">
               Free: ${officialQuota.badge}
             </div>
           ` : ''}
@@ -4340,8 +4389,8 @@ function renderBudgetTrackerBanner(): string {
             <div style="width: ${b.cloudflare.percent}%; height: 100%; background: ${b.cloudflare.percent >= 80 ? '#ef4444' : '#f97316'};"></div>
           </div>
           <div style="font-size: 10px; color: #64748b; display: flex; justify-content: space-between;">
-            <span>Cap Lucid: ${b.cloudflare.lucidUsedToday}/${b.cloudflare.lucidCap}</span>
-            <span>Reserve: ${b.cloudflare.reserve}</span>
+            <span style="color: #34d399; font-weight: 600;">⚡ FLUX-1-Schnell: ~100 imgs/day</span>
+            <span>Reserve: ${b.cloudflare.reserve} neurons</span>
           </div>
         </div>
 
@@ -6359,9 +6408,14 @@ async function generateDashboardHtml(
               Sequential image generation providers (Gemini Native, ZenMux, Pollinations, Cloudflare Workers AI) with live health tracking.
             </p>
           </div>
-          <button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.08); padding: 6px 14px; cursor: pointer;" onclick="openImageBenchModal()">
-            🔬 Image Quality Bench
-          </button>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #34d399; border: 1px solid rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.08); padding: 6px 14px; cursor: pointer;" onclick="autoConfigureFreeTierAction(this)" title="Auto-set all providers to Free-Tier models and Cloudflare to 100 reqs/day">
+              ⚡ Auto-Set All to Free Tier (100 RPD)
+            </button>
+            <button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.08); padding: 6px 14px; cursor: pointer;" onclick="openImageBenchModal()">
+              🔬 Image Quality Bench
+            </button>
+          </div>
         </div>
         ${renderBudgetTrackerBanner()}
         <table>
@@ -7572,8 +7626,16 @@ async function generateDashboardHtml(
         </div>
 
         <div class="form-group">
-          <label for="editProviderModel">Model Name</label>
-          <input type="text" id="editProviderModel" name="editProviderModel" class="form-control" autocomplete="off">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label for="editProviderModel" style="margin: 0;">Model Name</label>
+            <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 2px 8px; color: #34d399; border-color: rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.1); cursor: pointer;" onclick="setEditModelToAuto()">
+              ✨ Set to Auto (Free-Tier Model)
+            </button>
+          </div>
+          <input type="text" id="editProviderModel" name="editProviderModel" class="form-control" autocomplete="off" placeholder="auto (Automatic Free-Tier Model Selection)">
+          <small style="color: #94a3b8; font-size: 11px; display: block; margin-top: 4px;">
+            💡 Set to <code>auto</code> (or leave empty) to automatically pick the verified 100% free-tier model (e.g. FLUX.1 Schnell for Cloudflare, Gemini Flash for ZenMux).
+          </small>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">

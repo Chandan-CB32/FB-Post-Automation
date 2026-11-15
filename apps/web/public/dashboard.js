@@ -348,6 +348,19 @@
     );
   }
 
+  function getAutoModelLabelClient(adapterKind, name) {
+    const k = (adapterKind || '').toLowerCase();
+    const n = (name || '').toLowerCase();
+    if (k.includes('cloudflare') || n.includes('cloudflare')) return 'FLUX.1 Schnell (~100 imgs/day • 10k neurons)';
+    if (n.includes('zenmux')) return 'Gemini Flash Image Free';
+    if (n.includes('openrouter')) return 'Riverflow v2.5 Fast Free';
+    if (k.includes('pollinations') || n.includes('pollinations')) return 'FLUX.1 Schnell (100% Free)';
+    if (n.includes('nvidia')) return 'SD 3.5 Large (Free credits)';
+    if (k.includes('gemini') || n.includes('gemini')) return 'Gemini 2.5 Flash (1,500 RPD)';
+    if (n.includes('groq')) return 'Llama 3.3 70B (14,400 RPD)';
+    return 'Automated Free-Tier Model';
+  }
+
   function getOfficialFreeQuotaClient(p) {
     const name = (p.name || '').toLowerCase();
     const kind = (p.adapter_kind || '').toLowerCase();
@@ -356,7 +369,7 @@
     if (kind.includes('gemini') || name.includes('gemini')) return { limit: 1500, badge: '1,500 reqs/day', note: 'Google AI Studio free tier: 15 RPM / 1,500 RPD' };
     if (name.includes('groq') || model.includes('groq')) return { limit: 14400, badge: '14,400 reqs/day (token-gated)', note: 'Groq Cloud free tier: 30 RPM / 14,400 RPD' };
     if (name.includes('openrouter') || model.includes('openrouter')) return { limit: 200, badge: '200 reqs/day', note: 'OpenRouter free models tier (:free)' };
-    if (kind.includes('cloudflare') || name.includes('cloudflare')) return { limit: 10000, badge: '10,000 neurons/day', note: 'Cloudflare Workers AI free tier' };
+    if (kind.includes('cloudflare') || name.includes('cloudflare')) return { limit: 100, badge: '100 reqs/day (10,000 neurons)', note: 'Cloudflare Workers AI free tier: 10,000 neurons/day (~100 FLUX.1 Schnell images)' };
     if (kind.includes('huggingface') || name.includes('hugging') || name.includes('hf')) return { limit: 0, badge: '0 credits (rate-limited)', note: 'Hugging Face free tier: 0 monthly credits' };
     if (kind.includes('pollinations') || name.includes('pollinations')) return { limit: 1000, badge: '1,000 reqs/day', note: 'Pollinations AI free tier' };
     return null;
@@ -379,10 +392,16 @@
           }).join('')
         : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
 
+      const isCloudflare = (p.adapter_kind || p.kind || '').includes('cloudflare') || (p.name || '').toLowerCase().includes('cloudflare');
+      let displayLimit = p.daily_limit || 1000;
+      if (isCloudflare && (displayLimit === 3 || displayLimit === 10 || chainType === 'image')) {
+        displayLimit = Math.max(displayLimit, 100);
+      }
+
       const officialQuota = getOfficialFreeQuotaClient(p);
       const exceedsQuota = officialQuota && (
-        (officialQuota.limit > 0 && (p.daily_limit || 0) > officialQuota.limit) ||
-        (officialQuota.limit === 0 && (p.daily_limit || 0) > 0)
+        (officialQuota.limit > 0 && displayLimit > officialQuota.limit) ||
+        (officialQuota.limit === 0 && displayLimit > 0)
       );
 
       const posColors = ['#064e3b', '#1e3a8a', '#78350f', '#3b0764', '#1e293b', '#374151', '#065f46', '#1e1b4b'];
@@ -405,7 +424,7 @@
         statusDisplay = '<span style="color: #9ca3af; font-weight: 600; font-size: 12px;">● Disabled</span>';
       }
 
-      const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+      const pct = Math.min(100, Math.round(((p.used_today || 0) / (displayLimit || 1)) * 100));
       const isImg = chainType === 'image';
       let costHtml = '';
       if (isImg) {
@@ -420,13 +439,26 @@
         costHtml = '<div style="font-size: 11px; color: #a78bfa; margin-top: 3px; font-weight: 500;">💰 Est: $' + costPerImg.toFixed(3) + '/img (~$' + (costPerImg * 5).toFixed(2) + '/day @ 5 posts)</div>';
       }
 
+      const isAutoModel = !p.model_name || p.model_name.toLowerCase() === 'auto' || p.model_name.toLowerCase() === 'default';
+      const autoModelDetail = getAutoModelLabelClient(p.adapter_kind || p.kind, p.name);
+
+      let modelDisplayHtml = '';
+      if (isAutoModel) {
+        modelDisplayHtml = '<div style="margin-top: 3px; display: flex; flex-direction: column; gap: 2px;">' +
+          '<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 700; font-size: 11px; padding: 2px 7px; border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; width: fit-content;">✨ Auto Free-Tier Model</span>' +
+          '<span style="font-size: 11px; color: #94a3b8; font-family: monospace;">↳ ' + escapeHtml(autoModelDetail) + '</span>' +
+          '</div>';
+      } else {
+        modelDisplayHtml = '<div style="font-size: 12px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">' + escapeHtml(p.model_name) + '</div>';
+      }
+
       return (
         '<tr id="provider-row-' + p.id + '" class="provider-draggable-row" data-provider-id="' + p.id + '" data-chain="' + chainType + '" draggable="true" style="cursor: grab;">' +
         '<td><div style="font-weight: 700; font-size: 14px; color: #f3f4f6;">' + escapeHtml(p.name) + '</div>' +
-        '<div style="font-size: 12px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">' + escapeHtml(p.model_name || 'default') + '</div>' + costHtml + '</td>' +
+        modelDisplayHtml + costHtml + '</td>' +
         '<td><code>' + escapeHtml(p.adapter_kind || p.kind) + '</code></td>' +
         '<td>' + priorityBadge + '</td>' +
-        '<td><div style="font-weight: 600;">' + (p.used_today || 0) + ' / ' + p.daily_limit + ' reqs</div>' +
+        '<td><div style="font-weight: 600;">' + (p.used_today || 0) + ' / ' + displayLimit + ' reqs</div>' +
         '<div style="width: 100px; height: 5px; background: #374151; border-radius: 3px; margin-top: 4px; overflow: hidden;">' +
         '<div style="width: ' + pct + '%; height: 100%; background: ' + (pct > 85 ? '#ef4444' : '#3b82f6') + ';"></div>' +
         '</div>' +
@@ -2122,7 +2154,7 @@
     document.getElementById('editProviderBaseUrl').value = p.base_url || '';
     const editModelInput = document.getElementById('editProviderModel');
     if (editModelInput) {
-      editModelInput.value = p.model_name || '';
+      editModelInput.value = p.model_name || 'auto';
       let datalist = document.getElementById('editProviderModelSuggestions');
       if (!datalist) {
         datalist = document.createElement('datalist');
@@ -2131,15 +2163,24 @@
         editModelInput.parentNode.appendChild(datalist);
       }
       const kind = (p.adapter_kind || '').toLowerCase();
-      let suggestions = [];
-      if (kind.includes('gemini')) suggestions = ['gemini-2.5-flash-image', 'gemini-3-pro-image', 'gemini-2.0-flash'];
-      else if (kind.includes('pollinations')) suggestions = ['flux', 'turbo', 'gptimage', 'seedream', 'nanobanana'];
-      else if (kind.includes('zenmux') || p.name.toLowerCase().includes('zenmux')) suggestions = ['google/gemini-2.5-flash-image-free', 'openai/gpt-4o-mini', 'deepseek/deepseek-chat'];
-      else if (kind.includes('cloudflare')) suggestions = ['@cf/stabilityai/stable-diffusion-xl-base-1.0', '@cf/black-forest-labs/flux-1-schnell'];
-      datalist.innerHTML = suggestions.map(function(s) { return '<option value="' + s + '">'; }).join('');
+      let suggestions = ['auto'];
+      if (kind.includes('gemini')) suggestions.push('gemini-2.5-flash-image', 'gemini-3-pro-image', 'gemini-2.0-flash');
+      else if (kind.includes('pollinations')) suggestions.push('flux', 'turbo', 'gptimage', 'seedream', 'nanobanana');
+      else if (kind.includes('zenmux') || p.name.toLowerCase().includes('zenmux')) suggestions.push('google/gemini-2.5-flash-image-free', 'openai/gpt-4o-mini', 'deepseek/deepseek-chat');
+      else if (kind.includes('cloudflare')) suggestions.push('@cf/black-forest-labs/flux-1-schnell', '@cf/stabilityai/stable-diffusion-xl-base-1.0');
+      datalist.innerHTML = suggestions.map(function(s) { return '<option value="' + s + '">' + (s === 'auto' ? 'Auto (Free-Tier Model Selection)' : s) + '</option>'; }).join('');
     }
     document.getElementById('editProviderPriority').value = p.priority;
-    document.getElementById('editProviderDailyLimit').value = p.daily_limit;
+    
+    let displayLimit = p.daily_limit;
+    const kind = (p.adapter_kind || '').toLowerCase();
+    const name = (p.name || '').toLowerCase();
+    if (kind.includes('cloudflare') || name.includes('cloudflare')) {
+      if (displayLimit === 3 || displayLimit === 10 || !displayLimit) {
+        displayLimit = 100;
+      }
+    }
+    document.getElementById('editProviderDailyLimit').value = displayLimit;
     document.getElementById('editProviderEnabled').checked = p.enabled !== false;
 
     const keys = providerKeysData.filter(function (k) { return k.provider_id === p.id; });
@@ -2207,6 +2248,47 @@
     } else {
       const err = await res.json();
       showToast('Failed to update provider: ' + (err.error || 'Unknown error'), 'error');
+    }
+  }
+
+  function setEditModelToAuto() {
+    const editModelInput = document.getElementById('editProviderModel');
+    if (editModelInput) editModelInput.value = 'auto';
+    const adapter = (document.getElementById('editProviderAdapter').value || '').toLowerCase();
+    const name = (document.getElementById('editProviderName').value || '').toLowerCase();
+    if (adapter.includes('cloudflare') || name.includes('cloudflare')) {
+      const limitInput = document.getElementById('editProviderDailyLimit');
+      if (limitInput) limitInput.value = '100';
+    }
+    showToast('Model set to Auto Free-Tier!');
+  }
+
+  async function autoConfigureFreeTierAction(btn) {
+    if (!confirm('Auto-configure all image and text providers to Automatic Free-Tier model selection and set Cloudflare to 100 reqs/day?')) {
+      return;
+    }
+    const originalText = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Configuring...';
+    }
+    try {
+      const res = await fetch('/api/providers/auto-configure-free-tier', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Failed to auto-configure providers');
+      if (Array.isArray(data.providers)) {
+        providersData = data.providers;
+      }
+      renderProvidersTables();
+      alert('✅ ' + (data.message || 'All providers updated to Free-Tier selection and 100 RPD!'));
+      fetchProvidersTab();
+    } catch (err) {
+      alert('❌ Error: ' + err.message);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+      }
     }
   }
 
@@ -2493,6 +2575,8 @@
   window.openManageKeysFromEditModal = openManageKeysFromEditModal;
   window.closeEditProviderModal = closeEditProviderModal;
   window.submitEditProvider = submitEditProvider;
+  window.setEditModelToAuto = setEditModelToAuto;
+  window.autoConfigureFreeTierAction = autoConfigureFreeTierAction;
   window.deleteProviderAction = deleteProviderAction;
   window.openManageKeysModal = openManageKeysModal;
   window.closeManageKeysModal = closeManageKeysModal;

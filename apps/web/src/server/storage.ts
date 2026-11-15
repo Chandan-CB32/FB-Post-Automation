@@ -2305,23 +2305,40 @@ export class SystemStore {
       }
     }
 
-    const providers = (data || []).map((row) => ({
-      id: row.id,
-      name: row.name,
-      adapter_kind: row.kind,
-      base_url: row.base_url || '',
-      model_name: row.model_name || row.config?.default_text_model || row.config?.default_image_model || '',
-      daily_limit: row.rpd_limit || 1000,
-      used_today: usageMap[row.id] || 0,
-      enabled: row.active !== false,
-      priority: row.priority || 1,
-      health_status: row.config?.health_status || 'unknown',
-      latency_ms: row.config?.latency_ms,
-      test_error: row.config?.test_error,
-      last_tested_at: row.config?.last_tested_at,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }));
+    const providers = (data || []).map((row) => {
+      const isCloudflare = (row.kind || '').includes('cloudflare') || (row.name || '').toLowerCase().includes('cloudflare');
+      const isImageOrFlux = row.config?.chain_type === 'image' || (row.name || '').toLowerCase().includes('image') || (row.name || '').toLowerCase().includes('flux');
+
+      // Auto-heal old Cloudflare image quota if it was seeded at 3 or 10 reqs/day
+      let effectiveDailyLimit = row.rpd_limit || 1000;
+      if (isCloudflare && (row.rpd_limit === 3 || row.rpd_limit === 10 || (isImageOrFlux && row.rpd_limit < 50))) {
+        effectiveDailyLimit = 100;
+      }
+
+      // Auto-heal old Lucid origin model if set to Leonardo Lucid
+      let effectiveModelName = row.model_name || row.config?.default_text_model || row.config?.default_image_model || '';
+      if (isCloudflare && (effectiveModelName.includes('lucid') || effectiveModelName.includes('phoenix'))) {
+        effectiveModelName = '@cf/black-forest-labs/flux-1-schnell';
+      }
+
+      return {
+        id: row.id,
+        name: row.name,
+        adapter_kind: row.kind,
+        base_url: row.base_url || '',
+        model_name: effectiveModelName,
+        daily_limit: effectiveDailyLimit,
+        used_today: usageMap[row.id] || 0,
+        enabled: row.active !== false,
+        priority: row.priority || 1,
+        health_status: row.config?.health_status || 'unknown',
+        latency_ms: row.config?.latency_ms,
+        test_error: row.config?.test_error,
+        last_tested_at: row.config?.last_tested_at,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      };
+    });
     this.setCached('providers', providers, 15000);
     return providers;
   }
@@ -2542,6 +2559,35 @@ export class SystemStore {
     }
     this.invalidateCache('providers');
     return true;
+  }
+
+  public async autoConfigureAllFreeTier(): Promise<{ updated: number }> {
+    let count = 0;
+    const providers = await this.getProviders();
+
+    for (const p of providers) {
+      const isCloudflare = (p.adapter_kind || '').includes('cloudflare') || p.name.toLowerCase().includes('cloudflare');
+      const isZenMux = p.name.toLowerCase().includes('zenmux');
+      const isOpenRouter = (p.adapter_kind || '').includes('openai') && p.name.toLowerCase().includes('openrouter');
+      const isPollinations = (p.adapter_kind || '').includes('pollinations') || p.name.toLowerCase().includes('pollinations');
+      const isNvidiaNim = p.name.toLowerCase().includes('nvidia');
+
+      if (isCloudflare) {
+        await this.updateProvider(p.id, {
+          model_name: 'auto',
+          daily_limit: 100,
+        });
+        count++;
+      } else if (isZenMux || isOpenRouter || isPollinations || isNvidiaNim) {
+        await this.updateProvider(p.id, {
+          model_name: 'auto',
+        });
+        count++;
+      }
+    }
+
+    this.invalidateCache('providers');
+    return { updated: count };
   }
 
   public async getProviderKeys(providerId?: string): Promise<StoredProviderKey[]> {

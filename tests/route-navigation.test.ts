@@ -254,8 +254,8 @@ describe('Dashboard Clean URL Routing, Nav State & In-Place Persistence', () => 
         unit: 'reqs/day',
       });
       expect(lookupOfficialFreeQuota('cloudflare')).toMatchObject({
-        rpdLimit: 10000,
-        unit: 'neurons/day',
+        rpdLimit: 100,
+        unit: 'reqs/day',
       });
     });
 
