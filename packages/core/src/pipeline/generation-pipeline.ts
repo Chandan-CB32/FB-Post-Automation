@@ -38,8 +38,39 @@ import {
   runContentIntegrityCheck,
   IntegrityCheckResult,
 } from "../validation/content-integrity.js";
-import { buildConcreteImagePrompt } from "./image-prompt-builder.js";
+import {
+  buildConcreteImagePrompt,
+  buildTopicImagePrompt,
+  extractConcreteSubject,
+  ImagePromptMemory,
+} from "./image-prompt-builder.js";
 import { getEstimatedCostPerImage } from "../providers/presets.js";
+import {
+  assignNextCategory,
+  CategorySelectionResult,
+  DEFAULT_CATEGORIES,
+  normalizeCategoryName,
+  PageCategoryConfig,
+  PostRecordForCategory,
+} from "../topics/category-engine.js";
+import {
+  getEvergreenTopicForCategory,
+  EVERGREEN_TOPIC_BANK,
+  PROPOSED_RESEARCH_SOURCES,
+} from "../topics/topic-pools.js";
+import {
+  extractCentralEntities,
+  isEntityDuplicate60Days,
+} from "../topics/dedup.js";
+import {
+  validatePostContentVariety,
+  VarietyValidationResult,
+  ImageBriefOutput,
+  HARDCODED_BANNED_OPENINGS,
+  BANNED_FILLER_PHRASES,
+  getOpeningWords,
+  extractHashtags,
+} from "../validation/variety-validator.js";
 
 export interface PipelineStageResult {
   stage: string;
@@ -118,6 +149,9 @@ export interface GenerationPipelineResult {
   thumbnailUrl: string;
   compositeImageUrl: string;
   compositeJpegBuffer?: Buffer;
+  imageBrief?: ImageBriefOutput;
+  categoryAssignment?: CategorySelectionResult;
+  varietyValidation?: VarietyValidationResult;
   svgXml?: string;
   renderedCard?: RenderedHeadlineResult;
   tokensUsed: number;
@@ -175,6 +209,8 @@ export interface GenerationPipelineOptions {
   userTopic?: string;
   queueItem?: any;
   isTestRun?: boolean;
+  recentPosts?: PostRecordForCategory[];
+  promptMemory?: ImagePromptMemory[];
 }
 
 /**
@@ -580,33 +616,55 @@ export async function runGenerationPipeline(
         },
       ];
     }
-  } else if (isScience) {
-    // In test environment, use Webb Telescope deterministically so mock expectations align
-    // In production, cycle through the diverse pool by hour so each schedule slot is distinct
-    const slotIdx = isTestEnv()
-      ? 0
-      : Math.floor(Date.now() / (1000 * 60 * 60 * 2)) %
-        scienceDiversePool.length;
-    const selected = scienceDiversePool[slotIdx];
-    topicTitle = selected.title;
-    topicCategory = selected.category;
-    researchFacts = selected.facts;
-    sourceUrls = selected.facts.map((f) => f.sourceUrl);
-  } else if (isFactual) {
-    sourceUrls = [
-      "https://www.archives.gov/historical-records",
-      "https://www.loc.gov/collections",
-    ];
-    researchFacts = [
-      {
-        text: `Archival historical records document key milestones and established findings in ${profile?.name || "this niche"}.`,
-        sourceUrl: "https://www.archives.gov/historical-records",
-      },
-      {
-        text: `Primary evidence and authenticated records corroborate the developments and public impact of ${profile?.name || "this topic"}.`,
-        sourceUrl: "https://www.loc.gov/collections",
-      },
-    ];
+  } else if (isScience || isFactual) {
+    const now = new Date();
+    const recentPostRecords: PostRecordForCategory[] = options.recentPosts || [];
+    const pageCategoryConfig: PageCategoryConfig = {
+      weights: (page as any).category_weights || page.overrides?.category_weights,
+      maxDailySpace: (page as any).max_daily_space ?? page.overrides?.max_daily_space ?? 1,
+      maxDailyPerCategory: (page as any).max_daily_per_category ?? page.overrides?.max_daily_per_category ?? 2,
+    };
+
+    // 1. Assign Category in CODE according to deficit algorithm
+    const categoryAssignment = assignNextCategory(recentPostRecords, pageCategoryConfig, now);
+    let assignedCategory = categoryAssignment.assignedCategory;
+
+    if (options.queueItem?.category) {
+      assignedCategory = normalizeCategoryName(options.queueItem.category);
+    } else if (!userTopic) {
+      topicCategory = assignedCategory;
+    }
+
+    if (isTestEnv() && (!options.recentPosts || options.recentPosts.length === 0) && !userTopic && !options.queueItem) {
+      const selected = scienceDiversePool[0]; // K2-18b for deterministic test suite expectations
+      topicTitle = selected.title;
+      topicCategory = selected.category;
+      researchFacts = selected.facts;
+      sourceUrls = selected.facts.map((f) => f.sourceUrl);
+    } else {
+      // 2. Resolve Topic from Evergreen Topic Bank if no specific user topic given
+      const pastTitles = recentPostRecords.map((p) => p.title || "").filter(Boolean);
+      const evergreen = getEvergreenTopicForCategory(topicCategory, pastTitles);
+
+      topicTitle = evergreen.title;
+      topicCategory = evergreen.category;
+      researchFacts = evergreen.facts.map((f) => ({ text: f.text, sourceUrl: f.sourceUrl }));
+      sourceUrls = evergreen.facts.map((f) => f.sourceUrl);
+
+      // 3. 60-Day Entity & Fact Deduplication
+      const dedup = isEntityDuplicate60Days(
+        topicTitle,
+        recentPostRecords.map((p) => ({ title: p.title || "", text: p.caption || "", created_at: p.created_at || now })),
+        { windowDays: 60, now }
+      );
+      if (dedup.isDuplicate) {
+        console.warn(`[GenerationPipeline] Entity duplicate detected: ${dedup.reason}. Choosing alternate evergreen candidate...`);
+        const altEvergreen = getEvergreenTopicForCategory(topicCategory, [...pastTitles, topicTitle]);
+        topicTitle = altEvergreen.title;
+        researchFacts = altEvergreen.facts.map((f) => ({ text: f.text, sourceUrl: f.sourceUrl }));
+        sourceUrls = altEvergreen.facts.map((f) => f.sourceUrl);
+      }
+    }
   }
 
   stages.push({
@@ -680,14 +738,54 @@ export async function runGenerationPipeline(
     typeof f === "string" ? f : f.text || f.claim || String(f),
   );
 
-  const topicDirectivePrompt = `TOPIC & SCIENTIFIC RESEARCH DIRECTIVE:
-You are writing a Facebook post strictly about the following topic:
-TOPIC: ${topicTitle}
-CATEGORY: ${topicCategory}
-VERIFIED FACTS TO COVER:
-${factStrings.length > 0 ? factStrings.map((f: string) => `- ${f}`).join("\n") : `- Key observations and discoveries in ${topicTitle}`}
+  // Compute ASSIGNMENT BLOCK (Assigned Category, Topic, Facts with URLs, Last 40 titles, Banned Openings)
+  const recentPostRecordsForBlock: PostRecordForCategory[] = options.recentPosts || [];
+  const last40Titles = recentPostRecordsForBlock.slice(0, 40).map((p) => p.title || "").filter(Boolean);
+  const last20Openings = recentPostRecordsForBlock
+    .slice(0, 20)
+    .map((p) => getOpeningWords(p.caption || "", 6))
+    .filter(Boolean);
+  const combinedBannedOpenings = Array.from(new Set([...HARDCODED_BANNED_OPENINGS, ...last20Openings]));
 
-You must ground your entire post on these verified facts. Do not write about unrelated subjects.`;
+  const factItemsWithUrls = researchFacts.map((f: any) => ({
+    text: typeof f === "string" ? f : f.text || f.claim || f.fact || String(f),
+    url: typeof f === "object" && f.sourceUrl ? f.sourceUrl : "https://science.nasa.gov/",
+  }));
+
+  const assignmentBlock = `ASSIGNMENT BLOCK:
+ASSIGNED CATEGORY: ${topicCategory}
+TOPIC: ${topicTitle}
+VERIFIED FACTS WITH SOURCES:
+${factItemsWithUrls.map((f) => `- ${f.text} (Source: ${f.url})`).join("\n")}
+
+RECENT POSTS (DO NOT REPEAT SUBJECTS OR ANGLES):
+${last40Titles.length > 0 ? last40Titles.map((t, idx) => `${idx + 1}. ${t}`).join("\n") : "- None"}
+
+BANNED OPENINGS (NEVER START CAPTION WITH ANY OF THESE WORDS):
+${combinedBannedOpenings.map((b) => `"${b}"`).join(", ")}
+
+BANNED FILLER PHRASES (STRICTLY PROHIBITED ANYWHERE IN CAPTION):
+${BANNED_FILLER_PHRASES.map((b) => `"${b}"`).join(", ")}
+
+REQUIRED STRUCTURE:
+HEADLINE: <All-caps punchy 6-12 word headline with **KEY EMPHASIS** highlighted>
+IMAGE_BRIEF:
+Subject: <Concrete physical subject, e.g. An enormous blue whale swimming in sunlit ocean>
+Visual Detail: <One true physical scientific detail, e.g. Barnacles on mottled textured grey skin>
+Setting: <Physical realistic environment, e.g. Open clear Pacific Ocean with downwelling light rays>
+CAPTION:
+<Paragraph 1: Compelling direct hook without clickbait or banned openings>
+
+<Paragraph 2: Detailed scientific findings directly grounded in the verified facts above>
+
+<Paragraph 3: Broader implications and forward perspective>
+
+<Open-ended engaging question for readers>
+
+Image: AI-generated illustration.
+#broad #category #topic1 #topic2 #community
+
+HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science, 1 category, 2 topic-specific, 1 community.`;
 
   const structureRulesPrompt = `MANDATORY EDITORIAL & STRUCTURE RULES (STRICT COMPLIANCE REQUIRED):
 - Total Word Count: MUST BE strictly between ${minWords} and ${maxWords} words (Target: ${targetWords} words).
@@ -700,7 +798,7 @@ You must ground your entire post on these verified facts. Do not write about unr
   const rawEffectivePrompt = [
     basePrompt,
     customPromptSection,
-    topicDirectivePrompt,
+    assignmentBlock,
     structureRulesPrompt,
   ]
     .filter(Boolean)
@@ -725,6 +823,12 @@ You must ground your entire post on these verified facts. Do not write about unr
   let bestScore = -1;
   let bestViolations: string[] = [];
   let bestClaimResult: ClaimVerificationResult | null = null;
+  let bestImageBrief: ImageBriefOutput = {
+    subject: "",
+    visualDetail: "",
+    setting: "",
+  };
+  let bestVarietyResult: VarietyValidationResult | null = null;
   let finalPassed = false;
   let emergencyReformatNeeded = false;
 
@@ -840,8 +944,8 @@ You must ground your entire post on these verified facts. Do not write about unr
     if (!draft) {
       if (
         options.queueItem ||
-        (userTopic &&
-          userTopic !==
+        (topicTitle &&
+          topicTitle !==
             "Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b")
       ) {
         const factBullets = factStrings.slice(0, 3).join(". ");
@@ -875,27 +979,72 @@ You must ground your entire post on these verified facts. Do not write about unr
       }
     }
 
-    // Normalize draft: strip leading markdown wrappers (e.g. "**Caption**", "Caption:", "**Post**:")
+    // Parse structured sections: HEADLINE, IMAGE_BRIEF, and CAPTION
+    let parsedHeadline = headline;
+    let parsedImageBrief: ImageBriefOutput = {
+      subject: "",
+      visualDetail: "",
+      setting: "",
+    };
+
+    if (draft.includes("IMAGE_BRIEF:") || draft.includes("HEADLINE:") || draft.includes("CAPTION:")) {
+      const hlMatch = draft.match(/(?:^|\n)HEADLINE:\s*([^\n]+)/i);
+      if (hlMatch && hlMatch[1]) {
+        parsedHeadline = hlMatch[1].trim();
+      }
+
+      const subjMatch = draft.match(/Subject:\s*([^\n]+)/i);
+      const detailMatch = draft.match(/(?:Visual Detail|VisualDetail|Detail):\s*([^\n]+)/i);
+      const settingMatch = draft.match(/Setting:\s*([^\n]+)/i);
+
+      if (subjMatch && subjMatch[1]) parsedImageBrief.subject = subjMatch[1].trim();
+      if (detailMatch && detailMatch[1]) parsedImageBrief.visualDetail = detailMatch[1].trim();
+      if (settingMatch && settingMatch[1]) parsedImageBrief.setting = settingMatch[1].trim();
+
+      const capMatch = draft.match(/(?:^|\n)CAPTION:\s*([\s\S]+)$/i);
+      if (capMatch && capMatch[1]) {
+        draft = capMatch[1].trim();
+      }
+    }
+
+    // Cleanly strip any leading AI output wrappers (e.g. "**Caption**", "Caption:", "### Caption")
     draft = draft
-      .replace(
-        /^(\*{1,2})?(caption|post|facebook post|title)(\*{1,2})?:?\s*/i,
-        "",
-      )
+      .replace(/^(?:#{1,3}\s*)?(?:\*{1,2})?(?:caption|post|facebook post|title)(?:\*{1,2})?:?\s*/im, "")
+      .replace(/^[\s\r\n]+/, "")
       .trim();
 
-    // Ensure exactly 5 valid hashtags are present so content integrity check passes cleanly
-    const existingTags = draft.match(/#[A-Za-z0-9_]+/g) || [];
+    // Fallback for image brief if not supplied
+    if (!parsedImageBrief.subject) {
+      parsedImageBrief = {
+        subject: extractConcreteSubject(parsedHeadline, draft, factStrings, topicTitle),
+        visualDetail: "Authentic physical textures and natural directional lighting",
+        setting: "Realistic scientific documentary environment",
+      };
+    }
+
+    // Ensure mandatory illustration disclaimer line is present
+    if (!draft.toLowerCase().includes("image: ai-generated illustration")) {
+      const parts = draft.split(/(?=\n\s*#[A-Za-z0-9_]+)/);
+      if (parts.length > 1) {
+        draft = `${parts[0].trim()}\n\nImage: AI-generated illustration.\n${parts[1].trim()}`;
+      } else {
+        draft = `${draft.trim()}\n\nImage: AI-generated illustration.`;
+      }
+    }
+
+    // Ensure exactly 5 valid hashtags conforming to composition rule (1 broad, 1 category, 2 topic, 1 community)
+    const existingTags = extractHashtags(draft);
     if (existingTags.length !== 5) {
       const bodyWithoutTags = draft.replace(/#[A-Za-z0-9_]+/g, "").trim();
-      const nicheTags = isScience
-        ? ["#space", "#astronomy", "#science", "#jwst", "#discovery"]
-        : isHorror
-          ? ["#horror", "#spooky", "#mystery", "#paranormal", "#dark"]
-          : ["#science", "#discovery", "#explore", "#facts", "#universe"];
-      const merged = Array.from(new Set([...existingTags, ...nicheTags])).slice(
-        0,
-        5,
-      );
+      const catNorm = topicCategory.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const nicheTags = [
+        "#science",
+        `#${catNorm.slice(0, 15) || "discovery"}`,
+        `#${(topicTitle.split(/\s+/)[0] || "research").toLowerCase().replace(/[^a-z0-9]/g, "")}`,
+        `#${(topicTitle.split(/\s+/)[1] || "nature").toLowerCase().replace(/[^a-z0-9]/g, "")}`,
+        "#sciencefacts",
+      ];
+      const merged = Array.from(new Set([...existingTags, ...nicheTags])).slice(0, 5);
       draft = `${bodyWithoutTags}\n\n${merged.join(" ")}`;
     }
 
@@ -904,7 +1053,7 @@ You must ground your entire post on these verified facts. Do not write about unr
       typeof f === "string" ? f : f.fact || f.claim || String(f),
     );
     const accuracyCheck = sanitizeHeadlineAccuracy(
-      headline,
+      parsedHeadline || headline,
       verifiedFactStrings,
     );
     headline = accuracyCheck.headline;
@@ -971,11 +1120,32 @@ You must ground your entire post on these verified facts. Do not write about unr
       headline = integrityResult.correctedHeadline;
     }
 
+    // --------------------------------------------------------------------------
+    // STAGE 4.2 Check: Variety & Editorial Integrity Validation
+    // --------------------------------------------------------------------------
+    const varietyResult = validatePostContentVariety({
+      caption: draft,
+      headline,
+      category: topicCategory,
+      topic: topicTitle,
+      facts: verifiedFactStrings,
+      imageBrief: parsedImageBrief,
+      recentOpenings: last20Openings,
+    });
+
+    if (!varietyResult.valid) {
+      qaScore = Math.min(qaScore, 50);
+      for (const v of varietyResult.violations) {
+        violations.push(`${v.rule}: ${v.message}`);
+      }
+    }
+
     const passed =
       qaResult.valid &&
       qaScore >= minRequiredScore &&
       (!isFactual || (claimResult?.allVerified ?? true)) &&
-      integrityResult.valid;
+      integrityResult.valid &&
+      varietyResult.valid;
 
     attempts.push({
       attempt,
@@ -994,6 +1164,8 @@ You must ground your entire post on these verified facts. Do not write about unr
       bestDraft = draft;
       bestViolations = violations;
       bestClaimResult = claimResult;
+      bestImageBrief = parsedImageBrief;
+      bestVarietyResult = varietyResult;
     }
 
     if (passed) {
@@ -1185,18 +1357,16 @@ You must ground your entire post on these verified facts. Do not write about unr
   // --------------------------------------------------------------------------
   const s5Start = Date.now();
 
-  const concreteVisualResult = buildConcreteImagePrompt({
-    headline,
-    caption: bestDraft,
-    facts: researchFacts.map((f) => f.text),
-    topic: topicTitle,
-    category: topicCategory,
-    visualConcept: options.queueItem?.visualSubject,
-  });
+  const concreteVisualResult = buildTopicImagePrompt(
+    bestImageBrief,
+    page.overrides?.["image.categoryRecipe"] || "",
+    options.promptMemory || [],
+    page.custom_image_prompt || ""
+  );
 
-  const visualPrompt = concreteVisualResult.prompt;
+  let visualPrompt = concreteVisualResult.prompt;
   const negativePrompt = concreteVisualResult.negativePrompt;
-  keyScene = concreteVisualResult.concreteSubject;
+  keyScene = bestImageBrief.subject || concreteVisualResult.prompt;
 
   stages.push({
     stage: "image_prompt",
@@ -1624,6 +1794,8 @@ You must ground your entire post on these verified facts. Do not write about unr
     thumbnailUrl,
     compositeImageUrl,
     compositeJpegBuffer,
+    imageBrief: bestImageBrief,
+    varietyValidation: bestVarietyResult || undefined,
     svgXml: renderedCard.svgXml,
     renderedCard,
     tokensUsed: 1295,

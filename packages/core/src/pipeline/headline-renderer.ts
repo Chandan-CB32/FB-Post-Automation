@@ -280,6 +280,24 @@ export async function rasterizeHeadlineCardToJpeg(
     }
   }
 
+  // If still no buffer, inspect svgString for embedded http/https image url
+  if (!photoBuffer && svgString.includes('<image')) {
+    const urlMatch = svgString.match(/<image\b[^>]*(?:href|xlink:href)=["'](https?:\/\/[^"']+)["']/i);
+    if (urlMatch && urlMatch[1]) {
+      try {
+        const res = await fetch(urlMatch[1], { signal: AbortSignal.timeout(15000) });
+        if (res.ok) {
+          const ab = await res.arrayBuffer();
+          if (ab.byteLength > 500) {
+            photoBuffer = Buffer.from(ab);
+          }
+        }
+      } catch (uErr) {
+        console.warn('[HeadlineRenderer] Could not fetch SVG embedded image URL for compositing:', uErr);
+      }
+    }
+  }
+
   // If we have a valid photo buffer (>500 bytes), use native Sharp compositing!
   if (photoBuffer && photoBuffer.byteLength > 500) {
     try {
@@ -287,6 +305,13 @@ export async function rasterizeHeadlineCardToJpeg(
       const croppedPhoto = await sharp(photoBuffer)
         .resize(canvasWidth, panelTop, { fit: 'cover', position: 'center' })
         .toBuffer();
+
+      // Check entropy/stdev of upper photo to verify it is NOT solid black
+      const photoStats = await sharp(croppedPhoto).stats();
+      const avgPhotoStdev = photoStats.channels.map((c: any) => c.stdev).reduce((a: number, b: number) => a + b, 0) / (photoStats.channels.length || 1);
+      if (avgPhotoStdev < 3.5) {
+        console.warn(`[HeadlineRenderer] Cropped photo has near-zero entropy (stdev ${avgPhotoStdev.toFixed(2)}). Solid black visual detected.`);
+      }
 
       // 2. Strip <image .../> from SVG so librsvg doesn't attempt to render it again
       const textOverlaySvg = svgString.replace(/<image\b[^>]*\/>/gi, '');
@@ -313,8 +338,23 @@ export async function rasterizeHeadlineCardToJpeg(
     }
   }
 
-  // Direct SVG fallback
-  return await sharp(Buffer.from(svgString))
+  // Direct SVG fallback: Ensure any external <image .../> tag is replaced with rich gradient fallback
+  // so librsvg never produces a pitch black void when external image fails to fetch.
+  let safeSvg = svgString;
+  if (safeSvg.includes('<image')) {
+    const fallbackGlow = `
+  <defs>
+    <radialGradient id="safeTopGlow" cx="50%" cy="45%" r="65%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="60%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="${canvasWidth}" height="${panelTop}" fill="url(#safeTopGlow)"/>`;
+    safeSvg = safeSvg.replace(/<image\b[^>]*\/>/gi, fallbackGlow);
+  }
+
+  return await sharp(Buffer.from(safeSvg))
     .jpeg({ quality, chromaSubsampling: '4:4:4' })
     .toBuffer();
 }

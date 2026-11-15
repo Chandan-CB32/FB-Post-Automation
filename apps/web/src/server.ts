@@ -74,6 +74,9 @@ import {
   sanitizeHeadlineAccuracy,
   getEstimatedCostPerImage,
   getEstimatedDailyCost,
+  calculateContentMixReport,
+  DEFAULT_CATEGORIES,
+  assignNextCategory,
 } from '@fb-auto/core';
 import {
   renderPrivacyPolicyHtml,
@@ -2158,6 +2161,63 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           return sendJson({ success: true, page: updated, checklist, cancelledPosts: cancelledCount });
         } catch (e: any) {
           return sendJson({ error: e.message }, 500);
+        }
+      });
+      return;
+    }
+
+    // 3e3. API: Get Content Mix Report for a Page
+    if (url.pathname === '/api/pages/content-mix' && req.method === 'GET') {
+      try {
+        const pageId = url.searchParams.get('pageId');
+        if (!pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+        const page = await store.getPageById(pageId);
+        if (!page) return sendJson({ error: 'Page not found' }, 404);
+
+        const allPosts = await store.getPosts();
+        const pagePosts = allPosts.filter((p: any) => p.page_id === pageId);
+
+        const config = {
+          weights: (page as any).category_weights || page.overrides?.category_weights,
+          maxDailySpace: (page as any).max_daily_space ?? page.overrides?.max_daily_space ?? 1,
+          maxDailyPerCategory: (page as any).max_daily_per_category ?? page.overrides?.max_daily_per_category ?? 2,
+        };
+
+        const report = calculateContentMixReport(pagePosts, config, new Date());
+        return sendJson({ success: true, report, defaultCategories: DEFAULT_CATEGORIES });
+      } catch (err: any) {
+        return sendJson({ error: err.message }, 500);
+      }
+    }
+
+    // 3e4. API: Update Page Category Weights & Limits
+    if (url.pathname === '/api/pages/update-categories' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (!data.pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+          const page = await store.getPageById(data.pageId);
+          if (!page) return sendJson({ error: 'Page not found' }, 404);
+
+          const updates: Record<string, any> = {};
+          if (data.weights && typeof data.weights === 'object') {
+            updates.category_weights = data.weights;
+          }
+          if (typeof data.maxDailySpace === 'number') {
+            updates.max_daily_space = data.maxDailySpace;
+          }
+          if (typeof data.maxDailyPerCategory === 'number') {
+            updates.max_daily_per_category = data.maxDailyPerCategory;
+          }
+
+          const updated = await store.updatePage(data.pageId, updates, { force: true });
+          return sendJson({ success: true, page: updated });
+        } catch (err: any) {
+          return sendJson({ error: err.message }, 500);
         }
       });
       return;
@@ -4415,6 +4475,19 @@ async function generateDashboardHtml(
       ? (publishedPosts.reduce((acc, p) => acc + (p.analytics?.engagement_rate || 0), 0) / publishedPosts.length).toFixed(1)
       : '0.0';
   const reachDisplay = totalReach >= 1000 ? `${(totalReach / 1000).toFixed(1)}K` : `${totalReach}`;
+
+  // Content Mix & Variety Engine Analytics
+  const primaryPage = pages[0];
+  const primaryPagePosts = primaryPage ? posts.filter((p) => p.page_id === primaryPage.id) : posts;
+  const contentMixReport = calculateContentMixReport(
+    primaryPagePosts,
+    {
+      weights: (primaryPage as any)?.category_weights || primaryPage?.overrides?.category_weights,
+      maxDailySpace: (primaryPage as any)?.max_daily_space ?? primaryPage?.overrides?.max_daily_space ?? 1,
+      maxDailyPerCategory: (primaryPage as any)?.max_daily_per_category ?? primaryPage?.overrides?.max_daily_per_category ?? 2,
+    },
+    new Date()
+  );
   const hostUrl = process.env.APP_URL || 'https://fbauto247.vercel.app';
   const expectedRedirectUri =
     process.env.FACEBOOK_REDIRECT_URI || `${hostUrl.replace(/\/+$/, '')}/api/auth/facebook/callback`;
@@ -5066,6 +5139,107 @@ async function generateDashboardHtml(
             }
           </tbody>
         </table>
+      </div>
+
+      <!-- Scientific Content Mix & Variety Engine Report -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid rgba(56, 189, 248, 0.25);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <h3 style="font-size: 18px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+              <span>🔬 Scientific Content Mix & Variety Engine</span>
+              <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px;">10 Deficit-Weighted Categories</span>
+            </h3>
+            <p style="font-size: 13px; color: var(--text-muted); margin: 0;">
+              Page: <strong>${escapeHtml(primaryPage?.name || 'All Connected Pages')}</strong> &bull; Window: Last 50 Posts (${contentMixReport.totalPosts} posts) &bull; Hard Cap: Max 1 Space post/day &bull; Max 2 posts/category/day
+            </p>
+          </div>
+          <button class="btn btn-secondary" onclick="openCategoryWeightsModal('${primaryPage?.id || ''}')" style="font-size: 12px; font-weight: 600; border: 1px solid rgba(56,189,248,0.4); color: #38bdf8;">
+            ⚙️ Edit Category Weights
+          </button>
+        </div>
+
+        ${contentMixReport.alerts.length > 0 ? `
+          <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 20px;">⚠️</span>
+            <div style="font-size: 13px; color: #fca5a5;">
+              ${contentMixReport.alerts.map((a: string) => `<strong>Alert:</strong> ${escapeHtml(a)}`).join('<br>')}
+            </div>
+          </div>
+        ` : `
+          <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: #6ee7b7; display: flex; align-items: center; gap: 8px;">
+            <span>✓</span> Healthy content distribution across scientific disciplines. Space & Astronomy ceiling enforced in code.
+          </div>
+        `}
+
+        <!-- 10 Category Distribution Bars -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-bottom: 24px;">
+          ${contentMixReport.categories.map((c: any) => {
+            const isDeficit = c.diff < 0;
+            const isSurplus = c.diff > 0;
+            const diffColor = isDeficit ? '#38bdf8' : isSurplus ? '#f59e0b' : '#34d399';
+            const barWidth = Math.min(100, Math.max(5, (c.actualShare / (c.targetShare * 1.5 || 20)) * 100));
+            return `
+              <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <strong style="font-size: 13px; color: #f1f5f9;">${escapeHtml(c.name)}</strong>
+                  <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${diffColor}22; color: ${diffColor}; font-weight: 700;">
+                    ${c.diff > 0 ? '+' : ''}${c.diff}%
+                  </span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">
+                  <span>Actual: <strong style="color: #f8fafc;">${c.actualShare}%</strong> (${c.count} posts)</span>
+                  <span>Target: <strong style="color: #94a3b8;">${c.targetShare}%</strong> (Cap: ${c.maxPerDay}/day)</span>
+                </div>
+                <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden;">
+                  <div style="width: ${barWidth}%; height: 100%; background: ${c.name === 'Space & Astronomy' && c.actualShare > 30 ? '#ef4444' : '#38bdf8'}; border-radius: 3px;"></div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+
+        <!-- Repeated Subjects & Opening Phrases Frequency -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px;">
+          <!-- Top Repeated Subjects (Deduplication Watch) -->
+          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 14px;">
+            <h4 style="font-size: 14px; margin-bottom: 10px; color: #94a3b8; display: flex; align-items: center; gap: 6px;">
+              <span>🛡️ 60-Day Entity Deduplication Monitor</span>
+            </h4>
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Bans repeated focal entities (e.g. K2-18b, blue whale heart) for 60 days:</div>
+            ${contentMixReport.topRepeatedSubjects.length > 0 ? `
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                ${contentMixReport.topRepeatedSubjects.slice(0, 5).map((s: any) => `
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0, 0, 0, 0.3); border-radius: 4px; font-size: 12px;">
+                    <span style="color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px;">${escapeHtml(s.subject)}</span>
+                    <span class="badge" style="background: ${s.count > 1 ? '#7c2d12' : '#064e3b'}; color: ${s.count > 1 ? '#fdba74' : '#6ee7b7'}; font-size: 10px;">
+                      ${s.count} post${s.count === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                `).join('')}
+              </div>
+            ` : '<div style="color: #64748b; font-size: 12px; font-style: italic;">No repeat entities detected.</div>'}
+          </div>
+
+          <!-- Opening Phrase Frequency Monitor -->
+          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 14px;">
+            <h4 style="font-size: 14px; margin-bottom: 10px; color: #94a3b8; display: flex; align-items: center; gap: 6px;">
+              <span>🚫 Anti-Repetition Opening Phrase Monitor</span>
+            </h4>
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Enforces diverse hooks; bans "Imagine", "Ever wondered", "Did you know":</div>
+            ${contentMixReport.openingPhraseFrequency.length > 0 ? `
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                ${contentMixReport.openingPhraseFrequency.slice(0, 5).map((op: any) => `
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0, 0, 0, 0.3); border-radius: 4px; font-size: 12px;">
+                    <span style="color: #cbd5e1; font-family: monospace; font-size: 11px;">"${escapeHtml(op.phrase)}..."</span>
+                    <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 10px;">
+                      ${op.count}x
+                    </span>
+                  </div>
+                `).join('')}
+              </div>
+            ` : '<div style="color: #64748b; font-size: 12px; font-style: italic;">Zero banned or repeated opening phrases.</div>'}
+          </div>
+        </div>
       </div>
     </div>
 
@@ -6012,6 +6186,107 @@ async function generateDashboardHtml(
             }
           </tbody>
         </table>
+      </div>
+
+      <!-- Scientific Content Mix & Variety Engine Report -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid rgba(56, 189, 248, 0.25);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <h3 style="font-size: 18px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+              <span>🔬 Scientific Content Mix & Variety Engine</span>
+              <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px;">10 Deficit-Weighted Categories</span>
+            </h3>
+            <p style="font-size: 13px; color: var(--text-muted); margin: 0;">
+              Page: <strong>${escapeHtml(primaryPage?.name || 'All Connected Pages')}</strong> &bull; Window: Last 50 Posts (${contentMixReport.totalPosts} posts) &bull; Hard Cap: Max 1 Space post/day &bull; Max 2 posts/category/day
+            </p>
+          </div>
+          <button class="btn btn-secondary" onclick="openCategoryWeightsModal('${primaryPage?.id || ''}')" style="font-size: 12px; font-weight: 600; border: 1px solid rgba(56,189,248,0.4); color: #38bdf8;">
+            ⚙️ Edit Category Weights
+          </button>
+        </div>
+
+        ${contentMixReport.alerts.length > 0 ? `
+          <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 20px;">⚠️</span>
+            <div style="font-size: 13px; color: #fca5a5;">
+              ${contentMixReport.alerts.map((a: string) => `<strong>Alert:</strong> ${escapeHtml(a)}`).join('<br>')}
+            </div>
+          </div>
+        ` : `
+          <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: #6ee7b7; display: flex; align-items: center; gap: 8px;">
+            <span>✓</span> Healthy content distribution across scientific disciplines. Space & Astronomy ceiling enforced in code.
+          </div>
+        `}
+
+        <!-- 10 Category Distribution Bars -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-bottom: 24px;">
+          ${contentMixReport.categories.map((c: any) => {
+            const isDeficit = c.diff < 0;
+            const isSurplus = c.diff > 0;
+            const diffColor = isDeficit ? '#38bdf8' : isSurplus ? '#f59e0b' : '#34d399';
+            const barWidth = Math.min(100, Math.max(5, (c.actualShare / (c.targetShare * 1.5 || 20)) * 100));
+            return `
+              <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <strong style="font-size: 13px; color: #f1f5f9;">${escapeHtml(c.name)}</strong>
+                  <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${diffColor}22; color: ${diffColor}; font-weight: 700;">
+                    ${c.diff > 0 ? '+' : ''}${c.diff}%
+                  </span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">
+                  <span>Actual: <strong style="color: #f8fafc;">${c.actualShare}%</strong> (${c.count} posts)</span>
+                  <span>Target: <strong style="color: #94a3b8;">${c.targetShare}%</strong> (Cap: ${c.maxPerDay}/day)</span>
+                </div>
+                <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden;">
+                  <div style="width: ${barWidth}%; height: 100%; background: ${c.name === 'Space & Astronomy' && c.actualShare > 30 ? '#ef4444' : '#38bdf8'}; border-radius: 3px;"></div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+
+        <!-- Repeated Subjects & Opening Phrases Frequency -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px;">
+          <!-- Top Repeated Subjects (Deduplication Watch) -->
+          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 14px;">
+            <h4 style="font-size: 14px; margin-bottom: 10px; color: #94a3b8; display: flex; align-items: center; gap: 6px;">
+              <span>🛡️ 60-Day Entity Deduplication Monitor</span>
+            </h4>
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Bans repeated focal entities (e.g. K2-18b, blue whale heart) for 60 days:</div>
+            ${contentMixReport.topRepeatedSubjects.length > 0 ? `
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                ${contentMixReport.topRepeatedSubjects.slice(0, 5).map((s: any) => `
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0, 0, 0, 0.3); border-radius: 4px; font-size: 12px;">
+                    <span style="color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px;">${escapeHtml(s.subject)}</span>
+                    <span class="badge" style="background: ${s.count > 1 ? '#7c2d12' : '#064e3b'}; color: ${s.count > 1 ? '#fdba74' : '#6ee7b7'}; font-size: 10px;">
+                      ${s.count} post${s.count === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                `).join('')}
+              </div>
+            ` : '<div style="color: #64748b; font-size: 12px; font-style: italic;">No repeat entities detected.</div>'}
+          </div>
+
+          <!-- Opening Phrase Frequency Monitor -->
+          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 14px;">
+            <h4 style="font-size: 14px; margin-bottom: 10px; color: #94a3b8; display: flex; align-items: center; gap: 6px;">
+              <span>🚫 Anti-Repetition Opening Phrase Monitor</span>
+            </h4>
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Enforces diverse hooks; bans "Imagine", "Ever wondered", "Did you know":</div>
+            ${contentMixReport.openingPhraseFrequency.length > 0 ? `
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                ${contentMixReport.openingPhraseFrequency.slice(0, 5).map((op: any) => `
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0, 0, 0, 0.3); border-radius: 4px; font-size: 12px;">
+                    <span style="color: #cbd5e1; font-family: monospace; font-size: 11px;">"${escapeHtml(op.phrase)}..."</span>
+                    <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 10px;">
+                      ${op.count}x
+                    </span>
+                  </div>
+                `).join('')}
+              </div>
+            ` : '<div style="color: #64748b; font-size: 12px; font-style: italic;">Zero banned or repeated opening phrases.</div>'}
+          </div>
+        </div>
       </div>
     </div>
 

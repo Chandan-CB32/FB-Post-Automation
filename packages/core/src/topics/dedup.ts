@@ -181,6 +181,89 @@ export function isTopicDuplicate(
 }
 
 /**
+ * Extracts central scientific entities, taxa, catalog codes, and key measurements.
+ */
+export function extractCentralEntities(text: string): string[] {
+  if (!text || typeof text !== 'string') return [];
+  const entities: Set<string> = new Set();
+  const lower = text.toLowerCase();
+
+  // 1. Catalog codes and scientific designations (e.g., K2-18b, PDS-70, GW170817, HD-209458b, M87)
+  const codeMatches = text.match(/\b([A-Z0-9]{1,6}[-_][A-Z0-9]{1,8}|[A-Z]{1,4}\s?\d{2,6}[a-z]?)\b/g);
+  if (codeMatches) {
+    for (const m of codeMatches) {
+      if (m.length >= 3 && !/^(UTC|EST|IST|PST|GMT|NASA|ESA|NOAA|USGS|COVID|HTML|JPEG|PNG)$/i.test(m)) {
+        entities.add(m.toLowerCase().replace(/\s+/g, '-'));
+      }
+    }
+  }
+
+  // 2. Numerical measurements with units (e.g., "150 liters", "8.8 km", "4000 celsius", "12 kilometers")
+  const measureMatches = lower.match(/\b\d+(?:[.,]\d+)?\s*(?:km|kilometers|liters|litres|miles|celsius|degrees|kelvin|percent|%|light-years|million|billion|meters|grams)\b/g);
+  if (measureMatches) {
+    for (const m of measureMatches) {
+      entities.add(m.trim());
+    }
+  }
+
+  // 3. Known key scientific organisms, landmarks, and discoveries
+  const KEY_ENTITIES = [
+    'k2-18b', 'james webb', 'jwst', 'hubble', 'tardigrade', 'water bear', 'blue whale',
+    'humongous fungus', 'armillaria', 'maracaibo', 'catatumbo', 'kola borehole',
+    'superfluid helium', 'rollin film', 'cerebellum', 'purkinje', 'tiktaalik', 'devonian',
+    'brain-computer interface', 'bci', 'braingate', 'noether theorem', 'nuclear pasta',
+    'pistol shrimp', 'cavitation', 'sonoluminescence', 'cuttlefish', 'turanose', 'marianas trench',
+    'challenger deep', 'perseverance', 'curiosity rover', 'voyager', 'cassini', 'enceladus',
+    'europa', 'proxima b', 'trappist-1'
+  ];
+
+  for (const ke of KEY_ENTITIES) {
+    if (lower.includes(ke)) {
+      entities.add(ke);
+    }
+  }
+
+  return Array.from(entities);
+}
+
+/**
+ * Checks whether a candidate topic or fact repeats a central entity covered in the last 60 days.
+ */
+export function isEntityDuplicate60Days(
+  candidateText: string,
+  history: Array<{ title: string; text?: string; created_at: string | Date }>,
+  options: { windowDays?: number; now?: Date } = {}
+): { isDuplicate: boolean; matchedEntity?: string; matchedTitle?: string; reason?: string } {
+  const windowDays = options.windowDays ?? 60;
+  const now = options.now ?? new Date();
+  const cutoff = now.getTime() - windowDays * 24 * 60 * 60 * 1000;
+
+  const candidateEntities = extractCentralEntities(candidateText);
+  if (candidateEntities.length === 0) {
+    return { isDuplicate: false };
+  }
+
+  for (const entry of history) {
+    const entryTime = new Date(entry.created_at).getTime();
+    if (!isNaN(entryTime) && entryTime < cutoff) continue;
+
+    const entryEntities = extractCentralEntities(`${entry.title} ${entry.text || ''}`);
+    for (const ce of candidateEntities) {
+      if (entryEntities.includes(ce)) {
+        return {
+          isDuplicate: true,
+          matchedEntity: ce,
+          matchedTitle: entry.title,
+          reason: `Entity '${ce}' was already featured in '${entry.title}' within the last ${windowDays} days.`,
+        };
+      }
+    }
+  }
+
+  return { isDuplicate: false };
+}
+
+/**
  * Records a chosen topic into the database `topic_history` table.
  */
 export async function recordTopicHistory(

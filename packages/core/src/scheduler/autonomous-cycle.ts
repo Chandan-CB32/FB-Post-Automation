@@ -383,7 +383,14 @@ export async function runAutonomousCycle(
 
               if (!photoBuffer && (pipelineResult as any).svgXml) {
                 try {
-                  photoBuffer = await rasterizeHeadlineCardToJpeg((pipelineResult as any).svgXml);
+                  photoBuffer = await rasterizeHeadlineCardToJpeg(
+                    (pipelineResult as any).renderedCard || (pipelineResult as any).svgXml,
+                    95,
+                    {
+                      imageBuffer: (pipelineResult as any).rawImageBuffer,
+                      imageUrl: (pipelineResult as any).thumbnailUrl,
+                    }
+                  );
                 } catch (rErr) {
                   console.warn('[Autonomous Worker] Rasterizing SVG card to JPEG buffer failed:', rErr);
                 }
@@ -395,6 +402,26 @@ export async function runAutonomousCycle(
                   const parts = pipelineResult.compositeImageUrl.split(',');
                   photoBuffer = Buffer.from(parts[1], 'base64');
                 } catch (_) {}
+              }
+
+              // Verify photoBuffer entropy: upper area must not be solid pitch-black
+              if (photoBuffer && photoBuffer.length > 500) {
+                try {
+                  const sharpMod = (await import('sharp')).default;
+                  const meta = await sharpMod(photoBuffer).metadata();
+                  const w = meta.width || 1080;
+                  const h = meta.height || 1350;
+                  const topHalf = await sharpMod(photoBuffer)
+                    .extract({ left: 0, top: 0, width: w, height: Math.round(h * 0.5) })
+                    .stats();
+                  const avgStdev = topHalf.channels.map((c: any) => c.stdev).reduce((a: number, b: number) => a + b, 0) / (topHalf.channels.length || 1);
+                  if (avgStdev < 3.5) {
+                    console.warn(`[Autonomous Worker] Composed card upper area is completely black (entropy ${avgStdev.toFixed(2)}). Refusing to publish black visual. Routing to Review Inbox.`);
+                    photoBuffer = undefined;
+                  }
+                } catch (entropyErr) {
+                  console.warn('[Autonomous Worker] Could not verify photo entropy:', entropyErr);
+                }
               }
 
               const photoInput: PhotoInput | undefined = photoBuffer

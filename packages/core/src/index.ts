@@ -26,6 +26,8 @@ export * from './profiles/seed-profiles.js';
 export * from './topics/queue-manager.js';
 export * from './topics/dedup.js';
 export * from './topics/category-selector.js';
+export * from './topics/category-engine.js';
+export * from './topics/topic-pools.js';
 export * from './topics/daily-research.js';
 
 // Settings Resolver
@@ -52,6 +54,7 @@ export * from './validation/schemas.js';
 export * from './validation/caption-validator.js';
 export * from './validation/claim-verifier.js';
 export * from './validation/content-integrity.js';
+export * from './validation/variety-validator.js';
 export * from './validation/image-validator.js';
 
 // Unified Generation Pipeline & Headline Card Engine

@@ -250,3 +250,107 @@ export function buildConcreteImagePrompt(input: BuildImagePromptInput): Concrete
   };
 }
 
+export interface ImagePromptMemory {
+  palette: string;
+  angle: string;
+  distance: string;
+  light: string;
+  subject: string;
+  timestamp?: number;
+}
+
+const ANGLES = ['eye-level direct view', 'macro close-up angle', 'low-angle looking upward', 'high-angle downward perspective', 'cross-sectional profile'];
+const DISTANCES = ['macro detail', 'telephoto medium shot', 'wide environmental view', 'close-up inspection'];
+const LIGHTING = ['directional sunlight', 'clean clinical laboratory illumination', 'ambient deep-sea glow', 'dappled canopy daylight', 'stark astronomical illumination'];
+
+/**
+ * Builds a 50 to 90 word prompt from IMAGE_BRIEF + category recipe stored in Page's image prompt.
+ * Strictly subject first.
+ * Checks memory of last 10 image prompts (palette, angle, distance, light) and rejects prompts that are
+ * too similar or too generic (blue-glow, orb, swirl, abstract).
+ * Keeps bottom 38% calm.
+ */
+export function buildTopicImagePrompt(
+  brief: { subject: string; visualDetail?: string; setting?: string },
+  categoryRecipe: string = '',
+  memory: ImagePromptMemory[] = [],
+  pageCustomPrompt: string = ''
+): {
+  prompt: string;
+  negativePrompt: string;
+  wordCount: number;
+  memory: ImagePromptMemory;
+} {
+  const recentMemory = memory.slice(0, 10);
+  const usedPalettes = new Set(recentMemory.map((m) => m.palette.toLowerCase()));
+  const usedAngles = new Set(recentMemory.map((m) => m.angle.toLowerCase()));
+
+  // Choose novel angle and lighting not used in recent posts
+  const selectedAngle = ANGLES.find((a) => !usedAngles.has(a.toLowerCase())) || ANGLES[recentMemory.length % ANGLES.length];
+  const selectedDistance = DISTANCES[recentMemory.length % DISTANCES.length];
+  const selectedLight = LIGHTING[recentMemory.length % LIGHTING.length];
+
+  // Pick palette avoiding blue glow repetition
+  const availablePalettes = VARIETY_PALETTES.filter((p) => {
+    const isBlue = p.toLowerCase().includes('azure') || p.toLowerCase().includes('turquoise');
+    const recentHadBlue = recentMemory.slice(0, 2).some((m) => m.palette.toLowerCase().includes('azure') || m.palette.toLowerCase().includes('turquoise'));
+    return !(isBlue && recentHadBlue) && !usedPalettes.has(p.toLowerCase());
+  });
+  const selectedPalette = availablePalettes[0] || VARIETY_PALETTES[recentMemory.length % VARIETY_PALETTES.length];
+
+  const subjectText = brief.subject.replace(/^(a|an|the)\s+/i, '').trim();
+  const detailText = (brief.visualDetail || '').trim();
+  const settingText = (brief.setting || 'natural scientific habitat').trim();
+
+  // Subject first
+  const coreSubjectSentence = detailText
+    ? `Documentary photograph of ${subjectText}, showing ${detailText}.`
+    : `Documentary photograph of ${subjectText}.`;
+
+  const settingSentence = `Environment: ${settingText}, captured from ${selectedAngle} at ${selectedDistance} with ${selectedLight}.`;
+  const paletteSentence = `Visual palette of ${selectedPalette}.`;
+  const recipeClause = categoryRecipe && categoryRecipe.trim() ? `${categoryRecipe.trim()}.` : '';
+  const pageClause = pageCustomPrompt && pageCustomPrompt.trim() ? `${pageCustomPrompt.trim().slice(0, 80)}.` : '';
+  const compositionRule = `Composition: main physical subject centered in upper frame; keep bottom 38% calm and uncluttered for headline overlay.`;
+
+  // Assemble sentences
+  let candidatePrompt = [coreSubjectSentence, settingSentence, paletteSentence, recipeClause, pageClause, compositionRule]
+    .filter(Boolean)
+    .join(' ');
+
+  // Clean out any forbidden generic phrases
+  candidatePrompt = candidatePrompt
+    .replace(/\b(generic blue glow|glowing orb|blue orb|energy vortex|abstract swirl|ethereal portal)\b/gi, 'authentic physical texture')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Enforce 50 to 90 words
+  let words = candidatePrompt.split(/\s+/).filter(Boolean);
+  if (words.length < 50) {
+    const padding = `Shot on 35mm sensor, tack-sharp focal detail, authentic tactile surfaces, zero digital bloom, true-to-life documentary quality.`;
+    candidatePrompt = `${candidatePrompt} ${padding}`;
+    words = candidatePrompt.split(/\s+/).filter(Boolean);
+  }
+  if (words.length > 90) {
+    words = words.slice(0, 90);
+    candidatePrompt = words.join(' ');
+    if (!candidatePrompt.endsWith('.')) candidatePrompt += '.';
+  }
+
+  const newMemory: ImagePromptMemory = {
+    palette: selectedPalette,
+    angle: selectedAngle,
+    distance: selectedDistance,
+    light: selectedLight,
+    subject: subjectText,
+    timestamp: Date.now(),
+  };
+
+  return {
+    prompt: candidatePrompt,
+    negativePrompt: MANDATORY_NEGATIVE_PROMPT,
+    wordCount: words.length,
+    memory: newMemory,
+  };
+}
+
