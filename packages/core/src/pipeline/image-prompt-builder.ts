@@ -25,7 +25,7 @@ export interface ConcreteImagePromptResult {
 }
 
 const MANDATORY_NEGATIVE_PROMPT =
-  'text, letters, words, numbers, watermark, signature, logo, banner, blurry, deformed anatomy, extra limbs, bad proportions, generic blue glow, glowing orb, central glowing circle, abstract light vortex, digital lines, CGI swirl, neon bloom, childish, cartoon, 3d render, oversaturated bloom, low resolution, dark glowing ball, electric heart, energy portal, generic fantasy energy';
+  'text, letters, words, numbers, watermark, signature, logo, banner, blurry, deformed anatomy, extra limbs, bad proportions, generic blue glow, glowing orb, central glowing circle, abstract light vortex, digital lines, CGI swirl, neon bloom, childish, cartoon, 3d render, oversaturated bloom, low resolution, dark glowing ball, electric heart, energy portal, generic fantasy energy, lens flare, bright light flare, artificial starburst';
 
 // Palette options for visual variety across posts - vivid, real documentary lighting
 const VARIETY_PALETTES = [
@@ -274,7 +274,8 @@ export function buildTopicImagePrompt(
   brief: { subject: string; visualDetail?: string; setting?: string },
   categoryRecipe: string = '',
   memory: ImagePromptMemory[] = [],
-  pageCustomPrompt: string = ''
+  pageCustomPrompt: string = '',
+  categoryName: string = ''
 ): {
   prompt: string;
   negativePrompt: string;
@@ -285,22 +286,82 @@ export function buildTopicImagePrompt(
   const usedPalettes = new Set(recentMemory.map((m) => m.palette.toLowerCase()));
   const usedAngles = new Set(recentMemory.map((m) => m.angle.toLowerCase()));
 
-  // Choose novel angle and lighting not used in recent posts
+  const combinedContext = `${brief.subject} ${brief.visualDetail || ''} ${brief.setting || ''} ${categoryName}`.toLowerCase();
+  const isMarine =
+    categoryName.toLowerCase().includes('animal') ||
+    categoryName.toLowerCase().includes('ocean') ||
+    combinedContext.includes('squid') ||
+    combinedContext.includes('whale') ||
+    combinedContext.includes('shark') ||
+    combinedContext.includes('octopus') ||
+    combinedContext.includes('jellyfish') ||
+    combinedContext.includes('fish') ||
+    combinedContext.includes('trench') ||
+    combinedContext.includes('deep sea') ||
+    combinedContext.includes('deep-sea') ||
+    combinedContext.includes('underwater') ||
+    combinedContext.includes('marine') ||
+    combinedContext.includes('coral reef');
+
+  const isBotanicalOrNature =
+    categoryName.toLowerCase().includes('plant') ||
+    categoryName.toLowerCase().includes('fungi') ||
+    combinedContext.includes('fungus') ||
+    combinedContext.includes('mushroom') ||
+    combinedContext.includes('forest') ||
+    combinedContext.includes('tree');
+
+  const isMicroscopic =
+    categoryName.toLowerCase().includes('microscopic') ||
+    combinedContext.includes('microscop') ||
+    combinedContext.includes('tardigrade') ||
+    combinedContext.includes('bacteria') ||
+    combinedContext.includes('diatom');
+
+  // Choose novel angle not used in recent posts
   const selectedAngle = ANGLES.find((a) => !usedAngles.has(a.toLowerCase())) || ANGLES[recentMemory.length % ANGLES.length];
   const selectedDistance = DISTANCES[recentMemory.length % DISTANCES.length];
-  const selectedLight = LIGHTING[recentMemory.length % LIGHTING.length];
 
-  // Pick palette avoiding blue glow repetition
-  const availablePalettes = VARIETY_PALETTES.filter((p) => {
-    const isBlue = p.toLowerCase().includes('azure') || p.toLowerCase().includes('turquoise');
-    const recentHadBlue = recentMemory.slice(0, 2).some((m) => m.palette.toLowerCase().includes('azure') || m.palette.toLowerCase().includes('turquoise'));
-    return !(isBlue && recentHadBlue) && !usedPalettes.has(p.toLowerCase());
-  });
-  const selectedPalette = availablePalettes[0] || VARIETY_PALETTES[recentMemory.length % VARIETY_PALETTES.length];
+  let selectedLight: string;
+  let selectedPalette: string;
+  let effectiveNegativePrompt = MANDATORY_NEGATIVE_PROMPT;
+
+  if (isMarine) {
+    selectedLight = 'submarine ROV camera LED floodlights illuminating deep surrounding seawater';
+    selectedPalette = 'deep oceanic saltwater blues, realistic aquatic turbidity, and natural water depth refraction';
+    effectiveNegativePrompt = `${MANDATORY_NEGATIVE_PROMPT}, outer space, space background, starfield, stars, starlight, galaxy, nebula, cosmic void, star flare, blue flare, lens flare, bright light flare, shining star, astronomical, glowing orb, floating in space, void`;
+  } else if (isBotanicalOrNature) {
+    selectedLight = 'dappled forest canopy daylight with soft directional shadows';
+    selectedPalette = 'rich forest loam, emerald moss greens, and warm bark earth-tones';
+    effectiveNegativePrompt = `${MANDATORY_NEGATIVE_PROMPT}, outer space, stars, cosmic nebula, lens flare, glowing energy, space background`;
+  } else if (isMicroscopic) {
+    selectedLight = 'darkfield optical condenser laboratory illumination';
+    selectedPalette = 'scientific darkfield optical contrast with clean cellular specimen highlights';
+    effectiveNegativePrompt = `${MANDATORY_NEGATIVE_PROMPT}, outer space, stars, planetary atmosphere, glowing orb, space background`;
+  } else {
+    selectedLight = LIGHTING[recentMemory.length % LIGHTING.length];
+    const availablePalettes = VARIETY_PALETTES.filter((p) => {
+      const isBlue = p.toLowerCase().includes('azure') || p.toLowerCase().includes('turquoise');
+      const recentHadBlue = recentMemory.slice(0, 2).some((m) => m.palette.toLowerCase().includes('azure') || m.palette.toLowerCase().includes('turquoise'));
+      return !(isBlue && recentHadBlue) && !usedPalettes.has(p.toLowerCase());
+    });
+    selectedPalette = availablePalettes[0] || VARIETY_PALETTES[recentMemory.length % VARIETY_PALETTES.length];
+  }
 
   const subjectText = brief.subject.replace(/^(a|an|the)\s+/i, '').trim();
   const detailText = (brief.visualDetail || '').trim();
-  const settingText = (brief.setting || 'natural scientific habitat').trim();
+  let settingText = (brief.setting || 'natural scientific habitat').trim();
+
+  // For marine life, purge any hallucinated starlight/cosmic terms from the brief setting
+  if (isMarine) {
+    settingText = settingText
+      .replace(/\b(starlight|distant stars|starfield|space|celestial|nebula)\b/gi, 'subtle ambient water illumination')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!settingText.toLowerCase().includes('water') && !settingText.toLowerCase().includes('ocean') && !settingText.toLowerCase().includes('sea')) {
+      settingText = `${settingText}, authentic deep ocean saltwater with suspended marine snow particles`;
+    }
+  }
 
   // Subject first
   const coreSubjectSentence = detailText
@@ -327,7 +388,9 @@ export function buildTopicImagePrompt(
   // Enforce 50 to 90 words
   let words = candidatePrompt.split(/\s+/).filter(Boolean);
   if (words.length < 50) {
-    const padding = `Shot on 35mm sensor, tack-sharp focal detail, authentic tactile surfaces, zero digital bloom, true-to-life documentary quality.`;
+    const padding = isMarine
+      ? `Submarine ROV documentary photograph, natural seawater particulate scattering, underwater optics, zero digital bloom.`
+      : `Shot on 35mm sensor, tack-sharp focal detail, authentic tactile surfaces, zero digital bloom, true-to-life documentary quality.`;
     candidatePrompt = `${candidatePrompt} ${padding}`;
     words = candidatePrompt.split(/\s+/).filter(Boolean);
   }
@@ -348,7 +411,7 @@ export function buildTopicImagePrompt(
 
   return {
     prompt: candidatePrompt,
-    negativePrompt: MANDATORY_NEGATIVE_PROMPT,
+    negativePrompt: effectiveNegativePrompt,
     wordCount: words.length,
     memory: newMemory,
   };

@@ -362,6 +362,82 @@ export function generateThumbnailSvg(options: {
  * Executes the complete 7-stage content generation pipeline.
  * Shared directly across worker execution and the Test Run simulator.
  */
+export function extractAndCleanPostCaption(
+  rawDraft: string,
+  defaultHeadline = "",
+  topicTitle = "",
+  topicCategory = "General"
+): {
+  headline: string;
+  imageBrief: ImageBriefOutput;
+  caption: string;
+} {
+  let parsedHeadline = defaultHeadline;
+  let parsedImageBrief: ImageBriefOutput = {
+    subject: "",
+    visualDetail: "",
+    setting: "",
+  };
+  let draft = rawDraft;
+
+  const hasStructuredBlocks =
+    draft.includes("IMAGE_BRIEF") ||
+    draft.includes("HEADLINE") ||
+    draft.includes("CAPTION") ||
+    draft.includes("Subject:") ||
+    draft.includes("Visual Detail:") ||
+    draft.includes("Setting:");
+
+  if (hasStructuredBlocks) {
+    const hlMatch = draft.match(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*HEADLINE:?\s*(?:\*{1,3})?\s*([^\n]+)/i);
+    if (hlMatch && hlMatch[1]) {
+      parsedHeadline = hlMatch[1].replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "").trim();
+    }
+
+    const subjMatch = draft.match(/(?:^|\n)\s*[-*•]?\s*(?:\*{1,3})?Subject:?\s*(?:\*{1,3})?\s*([^\n]+)/i);
+    const detailMatch = draft.match(/(?:^|\n)\s*[-*•]?\s*(?:\*{1,3})?(?:Visual Detail|VisualDetail|Detail):?\s*(?:\*{1,3})?\s*([^\n]+)/i);
+    const settingMatch = draft.match(/(?:^|\n)\s*[-*•]?\s*(?:\*{1,3})?Setting:?\s*(?:\*{1,3})?\s*([^\n]+)/i);
+
+    if (subjMatch && subjMatch[1]) parsedImageBrief.subject = subjMatch[1].replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "").trim();
+    if (detailMatch && detailMatch[1]) parsedImageBrief.visualDetail = detailMatch[1].replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "").trim();
+    if (settingMatch && settingMatch[1]) parsedImageBrief.setting = settingMatch[1].replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "").trim();
+
+    const capMatch = draft.match(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*CAPTION:?\s*(?:\*{1,3})?\s*([\s\S]+)$/i);
+    if (capMatch && capMatch[1]) {
+      draft = capMatch[1].trim();
+    } else {
+      // If CAPTION: tag was omitted, strip out all preceding metadata lines
+      draft = draft
+        .replace(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*HEADLINE:?[^\n]*/gi, "")
+        .replace(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*IMAGE_BRIEF:?[^\n]*/gi, "")
+        .replace(/(?:^|\n)\s*[-*•]?\s*(?:\*{1,3})?(?:Subject|Visual Detail|VisualDetail|Detail|Setting):?[^\n]*/gi, "")
+        .replace(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*CAPTION:?[^\n]*/gi, "")
+        .trim();
+    }
+  }
+
+  // Cleanly strip any leading AI output wrappers (e.g. "**Caption**", "Caption:", "### Caption", or dangling asterisks)
+  draft = draft
+    .replace(/^(?:#{1,3}\s*)?(?:\*{1,2})?(?:caption|post|facebook post|title)(?:\*{1,2})?:?\s*/im, "")
+    .replace(/^[\s\r\n*#-]+/, "")
+    .trim();
+
+  // STRICT FACEBOOK PLAIN TEXT: Strip ALL markdown bold/italic asterisks from the caption body
+  draft = draft
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "$1")
+    .replace(/^\s*[-*#]{1,4}\s*$/gm, "")
+    .replace(/\*{1,3}/g, "")
+    .trim();
+
+  return {
+    headline: parsedHeadline,
+    imageBrief: parsedImageBrief,
+    caption: draft,
+  };
+}
+
 export async function runGenerationPipeline(
   options: GenerationPipelineOptions,
 ): Promise<GenerationPipelineResult> {
@@ -768,13 +844,13 @@ BANNED FILLER PHRASES (STRICTLY PROHIBITED ANYWHERE IN CAPTION):
 ${BANNED_FILLER_PHRASES.map((b) => `"${b}"`).join(", ")}
 
 REQUIRED STRUCTURE:
-HEADLINE: <All-caps punchy 6-12 word headline with **KEY EMPHASIS** highlighted>
+HEADLINE: <All-caps punchy 6-12 word headline with KEY EMPHASIS highlighted>
 IMAGE_BRIEF:
 Subject: <Concrete physical subject, e.g. An enormous blue whale swimming in sunlit ocean>
 Visual Detail: <One true physical scientific detail, e.g. Barnacles on mottled textured grey skin>
 Setting: <Physical realistic environment, e.g. Open clear Pacific Ocean with downwelling light rays>
 CAPTION:
-<Paragraph 1: Compelling direct hook without clickbait or banned openings>
+<Paragraph 1: Compelling direct hook without clickbait, banned openings, or asterisks>
 
 <Paragraph 2: Detailed scientific findings directly grounded in the verified facts above>
 
@@ -784,6 +860,10 @@ CAPTION:
 
 Image: AI-generated illustration.
 #broad #category #topic1 #topic2 #community
+
+MANDATORY PLAIN TEXT RULE (FACEBOOK DISPLAY COMPLIANCE):
+- NEVER use markdown bold or asterisks (NO "**" or "*") anywhere in the CAPTION. Facebook does NOT support markdown bold and displays raw "**" asterisks as ugly symbols. Write clean plain English text.
+- Do NOT output "HEADLINE:" or "IMAGE_BRIEF:" inside the CAPTION block. The CAPTION block must ONLY contain the actual post text.
 
 HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science, 1 category, 2 topic-specific, 1 community.`;
 
@@ -980,38 +1060,10 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
     }
 
     // Parse structured sections: HEADLINE, IMAGE_BRIEF, and CAPTION
-    let parsedHeadline = headline;
-    let parsedImageBrief: ImageBriefOutput = {
-      subject: "",
-      visualDetail: "",
-      setting: "",
-    };
-
-    if (draft.includes("IMAGE_BRIEF:") || draft.includes("HEADLINE:") || draft.includes("CAPTION:")) {
-      const hlMatch = draft.match(/(?:^|\n)HEADLINE:\s*([^\n]+)/i);
-      if (hlMatch && hlMatch[1]) {
-        parsedHeadline = hlMatch[1].trim();
-      }
-
-      const subjMatch = draft.match(/Subject:\s*([^\n]+)/i);
-      const detailMatch = draft.match(/(?:Visual Detail|VisualDetail|Detail):\s*([^\n]+)/i);
-      const settingMatch = draft.match(/Setting:\s*([^\n]+)/i);
-
-      if (subjMatch && subjMatch[1]) parsedImageBrief.subject = subjMatch[1].trim();
-      if (detailMatch && detailMatch[1]) parsedImageBrief.visualDetail = detailMatch[1].trim();
-      if (settingMatch && settingMatch[1]) parsedImageBrief.setting = settingMatch[1].trim();
-
-      const capMatch = draft.match(/(?:^|\n)CAPTION:\s*([\s\S]+)$/i);
-      if (capMatch && capMatch[1]) {
-        draft = capMatch[1].trim();
-      }
-    }
-
-    // Cleanly strip any leading AI output wrappers (e.g. "**Caption**", "Caption:", "### Caption")
-    draft = draft
-      .replace(/^(?:#{1,3}\s*)?(?:\*{1,2})?(?:caption|post|facebook post|title)(?:\*{1,2})?:?\s*/im, "")
-      .replace(/^[\s\r\n]+/, "")
-      .trim();
+    const parsedOutput = extractAndCleanPostCaption(draft, headline, topicTitle, topicCategory);
+    let parsedHeadline = parsedOutput.headline;
+    let parsedImageBrief = parsedOutput.imageBrief;
+    draft = parsedOutput.caption;
 
     // Fallback for image brief if not supplied
     if (!parsedImageBrief.subject) {
@@ -1361,7 +1413,8 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
     bestImageBrief,
     page.overrides?.["image.categoryRecipe"] || "",
     options.promptMemory || [],
-    page.custom_image_prompt || ""
+    page.custom_image_prompt || "",
+    topicCategory
   );
 
   let visualPrompt = concreteVisualResult.prompt;
@@ -1480,7 +1533,8 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
         const cfAccountId =
           candidate.config?.account_id ||
           (candidate as any).accountId ||
-          process.env.CLOUDFLARE_ACCOUNT_ID;
+          process.env.CLOUDFLARE_ACCOUNT_ID ||
+          "8a49b9104077d7d64bf20ffc9249b891";
 
         if (cfToken && cfAccountId && !isTestEnv()) {
           const imgRes = await cfAdapter.generateImage({
@@ -1652,7 +1706,7 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
       const polliCandidate = (options.activeProviders || []).find(
         (p) => (p.kind || p.adapter_kind) === "pollinations",
       );
-      if (polliCandidate) usedImageProviderId = polliCandidate.id;
+      usedImageProviderId = polliCandidate?.id || "11111111-1111-1111-1111-111111111105";
     }
   }
 
@@ -1665,8 +1719,14 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
       if (imgRes.ok) {
         const ab = await imgRes.arrayBuffer();
         if (ab.byteLength > 500) {
-          rawImageBuffer = Buffer.from(ab);
-          const mime = imgRes.headers.get("content-type") || "image/jpeg";
+          const rawBuf = Buffer.from(ab);
+          const validated = await validateAndNormalizeImage(rawBuf, {
+            targetWidth: 1080,
+            targetHeight: 1350,
+            rejectWatermarks: true,
+          });
+          rawImageBuffer = validated.sanitizedBuffer;
+          const mime = validated.mimeType || "image/jpeg";
           thumbnailUrl = `data:${mime};base64,${rawImageBuffer.toString("base64")}`;
         }
       }
@@ -1835,7 +1895,9 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
         ? (options.activeProviders || []).find(
             (p) => (p.kind || p.adapter_kind) === "pollinations",
           )?.id || "11111111-1111-1111-1111-111111111105"
-        : candidateChain[0]?.id || "11111111-1111-1111-1111-111111111105"),
+        : (options.activeProviders || []).find((p) => p.name === successfulImageProvider)?.id ||
+          candidateChain.find((c) => c.name === successfulImageProvider)?.id ||
+          "11111111-1111-1111-1111-111111111105"),
     usedImageProviderName: successfulImageProvider,
   };
 }

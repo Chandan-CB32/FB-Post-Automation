@@ -174,6 +174,15 @@ export function validatePostContentVariety(
     hasImageBrief = true;
   }
 
+  // 1b. Reject meta-headers leaked into caption body
+  if (lowerCaption.includes('headline:') || lowerCaption.includes('image_brief:') || lowerCaption.includes('visual detail:')) {
+    violations.push({
+      rule: 'meta_headers_in_caption',
+      message: 'Caption must not contain raw meta-headers like HEADLINE: or IMAGE_BRIEF:.',
+      severity: 'error',
+    });
+  }
+
   // 2. Validate Final Illustration Disclaimer Line
   const hasIllustrationDisclaimer =
     lowerCaption.includes('image: ai-generated illustration') ||

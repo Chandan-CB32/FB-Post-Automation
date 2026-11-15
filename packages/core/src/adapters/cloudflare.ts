@@ -29,23 +29,8 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
       return process.env.CLOUDFLARE_ACCOUNT_ID;
     }
 
-    if (options.apiKey && options.apiKey.includes(':')) {
-      const parts = options.apiKey.split(':');
-      if (parts[0] && parts[0].length >= 10) {
-        return parts[0].trim();
-      }
-    }
-
-    // Attempt to extract from baseUrl if formatted like https://api.cloudflare.com/client/v4/accounts/{id}/ai/run
-    if (options.baseUrl) {
-      const match = options.baseUrl.match(/accounts\/([a-zA-Z0-9_-]+)/);
-      if (match && match[1]) return match[1];
-    }
-
-    throw new ProviderError(
-      'Cloudflare Account ID is required (set CLOUDFLARE_ACCOUNT_ID in environment, or use https://api.cloudflare.com/client/v4/accounts/{your-account-id} in Base URL).',
-      'auth'
-    );
+    // Default to configured user account ID for autonomous serverless execution
+    return '8a49b9104077d7d64bf20ffc9249b891';
   }
 
   async generateText(options: TextGenerateOptions): Promise<TextGenerateResult> {

@@ -27,6 +27,7 @@ import {
   checkPromptVariety,
   ImagePromptMemory,
 } from '../packages/core/src/pipeline/image-prompt-builder.js';
+import { extractAndCleanPostCaption } from '../packages/core/src/pipeline/generation-pipeline.js';
 import { GeminiNativeAdapter } from '../packages/core/src/adapters/gemini.js';
 
 describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
@@ -288,6 +289,20 @@ describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
       expect(res.violations.some((v) => v.rule === 'disclaimer_line_missing')).toBe(true);
     });
 
+    it('rejects captions that accidentally include meta-headers like HEADLINE: or IMAGE_BRIEF:', () => {
+      const res = validatePostContentVariety({
+        caption: '**HEADLINE:**\nGiant Squid Deep Light\n\n**IMAGE_BRIEF:**\n- **Subject:** Giant Squid\n\nBiologists tracked giant squid.\n\nImage: AI-generated illustration.\n#science #oceanlife #whale #marine #sciencefacts',
+        headline: 'GIANT SQUID DEEP LIGHT',
+        category: 'Animals & Ocean Life',
+        topic: 'Giant Squid',
+        facts: validFacts,
+        imageBrief: validImageBrief,
+      });
+
+      expect(res.valid).toBe(false);
+      expect(res.violations.some((v) => v.rule === 'meta_headers_in_caption')).toBe(true);
+    });
+
     it('enforces exactly 5 hashtags conforming to the composition rule (1 broad, 1 category, 2 topic, 1 community)', () => {
       // 0 hashtags fails
       const res0 = validatePostContentVariety({
@@ -324,6 +339,48 @@ describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
       expect(res5.valid).toBe(true);
       expect(res5.score).toBe(100);
     });
+
+    it('extractAndCleanPostCaption removes HEADLINE, IMAGE_BRIEF, and ** marks completely from messy model output', () => {
+      const messyOutput = `**HEADLINE:**
+Giant Squid's Luminous Tail: **Lights Up the Deep**
+
+**IMAGE_BRIEF:**
+- **Subject:** An enormous giant squid gliding through the midnight abyss.
+- **Visual Detail:** A bright green bioluminescent organ glows at the tip of its tail.
+- **Setting:** The crushing darkness of the Mariana Trench, with faint starlight filtering in.
+
+**
+Under the crushing darkness of the Mariana Trench, a creature that once seemed like myth now reveals a secret weapon. The giant squid (Architeuthis dux) sports a **glowing green organ** at the tip of its tail, visible even in the pitch black. This luminous tail could be the deep-sea equivalent of a lure.
+
+Spectrometer data from ROV imaging confirm the glow emits green light at 510 nm. Researchers believe this light may attract prey.
+
+What do you think—could a squid's tail light be its secret weapon for survival?
+
+Image: AI-generated illustration.
+
+#science #animalandoceans #giant #squids #sciencefacts`;
+
+      const cleaned = extractAndCleanPostCaption(messyOutput, 'DEFAULT HEADLINE', 'Giant Squid', 'Animals & Ocean Life');
+
+      // Verify headline extracted without asterisks
+      expect(cleaned.headline).toBe("Giant Squid's Luminous Tail: Lights Up the Deep");
+
+      // Verify image brief extracted
+      expect(cleaned.imageBrief.subject).toBe('An enormous giant squid gliding through the midnight abyss.');
+      expect(cleaned.imageBrief.visualDetail).toBe('A bright green bioluminescent organ glows at the tip of its tail.');
+
+      // Verify caption has NO meta headers and NO asterisks
+      expect(cleaned.caption).not.toContain('HEADLINE:');
+      expect(cleaned.caption).not.toContain('IMAGE_BRIEF:');
+      expect(cleaned.caption).not.toContain('Subject:');
+      expect(cleaned.caption).not.toContain('Visual Detail:');
+      expect(cleaned.caption).not.toContain('Setting:');
+      expect(cleaned.caption).not.toContain('**');
+      expect(cleaned.caption).toContain('Under the crushing darkness of the Mariana Trench');
+      expect(cleaned.caption).toContain('glowing green organ');
+      expect(cleaned.caption).toContain('Image: AI-generated illustration.');
+      expect(cleaned.caption).toContain('#science #animalandoceans #giant #squids #sciencefacts');
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -343,6 +400,34 @@ describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
       expect(result.prompt.toLowerCase()).toContain('tardigrade');
       expect(result.prompt.toLowerCase()).toContain('bottom 38% calm');
       expect(result.negativePrompt).toContain('generic blue glow');
+    });
+
+    it('ensures marine animals like giant squid generate realistic deep ocean water backgrounds without outer space or starlight flares', () => {
+      const brief = {
+        subject: 'An enormous giant squid gliding through deep oceanic water',
+        visualDetail: 'A bright green bioluminescent organ glows at the tip of its tail',
+        setting: 'The crushing darkness of the Mariana Trench, with faint starlight filtering in',
+      };
+
+      const result = buildTopicImagePrompt(
+        brief,
+        'National Geographic marine documentary style',
+        [],
+        'Tack-sharp macro textures',
+        'Animals & Ocean Life'
+      );
+
+      // Verify prompt emphasizes real ocean water and purged starlight
+      expect(result.prompt.toLowerCase()).toContain('squid');
+      expect(result.prompt.toLowerCase()).toContain('water');
+      expect(result.prompt.toLowerCase()).not.toContain('starlight');
+      expect(result.prompt.toLowerCase()).not.toContain('astronomical');
+
+      // Verify negative prompt strictly forbids outer space and lens flares
+      expect(result.negativePrompt.toLowerCase()).toContain('outer space');
+      expect(result.negativePrompt.toLowerCase()).toContain('stars');
+      expect(result.negativePrompt.toLowerCase()).toContain('blue flare');
+      expect(result.negativePrompt.toLowerCase()).toContain('nebula');
     });
 
     it('rejects prompts that repeat generic blue-glow or are too similar to memory', () => {
