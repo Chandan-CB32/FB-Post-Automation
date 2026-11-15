@@ -207,8 +207,8 @@ export class ProviderBudgetTracker {
     }
 
     if (isSchnell || isText) {
-      // Schnell and Text are permitted to run down to 0 neurons
-      if (remainingNeurons < (isText ? 50 : 500)) {
+      // Schnell and Text are permitted to run down to reserve (allowing 60-100+ images/day)
+      if (remainingNeurons < (isText ? 20 : 150)) {
         return {
           allowed: false,
           reason: `Cloudflare 10,000 daily neuron allowance fully exhausted (${remainingNeurons} remaining).`,

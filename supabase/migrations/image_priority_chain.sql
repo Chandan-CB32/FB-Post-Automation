@@ -79,17 +79,17 @@ FROM public.provider_keys k
 WHERE k.provider_id = '676cb9d7-7459-4c06-8feb-d1f639ad756f'
 ON CONFLICT (id) DO NOTHING;
 
--- #4 Cloudflare Workers AI: Leonardo Lucid Origin / Phoenix 1.0 (cap 3 imgs/day)
+-- #4 Cloudflare Workers AI: FLUX.1 Schnell (4 steps, ~100-200 neurons/img -> 50-100+ imgs/day free tier)
 INSERT INTO public.providers (
   id, name, kind, base_url, model_name, config, rpm_limit, rpd_limit, priority, active
 ) VALUES (
   '22222222-2222-2222-2222-222222222204',
-  'Cloudflare Workers AI (Leonardo Lucid)',
+  'Cloudflare Workers AI (FLUX.1 Schnell)',
   'cloudflare_workers_ai',
   'https://api.cloudflare.com/client/v4',
-  '@cf/leonardo/lucid-origin',
-  '{"status": "active", "health_status": "healthy", "chain_type": "image", "default_image_model": "@cf/leonardo/lucid-origin", "alternate_model": "@cf/leonardo/phoenix-1.0", "num_steps": 20, "daily_cap": 3, "license": "Cloudflare / Leonardo Terms", "commercial": true}'::jsonb,
-  10, 3, 4, true
+  '@cf/black-forest-labs/flux-1-schnell',
+  '{"status": "active", "health_status": "healthy", "chain_type": "image", "default_image_model": "@cf/black-forest-labs/flux-1-schnell", "account_id": "8a49b9104077d7d64bf20ffc9249b891", "daily_neurons": 10000, "steps": 4, "license": "Apache 2.0", "commercial": true}'::jsonb,
+  60, 100, 4, true
 )
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
@@ -97,6 +97,7 @@ ON CONFLICT (id) DO UPDATE SET
   base_url = EXCLUDED.base_url,
   model_name = EXCLUDED.model_name,
   config = EXCLUDED.config,
+  rpd_limit = 100,
   priority = 4;
 
 -- Link existing Cloudflare key

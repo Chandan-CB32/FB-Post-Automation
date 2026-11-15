@@ -21,7 +21,9 @@ export class PollinationsImageAdapter implements ImageProviderAdapter {
     const prompt = encodeURIComponent(options.prompt);
     const width = options.width || 1080;
     const height = options.height || 1350;
-    const model = options.model || 'flux';
+    const model = options.model && options.model !== 'auto' && options.model !== 'default'
+      ? options.model
+      : 'flux';
 
     // If an API key is provided and starts with secret prefix 'sk_', use gen.pollinations.ai
     // Publishable keys ('pk_') or missing keys use image.pollinations.ai with no auth header

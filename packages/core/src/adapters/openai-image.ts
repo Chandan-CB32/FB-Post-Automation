@@ -29,7 +29,23 @@ export class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
   async generateImage(options: ImageGenerateOptions): Promise<ImageGenerateResult> {
     const baseUrl = (options.baseUrl || this.defaultConfig?.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
     const apiKey = options.apiKey || '';
-    const model = options.model || this.defaultConfig?.defaultModel || 'bfl/flux-2-klein-4b';
+    let model = options.model && options.model !== 'auto' && options.model !== 'default'
+      ? options.model
+      : this.defaultConfig?.defaultModel;
+
+    // Automatic free-tier model selection based on endpoint provider
+    if (!model || model === 'auto' || model === 'default') {
+      const lowerUrl = baseUrl.toLowerCase();
+      if (lowerUrl.includes('openrouter')) {
+        model = 'sourceful/riverflow-v2.5-fast:free';
+      } else if (lowerUrl.includes('nvidia')) {
+        model = 'stabilityai/stable-diffusion-3.5-large';
+      } else if (lowerUrl.includes('dashscope') || lowerUrl.includes('aliyuncs')) {
+        model = 'wanx2.1-t2i-turbo';
+      } else {
+        model = 'bfl/flux-2-klein-4b';
+      }
+    }
     const timeoutMs = options.timeoutMs || this.defaultConfig?.timeoutMs || 60000;
 
     // Detect endpoint style from model or baseUrl

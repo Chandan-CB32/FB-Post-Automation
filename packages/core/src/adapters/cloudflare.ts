@@ -15,6 +15,12 @@ export interface CloudflareConfig {
   accountId?: string;
 }
 
+export const CLOUDFLARE_FREE_IMAGE_MODELS = [
+  '@cf/black-forest-labs/flux-1-schnell',
+  '@cf/bytedance/stable-diffusion-xl-lightning',
+  '@cf/stabilityai/stable-diffusion-xl-base-1.0',
+];
+
 export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImageProviderAdapter {
   public readonly id = 'cloudflare_workers_ai';
 
@@ -83,73 +89,96 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
 
   async generateImage(options: ImageGenerateOptions): Promise<ImageGenerateResult> {
     const accountId = this.resolveAccountId(options);
-    const model = options.model || '@cf/black-forest-labs/flux-1-schnell';
-    const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`;
+    const candidateModels = options.model && options.model !== 'auto' && options.model !== 'default'
+      ? [options.model]
+      : CLOUDFLARE_FREE_IMAGE_MODELS;
 
-    const isLeonardo = model.includes('lucid') || model.includes('phoenix') || model.includes('leonardo');
-    const requiredSteps = isLeonardo ? 20 : 4;
+    let lastError: Error | null = null;
 
-    // Check Cloudflare neuron budget and daily caps
-    const budgetCheck = globalBudgetTracker.canUseCloudflareModel(model);
-    if (!budgetCheck.allowed) {
-      throw new ProviderError(
-        `Cloudflare neuron budget check blocked: ${budgetCheck.reason}`,
-        'rate_limit',
-        429
-      );
-    }
+    for (const model of candidateModels) {
+      try {
+        const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`;
+        const isLeonardo = model.includes('lucid') || model.includes('phoenix') || model.includes('leonardo');
+        const requiredSteps = isLeonardo ? 20 : 4;
 
-    const body: Record<string, unknown> = {
-      prompt: options.prompt,
-    };
-    if (isLeonardo) {
-      body.num_steps = requiredSteps;
-    } else if (model.includes('flux')) {
-      body.steps = 4;
-    }
+        // Check Cloudflare neuron budget and daily caps
+        const budgetCheck = globalBudgetTracker.canUseCloudflareModel(model);
+        if (!budgetCheck.allowed) {
+          throw new ProviderError(
+            `Cloudflare neuron budget check blocked: ${budgetCheck.reason}`,
+            'rate_limit',
+            429
+          );
+        }
 
-    const startTime = Date.now();
-    const apiKey = options.apiKey || process.env.CLOUDFLARE_API_TOKEN || '';
-    const response = await this.executeFetch(endpoint, apiKey, body, options.timeoutMs);
-    const latencyMs = Date.now() - startTime;
+        const body: Record<string, unknown> = {
+          prompt: options.prompt,
+        };
+        if (isLeonardo) {
+          body.num_steps = requiredSteps;
+        } else if (model.includes('flux')) {
+          body.steps = 4;
+        }
 
-    const contentType = (response.headers.get('content-type') || '').toLowerCase();
-    let rawBuffer: Buffer;
+        const startTime = Date.now();
+        const apiKey = options.apiKey || process.env.CLOUDFLARE_API_TOKEN || '';
+        const response = await this.executeFetch(endpoint, apiKey, body, options.timeoutMs);
+        const latencyMs = Date.now() - startTime;
 
-    if (contentType.includes('application/json')) {
-      const json = (await response.json()) as any;
-      const b64 = json?.result?.image || json?.image;
-      if (!b64 || typeof b64 !== 'string') {
-        throw new ProviderError('Cloudflare returned invalid JSON without base64 image data.', 'invalid_output');
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new ProviderError(
+            `Cloudflare image error on model ${model} (${response.status}): ${errText}`,
+            response.status === 401 ? 'auth' : response.status === 429 ? 'rate_limit' : 'server_error',
+            response.status
+          );
+        }
+
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        let rawBuffer: Buffer;
+
+        if (contentType.includes('application/json')) {
+          const json = (await response.json()) as any;
+          const b64 = json?.result?.image || json?.image;
+          if (!b64 || typeof b64 !== 'string') {
+            throw new ProviderError('Cloudflare returned invalid JSON without base64 image data.', 'invalid_output');
+          }
+          rawBuffer = Buffer.from(b64, 'base64');
+        } else {
+          const arrayBuffer = await response.arrayBuffer();
+          rawBuffer = Buffer.from(arrayBuffer);
+        }
+
+        if (rawBuffer.length < 100) {
+          throw new ProviderError('Cloudflare returned an empty or truncated image buffer.', 'invalid_output');
+        }
+
+        // Validate and cover-crop to 4:5 1080x1350
+        const normalized = await validateAndNormalizeImage(rawBuffer, {
+          targetWidth: options.width || 1080,
+          targetHeight: options.height || 1350,
+          rejectWatermarks: true,
+        });
+
+        // Record neuron usage
+        globalBudgetTracker.recordCloudflareUsage(model);
+
+        return {
+          imageBuffer: normalized.sanitizedBuffer,
+          mimeType: contentType.includes('jpeg') ? 'image/jpeg' : 'image/png',
+          width: normalized.width,
+          height: normalized.height,
+          latencyMs,
+          modelUsed: model,
+        };
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[Cloudflare Workers AI] Generation attempt failed on ${model}:`, err?.message || err);
+        // Cascades automatically to next free candidate model in CLOUDFLARE_FREE_IMAGE_MODELS
       }
-      rawBuffer = Buffer.from(b64, 'base64');
-    } else {
-      const arrayBuffer = await response.arrayBuffer();
-      rawBuffer = Buffer.from(arrayBuffer);
     }
 
-    if (rawBuffer.length < 100) {
-      throw new ProviderError('Cloudflare returned an empty or truncated image buffer.', 'invalid_output');
-    }
-
-    // Validate and cover-crop to 4:5 1080x1350
-    const normalized = await validateAndNormalizeImage(rawBuffer, {
-      targetWidth: options.width || 1080,
-      targetHeight: options.height || 1350,
-      rejectWatermarks: true,
-    });
-
-    // Record neuron usage
-    globalBudgetTracker.recordCloudflareUsage(model);
-
-    return {
-      imageBuffer: normalized.sanitizedBuffer,
-      mimeType: contentType.includes('jpeg') ? 'image/jpeg' : 'image/png',
-      width: normalized.width,
-      height: normalized.height,
-      latencyMs,
-      modelUsed: model,
-    };
+    throw lastError || new ProviderError('All Cloudflare free-tier image models failed.', 'server_error');
   }
 
   private async executeFetch(
