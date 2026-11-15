@@ -505,7 +505,7 @@ export function calculateNextScheduledSlots(
     const isoDayOfWeek = jsDay === 0 ? 7 : jsDay;
 
     if (activeDays.has(isoDayOfWeek)) {
-      const minLeadMs = ((schedule as any).minLeadMinutes ?? 15) * 60 * 1000;
+      const minLeadMs = ((schedule as any).minLeadMinutes ?? 0) * 60 * 1000;
       const minSlotTime = fromDate.getTime() + minLeadMs;
       for (const timeStr of times) {
         const { hours, minutes } = parseTimeString(timeStr);

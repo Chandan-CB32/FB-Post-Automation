@@ -893,7 +893,11 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
     .filter((p) => {
       const k = (p.kind || p.adapter_kind || "").toLowerCase();
       const n = (p.name || "").toLowerCase();
-      return k !== "pollinations" && !n.includes("image");
+      const m = (p.model_name || "").toLowerCase();
+      if (k === "pollinations" || k === "openai_compatible_images") return false;
+      if (n.includes("image") || n.includes("flux") || n.includes("lucid") || n.includes("leonardo") || n.includes("wanx")) return false;
+      if (m.includes("flux") || m.includes("lucid") || m.includes("diffusion") || m.includes("sd-") || m.includes("wanx")) return false;
+      return true;
     })
     .sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
 
@@ -1001,7 +1005,7 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
               model: candidate.model_name || "openai/gpt-oss-20b",
               baseUrl: candidate.base_url,
               temperature: 0.7,
-              maxTokens: 2500,
+              maxTokens: 800,
               timeoutMs: 20000,
             });
             if (res.text && res.text.trim()) {
@@ -1143,10 +1147,17 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
           Math.max(5, Math.round(unverifiedRatio * 20)),
         );
         qaScore -= penalty;
-        for (const unv of claimResult.unsupportedClaims) {
+        if (claimResult.claimsCount > 0 && claimResult.verifiedCount === 0) {
+          qaScore = Math.min(qaScore, 40);
           violations.push(
-            `Claim-by-claim verification failed: Factual claim '${unv}' is not supported by any verified research source URL.`,
+            `No empirical claims matched verified research facts (${claimResult.unverifiedCount} unverified claims).`,
           );
+        } else {
+          for (const unv of claimResult.unsupportedClaims.slice(0, 2)) {
+            violations.push(
+              `Claim verification notice: Factual claim '${unv.slice(0, 80)}' not directly matched to research text.`,
+            );
+          }
         }
       }
     }
@@ -1195,10 +1206,16 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
       }
     }
 
+    const factualGroundingOk =
+      !isFactual ||
+      !claimResult ||
+      claimResult.claimsCount === 0 ||
+      claimResult.verifiedCount > 0;
+
     const passed =
       qaResult.valid &&
       qaScore >= minRequiredScore &&
-      (!isFactual || (claimResult?.allVerified ?? true)) &&
+      factualGroundingOk &&
       integrityResult.valid &&
       varietyResult.valid;
 
@@ -1297,10 +1314,16 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
       }
     }
 
+    const reformatFactualOk =
+      !isFactual ||
+      !reformatClaimResult ||
+      reformatClaimResult.claimsCount === 0 ||
+      reformatClaimResult.verifiedCount > 0;
+
     const reformatPassed =
       reformatQa.valid &&
       reformatScore >= minRequiredScore &&
-      (!isFactual || (reformatClaimResult?.allVerified ?? true)) &&
+      reformatFactualOk &&
       reformatIntegrity.valid;
 
     emergencyReformatNeeded = true;

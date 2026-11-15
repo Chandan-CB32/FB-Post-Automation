@@ -111,8 +111,9 @@ export class CloudflareWorkersAIAdapter implements TextProviderAdapter, ImagePro
           );
         }
 
+        const promptText = (options.prompt || '').trim().slice(0, 2000);
         const body: Record<string, unknown> = {
-          prompt: options.prompt,
+          prompt: promptText,
         };
         if (isLeonardo) {
           body.num_steps = requiredSteps;

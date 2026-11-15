@@ -236,14 +236,16 @@ export async function runAutonomousCycle(
           console.warn(`[Autonomous Worker] Daily research warning for '${page.name}':`, resErr?.message || resErr);
         }
 
-        // Calculate upcoming slots from now
-        const upcomingSlots = calculateNextSlots(scheduleConfig, now, 10);
+        // Calculate upcoming slots: scan starting 2 hours in the past to catch any missed unfulfilled slot from today,
+        // and looking ahead to capture slots within the pre-generation window (~30m before slot time)
+        const scanStartDate = new Date(now.getTime() - 120 * 60000);
+        const upcomingSlots = calculateNextSlots({ ...scheduleConfig, minLeadMinutes: 0 } as any, scanStartDate, 15);
         if (upcomingSlots.length === 0) {
           continue;
         }
 
-        // Determine if any slot falls within the pre-generation window (~30m before slot time)
-        // Window: slot is within [now - 15m, now + leadWindowMinutes]
+        // Determine if any slot falls within the pre-generation or recovery window
+        // Window: slot is within [now - 120m, now + leadWindowMinutes]
         for (let i = 0; i < upcomingSlots.length; i++) {
           const slot = upcomingSlots[i];
           const diffMs = slot.getTime() - now.getTime();
@@ -251,7 +253,7 @@ export async function runAutonomousCycle(
 
           // Eligible if within the window, OR if forceSlotGeneration is requested on the earliest upcoming slot
           const isNextSlot = i === 0;
-          const isInPreGenWindow = diffMinutes <= leadWindowMinutes && diffMinutes >= -15;
+          const isInPreGenWindow = diffMinutes <= leadWindowMinutes && diffMinutes >= -120;
           const isEligible = isInPreGenWindow || (options.forceSlotGeneration && isNextSlot);
 
           if (!isEligible) {

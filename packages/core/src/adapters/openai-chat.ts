@@ -112,7 +112,7 @@ export class OpenAIChatAdapter implements TextProviderAdapter {
     }
 
     const choice = data?.choices?.[0];
-    const textContent = choice?.message?.content || '';
+    const textContent = (choice?.message?.content || '').trim();
     const finishReason = choice?.finish_reason || 'stop';
 
     if (finishReason === 'content_filter') {

@@ -48,12 +48,14 @@ export function getWorkerStatus() {
 let isShuttingDown = false;
 let loopTimer: NodeJS.Timeout | null = null;
 
-export async function runHeartbeat(): Promise<void> {
+export async function runHeartbeat(incrementLoop = true): Promise<void> {
   const timestamp = new Date().toISOString();
   workerState.lastHeartbeat = timestamp;
-  workerState.loopCount += 1;
+  if (incrementLoop) {
+    workerState.loopCount += 1;
+  }
 
-  console.log(`[Worker] Heartbeat #${workerState.loopCount} at ${timestamp}`);
+  console.log(`[Worker] Heartbeat #${workerState.loopCount} (${workerState.status}) at ${timestamp}`);
 
   const supabase = getSupabaseClient();
   if (supabase) {
@@ -111,9 +113,11 @@ export async function runWorkerCycle(): Promise<{ executed: boolean; message: st
   } catch (err: any) {
     console.error('[Worker] Autonomous cycle execution failed:', err?.message || err);
     cycleSummary = `Error: ${err?.message || 'Cycle failed'}`;
+  } finally {
+    workerState.status = 'idle';
+    await runHeartbeat(false);
   }
 
-  workerState.status = 'idle';
   return { executed: true, message: `Completed cycle #${workerState.loopCount} (${cycleSummary})` };
 }
 
