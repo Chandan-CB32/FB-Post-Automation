@@ -696,8 +696,11 @@ export async function runGenerationPipeline(
     const now = new Date();
     const recentPostRecords: PostRecordForCategory[] = options.recentPosts || [];
     const pageCategoryConfig: PageCategoryConfig = {
-      weights: (page as any).category_weights || page.overrides?.category_weights,
+      niche: (page as any).niche || (page as any).config?.niche || page.overrides?.niche,
+      categories: (page as any).categories || (page as any).config?.categories,
+      weights: (page as any).category_weights || (page as any).config?.category_weights || page.overrides?.category_weights,
       maxDailySpace: (page as any).max_daily_space ?? page.overrides?.max_daily_space ?? 1,
+      maxDailyDominant: (page as any).max_daily_dominant ?? page.overrides?.max_daily_dominant ?? 1,
       maxDailyPerCategory: (page as any).max_daily_per_category ?? page.overrides?.max_daily_per_category ?? 2,
     };
 
@@ -706,7 +709,7 @@ export async function runGenerationPipeline(
     let assignedCategory = categoryAssignment.assignedCategory;
 
     if (options.queueItem?.category) {
-      assignedCategory = normalizeCategoryName(options.queueItem.category);
+      assignedCategory = normalizeCategoryName(options.queueItem.category, pageCategoryConfig.categories);
     } else if (!userTopic) {
       topicCategory = assignedCategory;
     }

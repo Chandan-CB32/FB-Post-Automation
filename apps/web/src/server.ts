@@ -76,6 +76,8 @@ import {
   getEstimatedDailyCost,
   calculateContentMixReport,
   DEFAULT_CATEGORIES,
+  NICHE_PRESETS,
+  getCategoriesForPage,
   assignNextCategory,
 } from '@fb-auto/core';
 import {
@@ -2178,14 +2180,27 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         const allPosts = await store.getPosts();
         const pagePosts = allPosts.filter((p: any) => p.page_id === pageId);
 
+        const pageNiche = (page as any).niche || page.overrides?.niche || (page as any).content_profile?.niche || 'science';
         const config = {
+          niche: pageNiche,
+          categories: (page as any).categories || page.overrides?.categories,
           weights: (page as any).category_weights || page.overrides?.category_weights,
           maxDailySpace: (page as any).max_daily_space ?? page.overrides?.max_daily_space ?? 1,
+          maxDailyDominant: (page as any).max_daily_dominant ?? page.overrides?.max_daily_dominant ?? (page as any).max_daily_space ?? 1,
           maxDailyPerCategory: (page as any).max_daily_per_category ?? page.overrides?.max_daily_per_category ?? 2,
         };
 
+        const pageCategoryInfo = getCategoriesForPage(config);
         const report = calculateContentMixReport(pagePosts, config, new Date());
-        return sendJson({ success: true, report, defaultCategories: DEFAULT_CATEGORIES });
+        return sendJson({
+          success: true,
+          report,
+          categories: pageCategoryInfo.categories,
+          niche: pageCategoryInfo.nicheKey,
+          nicheName: pageCategoryInfo.nicheName,
+          dominantCategory: pageCategoryInfo.dominantCategory,
+          nichePresets: NICHE_PRESETS,
+        });
       } catch (err: any) {
         return sendJson({ error: err.message }, 500);
       }
@@ -2204,8 +2219,13 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           if (!page) return sendJson({ error: 'Page not found' }, 404);
 
           const updates: Record<string, any> = {};
+          if (data.niche) updates.niche = String(data.niche);
+          if (data.categories && Array.isArray(data.categories)) updates.categories = data.categories;
           if (data.weights && typeof data.weights === 'object') {
             updates.category_weights = data.weights;
+          }
+          if (typeof data.maxDailyDominant === 'number') {
+            updates.max_daily_dominant = data.maxDailyDominant;
           }
           if (typeof data.maxDailySpace === 'number') {
             updates.max_daily_space = data.maxDailySpace;
@@ -4528,11 +4548,15 @@ async function generateDashboardHtml(
   // Content Mix & Variety Engine Analytics
   const primaryPage = pages[0];
   const primaryPagePosts = primaryPage ? posts.filter((p) => p.page_id === primaryPage.id) : posts;
+  const primaryNiche = (primaryPage as any)?.niche || primaryPage?.overrides?.niche || (primaryPage as any)?.content_profile?.niche || 'science';
   const contentMixReport = calculateContentMixReport(
     primaryPagePosts,
     {
+      niche: primaryNiche,
+      categories: (primaryPage as any)?.categories || primaryPage?.overrides?.categories,
       weights: (primaryPage as any)?.category_weights || primaryPage?.overrides?.category_weights,
       maxDailySpace: (primaryPage as any)?.max_daily_space ?? primaryPage?.overrides?.max_daily_space ?? 1,
+      maxDailyDominant: (primaryPage as any)?.max_daily_dominant ?? primaryPage?.overrides?.max_daily_dominant ?? (primaryPage as any)?.max_daily_space ?? 1,
       maxDailyPerCategory: (primaryPage as any)?.max_daily_per_category ?? primaryPage?.overrides?.max_daily_per_category ?? 2,
     },
     new Date()
@@ -5189,107 +5213,6 @@ async function generateDashboardHtml(
           </tbody>
         </table>
       </div>
-
-      <!-- Scientific Content Mix & Variety Engine Report -->
-      <div class="card" style="margin-bottom: 24px; border: 1px solid rgba(56, 189, 248, 0.25);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
-          <div>
-            <h3 style="font-size: 18px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
-              <span>🔬 Scientific Content Mix & Variety Engine</span>
-              <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px;">10 Deficit-Weighted Categories</span>
-            </h3>
-            <p style="font-size: 13px; color: var(--text-muted); margin: 0;">
-              Page: <strong>${escapeHtml(primaryPage?.name || 'All Connected Pages')}</strong> &bull; Window: Last 50 Posts (${contentMixReport.totalPosts} posts) &bull; Hard Cap: Max 1 Space post/day &bull; Max 2 posts/category/day
-            </p>
-          </div>
-          <button class="btn btn-secondary" onclick="openCategoryWeightsModal('${primaryPage?.id || ''}')" style="font-size: 12px; font-weight: 600; border: 1px solid rgba(56,189,248,0.4); color: #38bdf8;">
-            ⚙️ Edit Category Weights
-          </button>
-        </div>
-
-        ${contentMixReport.alerts.length > 0 ? `
-          <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
-            <span style="font-size: 20px;">⚠️</span>
-            <div style="font-size: 13px; color: #fca5a5;">
-              ${contentMixReport.alerts.map((a: string) => `<strong>Alert:</strong> ${escapeHtml(a)}`).join('<br>')}
-            </div>
-          </div>
-        ` : `
-          <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: #6ee7b7; display: flex; align-items: center; gap: 8px;">
-            <span>✓</span> Healthy content distribution across scientific disciplines. Space & Astronomy ceiling enforced in code.
-          </div>
-        `}
-
-        <!-- 10 Category Distribution Bars -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-bottom: 24px;">
-          ${contentMixReport.categories.map((c: any) => {
-            const isDeficit = c.diff < 0;
-            const isSurplus = c.diff > 0;
-            const diffColor = isDeficit ? '#38bdf8' : isSurplus ? '#f59e0b' : '#34d399';
-            const barWidth = Math.min(100, Math.max(5, (c.actualShare / (c.targetShare * 1.5 || 20)) * 100));
-            return `
-              <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 12px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <strong style="font-size: 13px; color: #f1f5f9;">${escapeHtml(c.name)}</strong>
-                  <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${diffColor}22; color: ${diffColor}; font-weight: 700;">
-                    ${c.diff > 0 ? '+' : ''}${c.diff}%
-                  </span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">
-                  <span>Actual: <strong style="color: #f8fafc;">${c.actualShare}%</strong> (${c.count} posts)</span>
-                  <span>Target: <strong style="color: #94a3b8;">${c.targetShare}%</strong> (Cap: ${c.maxPerDay}/day)</span>
-                </div>
-                <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden;">
-                  <div style="width: ${barWidth}%; height: 100%; background: ${c.name === 'Space & Astronomy' && c.actualShare > 30 ? '#ef4444' : '#38bdf8'}; border-radius: 3px;"></div>
-                </div>
-              </div>
-            `;
-          }).join('')}
-        </div>
-
-        <!-- Repeated Subjects & Opening Phrases Frequency -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px;">
-          <!-- Top Repeated Subjects (Deduplication Watch) -->
-          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 14px;">
-            <h4 style="font-size: 14px; margin-bottom: 10px; color: #94a3b8; display: flex; align-items: center; gap: 6px;">
-              <span>🛡️ 60-Day Entity Deduplication Monitor</span>
-            </h4>
-            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Bans repeated focal entities (e.g. K2-18b, blue whale heart) for 60 days:</div>
-            ${contentMixReport.topRepeatedSubjects.length > 0 ? `
-              <div style="display: flex; flex-direction: column; gap: 6px;">
-                ${contentMixReport.topRepeatedSubjects.slice(0, 5).map((s: any) => `
-                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0, 0, 0, 0.3); border-radius: 4px; font-size: 12px;">
-                    <span style="color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px;">${escapeHtml(s.subject)}</span>
-                    <span class="badge" style="background: ${s.count > 1 ? '#7c2d12' : '#064e3b'}; color: ${s.count > 1 ? '#fdba74' : '#6ee7b7'}; font-size: 10px;">
-                      ${s.count} post${s.count === 1 ? '' : 's'}
-                    </span>
-                  </div>
-                `).join('')}
-              </div>
-            ` : '<div style="color: #64748b; font-size: 12px; font-style: italic;">No repeat entities detected.</div>'}
-          </div>
-
-          <!-- Opening Phrase Frequency Monitor -->
-          <div style="background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 14px;">
-            <h4 style="font-size: 14px; margin-bottom: 10px; color: #94a3b8; display: flex; align-items: center; gap: 6px;">
-              <span>🚫 Anti-Repetition Opening Phrase Monitor</span>
-            </h4>
-            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Enforces diverse hooks; bans "Imagine", "Ever wondered", "Did you know":</div>
-            ${contentMixReport.openingPhraseFrequency.length > 0 ? `
-              <div style="display: flex; flex-direction: column; gap: 6px;">
-                ${contentMixReport.openingPhraseFrequency.slice(0, 5).map((op: any) => `
-                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0, 0, 0, 0.3); border-radius: 4px; font-size: 12px;">
-                    <span style="color: #cbd5e1; font-family: monospace; font-size: 11px;">"${escapeHtml(op.phrase)}..."</span>
-                    <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 10px;">
-                      ${op.count}x
-                    </span>
-                  </div>
-                `).join('')}
-              </div>
-            ` : '<div style="color: #64748b; font-size: 12px; font-style: italic;">Zero banned or repeated opening phrases.</div>'}
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- TAB 3: PAGES & ACCOUNTS TREE -->
@@ -5811,6 +5734,27 @@ async function generateDashboardHtml(
           </div>
         </div>
 
+        <!-- Niche & Category Variety Strategy Section -->
+        <div class="card" style="margin-top: 20px; background: #0b0f19; border: 1px solid rgba(56, 189, 248, 0.25); padding: 18px; border-radius: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+            <div>
+              <h4 style="font-size: 15px; margin: 0 0 4px 0; color: #38bdf8; display: flex; align-items: center; gap: 8px;">
+                <span>🎯 Content Niche & Category Variety Strategy</span>
+                <span id="studioCategoryNicheBadge" class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px;">Science & Cosmos</span>
+              </h4>
+              <p style="font-size: 12px; color: var(--text-muted); margin: 0;">
+                Isolated per-page category deficit weights, topic pool routing, and daily anti-saturation limits.
+              </p>
+            </div>
+            <button type="button" class="btn btn-secondary" onclick="openCategoryWeightsModal(document.getElementById('studioPageSelect').value)" style="font-size: 12px; font-weight: 600; border: 1px solid rgba(56,189,248,0.4); color: #38bdf8;">
+              ⚙️ Customize Categories & Weights
+            </button>
+          </div>
+          <div id="studioCategoryPills" style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <!-- Rendered dynamically by loadPageIntoStudio() -->
+          </div>
+        </div>
+
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; border-top: 1px solid var(--card-border); padding-top: 18px;">
           <button class="btn btn-secondary" onclick="inspectEffectivePrompt()">🔍 Inspect Live Effective Prompt</button>
           <div style="display: flex; gap: 10px;">
@@ -6237,23 +6181,31 @@ async function generateDashboardHtml(
         </table>
       </div>
 
-      <!-- Scientific Content Mix & Variety Engine Report -->
+      <!-- Dynamic Content Mix & Variety Engine Report (Per-Page Channel Selector) -->
       <div class="card" style="margin-bottom: 24px; border: 1px solid rgba(56, 189, 248, 0.25);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
           <div>
             <h3 style="font-size: 18px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
-              <span>🔬 Scientific Content Mix & Variety Engine</span>
-              <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px;">10 Deficit-Weighted Categories</span>
+              <span id="analyticsContentMixIcon">🎯</span>
+              <span id="analyticsContentMixTitle">${escapeHtml(contentMixReport.nicheName || 'Content Mix')} & Variety Engine</span>
+              <span id="analyticsContentMixBadge" class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px;">${contentMixReport.categories.length} Deficit-Weighted Categories</span>
             </h3>
-            <p style="font-size: 13px; color: var(--text-muted); margin: 0;">
-              Page: <strong>${escapeHtml(primaryPage?.name || 'All Connected Pages')}</strong> &bull; Window: Last 50 Posts (${contentMixReport.totalPosts} posts) &bull; Hard Cap: Max 1 Space post/day &bull; Max 2 posts/category/day
+            <p id="analyticsContentMixMeta" style="font-size: 13px; color: var(--text-muted); margin: 0;">
+              Page: <strong id="analyticsContentMixPageName">${escapeHtml(primaryPage?.name || 'All Connected Pages')}</strong> &bull; Niche: <strong id="analyticsContentMixNicheName">${escapeHtml(contentMixReport.nicheName || 'Science')}</strong> &bull; Window: Last 50 Posts (<span id="analyticsContentMixTotalPosts">${contentMixReport.totalPosts}</span> posts) &bull; Dominant Cap: Max 1 <span id="analyticsContentMixDominantName">${escapeHtml(contentMixReport.dominantCategory || 'Dominant')}</span>/day &bull; Max 2 posts/category/day
             </p>
           </div>
-          <button class="btn btn-secondary" onclick="openCategoryWeightsModal('${primaryPage?.id || ''}')" style="font-size: 12px; font-weight: 600; border: 1px solid rgba(56,189,248,0.4); color: #38bdf8;">
-            ⚙️ Edit Category Weights
-          </button>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <label style="font-size: 12px; font-weight: 600; color: var(--text-muted);">PAGE CHANNEL:</label>
+            <select id="analyticsPageSelector" class="form-control" style="width: auto; min-width: 220px; font-size: 13px; padding: 6px 12px;" onchange="switchAnalyticsPageContentMix(this.value)">
+              ${pages.map((p) => `<option value="${p.id}" ${primaryPage?.id === p.id ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml((p as any).niche || (p as any).content_profile?.niche || 'Science')})</option>`).join('')}
+            </select>
+            <button class="btn btn-secondary" id="analyticsEditCategoryBtn" onclick="openCategoryWeightsModal(document.getElementById('analyticsPageSelector').value)" style="font-size: 12px; font-weight: 600; border: 1px solid rgba(56,189,248,0.4); color: #38bdf8;">
+              ⚙️ Edit Niche & Weights
+            </button>
+          </div>
         </div>
 
+        <div id="analyticsContentMixAlerts">
         ${contentMixReport.alerts.length > 0 ? `
           <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
             <span style="font-size: 20px;">⚠️</span>
@@ -6263,17 +6215,19 @@ async function generateDashboardHtml(
           </div>
         ` : `
           <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: #6ee7b7; display: flex; align-items: center; gap: 8px;">
-            <span>✓</span> Healthy content distribution across scientific disciplines. Space & Astronomy ceiling enforced in code.
+            <span>✓</span> Healthy content distribution across niche categories. Anti-saturation limits enforced in code.
           </div>
         `}
+        </div>
 
-        <!-- 10 Category Distribution Bars -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-bottom: 24px;">
+        <!-- Dynamic Category Distribution Bars -->
+        <div id="analyticsCategoriesContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-bottom: 24px;">
           ${contentMixReport.categories.map((c: any) => {
             const isDeficit = c.diff < 0;
             const isSurplus = c.diff > 0;
             const diffColor = isDeficit ? '#38bdf8' : isSurplus ? '#f59e0b' : '#34d399';
             const barWidth = Math.min(100, Math.max(5, (c.actualShare / (c.targetShare * 1.5 || 20)) * 100));
+            const isDominantAlert = c.name === contentMixReport.dominantCategory && c.actualShare > 30;
             return `
               <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 12px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -6287,7 +6241,7 @@ async function generateDashboardHtml(
                   <span>Target: <strong style="color: #94a3b8;">${c.targetShare}%</strong> (Cap: ${c.maxPerDay}/day)</span>
                 </div>
                 <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden;">
-                  <div style="width: ${barWidth}%; height: 100%; background: ${c.name === 'Space & Astronomy' && c.actualShare > 30 ? '#ef4444' : '#38bdf8'}; border-radius: 3px;"></div>
+                  <div style="width: ${barWidth}%; height: 100%; background: ${isDominantAlert ? '#ef4444' : '#38bdf8'}; border-radius: 3px;"></div>
                 </div>
               </div>
             `;
@@ -6301,7 +6255,8 @@ async function generateDashboardHtml(
             <h4 style="font-size: 14px; margin-bottom: 10px; color: #94a3b8; display: flex; align-items: center; gap: 6px;">
               <span>🛡️ 60-Day Entity Deduplication Monitor</span>
             </h4>
-            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Bans repeated focal entities (e.g. K2-18b, blue whale heart) for 60 days:</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Bans repeated focal entities for 60 days:</div>
+            <div id="analyticsDeduplicationContainer">
             ${contentMixReport.topRepeatedSubjects.length > 0 ? `
               <div style="display: flex; flex-direction: column; gap: 6px;">
                 ${contentMixReport.topRepeatedSubjects.slice(0, 5).map((s: any) => `
@@ -6314,6 +6269,7 @@ async function generateDashboardHtml(
                 `).join('')}
               </div>
             ` : '<div style="color: #64748b; font-size: 12px; font-style: italic;">No repeat entities detected.</div>'}
+            </div>
           </div>
 
           <!-- Opening Phrase Frequency Monitor -->
@@ -6322,6 +6278,7 @@ async function generateDashboardHtml(
               <span>🚫 Anti-Repetition Opening Phrase Monitor</span>
             </h4>
             <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Enforces diverse hooks; bans "Imagine", "Ever wondered", "Did you know":</div>
+            <div id="analyticsBannedOpeningsContainer">
             ${contentMixReport.openingPhraseFrequency.length > 0 ? `
               <div style="display: flex; flex-direction: column; gap: 6px;">
                 ${contentMixReport.openingPhraseFrequency.slice(0, 5).map((op: any) => `
@@ -6334,6 +6291,7 @@ async function generateDashboardHtml(
                 `).join('')}
               </div>
             ` : '<div style="color: #64748b; font-size: 12px; font-style: italic;">Zero banned or repeated opening phrases.</div>'}
+            </div>
           </div>
         </div>
       </div>
@@ -8080,6 +8038,83 @@ async function generateDashboardHtml(
           <div style="font-size: 32px; margin-bottom: 8px;">🔬</div>
           <div style="font-size: 14px; font-weight: 600; color: #94a3b8;">No Benchmark Run Executed Yet</div>
           <div style="font-size: 12px; max-width: 450px; margin: 4px auto 0 auto;">Select providers above and click "Run Benchmark" to test real outputs side-by-side with latency, cost, and thumbs up/down rating.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CATEGORY WEIGHTS & NICHE VARIETY STRATEGY MODAL -->
+  <div class="modal" id="categoryWeightsModal" style="display: none; align-items: center; justify-content: center; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.88); backdrop-filter: blur(8px); z-index: 10001; overflow-y: auto; padding: 20px;">
+    <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; width: 100%; max-width: 840px; max-height: 90vh; overflow-y: auto; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8); position: relative;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid #1e293b; padding-bottom: 14px;">
+        <div>
+          <h3 style="font-size: 18px; font-weight: 700; color: #f8fafc; margin: 0; display: flex; align-items: center; gap: 8px;">
+            <span>⚙️ Niche & Category Variety Strategy</span>
+            <span id="cwmPageBadge" class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px;">Page</span>
+          </h3>
+          <p style="font-size: 13px; color: #94a3b8; margin: 4px 0 0 0;">
+            Configure niche presets, deficit category weights (sum to 100%), and anti-saturation caps for this page.
+          </p>
+        </div>
+        <button type="button" onclick="closeCategoryWeightsModal()" style="background: none; border: none; color: #94a3b8; font-size: 24px; cursor: pointer;">&times;</button>
+      </div>
+
+      <input type="hidden" id="cwmPageId" value="" />
+
+      <!-- Step 1: Niche Preset Selector -->
+      <div style="background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 10px;">
+          <label style="font-size: 13px; font-weight: 700; color: #cbd5e1; text-transform: uppercase;">1. Content Niche Preset</label>
+          <span id="cwmPresetDescription" style="font-size: 12px; color: #94a3b8; max-width: 500px; text-align: right;">Astrophysics, biology, extreme phenomena, chemistry, and neuroscience.</span>
+        </div>
+        <select id="cwmNicheSelect" class="form-control" style="font-size: 13px; padding: 8px 12px; width: 100%;" onchange="onCwmNicheChange(this.value)">
+          <option value="science">🔬 Science & Cosmos (Default)</option>
+          <option value="history">🏛️ World History & Civilizations</option>
+          <option value="technology">🤖 Technology, AI & Future</option>
+          <option value="motivation_mindset">🧠 Motivation, Mindset & Psychology</option>
+          <option value="finance_crypto">📈 Finance, Wealth & Crypto</option>
+          <option value="nature_wildlife">🌿 Nature, Wildlife & Planet Earth</option>
+          <option value="custom">✨ Custom Defined Niche</option>
+        </select>
+      </div>
+
+      <!-- Step 2: Category Weights Table -->
+      <div style="margin-bottom: 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <label style="font-size: 13px; font-weight: 700; color: #cbd5e1; text-transform: uppercase;">2. Category Deficit Weights (Must Sum to 100%)</label>
+          <div id="cwmTotalWeightBadge" style="font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: rgba(52, 211, 153, 0.2); color: #34d399;">
+            Total: 100%
+          </div>
+        </div>
+
+        <div id="cwmCategoriesList" style="display: flex; flex-direction: column; gap: 8px; max-height: 380px; overflow-y: auto; padding-right: 6px;">
+          <!-- Dynamically populated rows -->
+        </div>
+      </div>
+
+      <!-- Step 3: Hard Anti-Saturation Daily Rules -->
+      <div style="background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+        <label style="font-size: 13px; font-weight: 700; color: #cbd5e1; text-transform: uppercase; margin-bottom: 12px; display: block;">3. Anti-Saturation Daily Rules</label>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+          <div>
+            <label style="font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px;">Max Dominant Category Posts/Day</label>
+            <input type="number" id="cwmMaxDailyDominant" class="form-control" min="1" max="5" value="1" style="font-size: 13px; padding: 6px 10px;">
+            <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Limits dominant topic (e.g. Space, AI, Empires) to keep posts diverse.</div>
+          </div>
+          <div>
+            <label style="font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px;">Max Posts Per Category/Day</label>
+            <input type="number" id="cwmMaxDailyPerCategory" class="form-control" min="1" max="5" value="2" style="font-size: 13px; padding: 6px 10px;">
+            <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Hard ceiling to prevent repeating any single category too often in 24 hours.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer Buttons -->
+      <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #1e293b; padding-top: 16px;">
+        <button type="button" class="btn btn-secondary" onclick="resetCwmToDefaults()">🔄 Reset to Niche Defaults</button>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn btn-secondary" onclick="closeCategoryWeightsModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" id="cwmSaveBtn" onclick="saveCategoryWeightsModal()">💾 Save Variety Rules</button>
         </div>
       </div>
     </div>

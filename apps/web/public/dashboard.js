@@ -1298,6 +1298,9 @@
 
     validateStudioWordLimits();
     validateStudioFirstComment();
+    if (typeof updateStudioCategoryPills === 'function') {
+      updateStudioCategoryPills(page);
+    }
 
     const inspectBox = document.getElementById('effectiveInspectBox');
     if (inspectBox) inspectBox.style.display = 'none';
@@ -2528,7 +2531,493 @@
     }
   }
 
+  // --- Niche & Category Variety Engine (Per-Page Isolation) ---
+  const NICHE_PRESETS_CLIENT = {
+    science: {
+      name: 'Science & Cosmos',
+      description: 'Astrophysics, biology, extreme phenomena, chemistry, and neuroscience.',
+      dominantCategory: 'Space & Astronomy',
+      categories: [
+        { id: 'space_astronomy', name: 'Space & Astronomy', defaultWeight: 20, maxPerDay: 1, description: 'Exoplanets, black holes, stellar evolution, and cosmic discoveries.' },
+        { id: 'animals_ocean', name: 'Animals & Ocean Life', defaultWeight: 14, maxPerDay: 2, description: 'Deep-sea creatures, bioluminescence, apex predators, and animal cognition.' },
+        { id: 'earth_phenomena', name: 'Earth & Extreme Phenomena', defaultWeight: 11, maxPerDay: 2, description: 'Atmospheric physics, vulcanology, hydrothermal vents, and climate geology.' },
+        { id: 'physics_chemistry', name: 'Physics & Chemistry', defaultWeight: 11, maxPerDay: 2, description: 'Quantum phenomena, state transformations, thermodynamics, and molecular science.' },
+        { id: 'human_body_brain', name: 'Human Body & Brain', defaultWeight: 10, maxPerDay: 2, description: 'Neuroscience, sensory perception, cellular physiology, and immune defense.' },
+        { id: 'plants_fungi_nature', name: 'Plants/Fungi & Nature', defaultWeight: 8, maxPerDay: 2, description: 'Mycelial networks, symbiotic botany, carnivorous flora, and spore dispersal.' },
+        { id: 'ancient_life_evolution', name: 'Ancient Life & Evolution', defaultWeight: 8, maxPerDay: 2, description: 'Paleontology, fossil evidence, mass extinctions, and primordial adaptation.' },
+        { id: 'technology_ai', name: 'Technology & AI', defaultWeight: 7, maxPerDay: 2, description: 'Biomimicry, neural engineering, telescope optics, and laboratory robotics.' },
+        { id: 'microscopic_world', name: 'Microscopic World', defaultWeight: 6, maxPerDay: 2, description: 'Tardigrades, extremophilic bacteria, cellular structures, and viral mechanisms.' },
+        { id: 'scientists_big_ideas', name: 'Scientists & Big Ideas', defaultWeight: 5, maxPerDay: 2, description: 'Pivotal experiments, scientific disputes, paradigm shifts, and field research.' },
+      ],
+    },
+    history: {
+      name: 'World History & Civilizations',
+      description: 'Ancient empires, archaeological discoveries, pivotal military conflicts, and legendary historical figures.',
+      dominantCategory: 'Ancient Civilizations & Empires',
+      categories: [
+        { id: 'ancient_civilizations', name: 'Ancient Civilizations & Empires', defaultWeight: 18, maxPerDay: 1, description: 'Mesopotamia, Rome, Egypt, Indus Valley, Maya, and dynastic politics.' },
+        { id: 'military_battles', name: 'Military Tactics & Decisive Battles', defaultWeight: 14, maxPerDay: 2, description: 'Famous sieges, strategic doctrines, weapon evolution, and battlefield turning points.' },
+        { id: 'archaeological_finds', name: 'Archaeological Finds & Artifacts', defaultWeight: 12, maxPerDay: 2, description: 'Excavations, deciphered tablets, tomb discoveries, and forgotten ruins.' },
+        { id: 'medieval_kingdoms', name: 'Medieval Kingdoms & Feudal Eras', defaultWeight: 10, maxPerDay: 2, description: 'Castles, crusades, chivalric codes, feudal intrigue, and medieval scholarship.' },
+        { id: 'historical_figures', name: 'Pioneers, Leaders & Conquerors', defaultWeight: 10, maxPerDay: 2, description: 'Alexander, Cleopatra, Genghis Khan, Leonardo da Vinci, and visionary reformers.' },
+        { id: 'ancient_inventions', name: 'Inventions & Ancient Engineering', defaultWeight: 10, maxPerDay: 2, description: 'Aqueducts, the Antikythera mechanism, Greek fire, and architectural feats.' },
+        { id: 'maritime_exploration', name: 'Maritime Exploration & Voyages', defaultWeight: 8, maxPerDay: 2, description: 'Silk roads, age of navigation, polar expeditions, and nautical cartography.' },
+        { id: 'myths_mysteries', name: 'Mythologies & Ancient Mysteries', defaultWeight: 6, maxPerDay: 2, description: 'Folklore origins, sacred rites, pantheons, and unsolved historical enigmas.' },
+        { id: 'social_revolutions', name: 'Cultural Pivots & Revolutions', defaultWeight: 6, maxPerDay: 2, description: 'The Renaissance, printing press revolution, Enlightenment, and trade transformations.' },
+        { id: 'modern_crises', name: 'Modern Pivotal Moments', defaultWeight: 6, maxPerDay: 2, description: 'Industrial revolutions, 20th century geopolitics, and global treaty milestones.' },
+      ],
+    },
+    technology: {
+      name: 'Technology, AI & Future',
+      description: 'Artificial intelligence, robotics, quantum computing, gadgets, and next-generation engineering.',
+      dominantCategory: 'AI & Machine Learning',
+      categories: [
+        { id: 'ai_machine_learning', name: 'AI & Machine Learning', defaultWeight: 22, maxPerDay: 1, description: 'Neural architectures, autonomous agents, LLMs, computer vision, and cognitive systems.' },
+        { id: 'robotics_automation', name: 'Robotics & Autonomous Systems', defaultWeight: 15, maxPerDay: 2, description: 'Humanoid robots, robotic actuators, self-driving platforms, and industrial automation.' },
+        { id: 'quantum_future_tech', name: 'Quantum & Future Computing', defaultWeight: 12, maxPerDay: 2, description: 'Qubits, quantum supremacy, optical computing, and neuromorphic chips.' },
+        { id: 'consumer_tech_gadgets', name: 'Consumer Tech & Gadgets', defaultWeight: 12, maxPerDay: 2, description: 'Flagship hardware, VR/AR spatial headsets, wearables, and microelectronics.' },
+        { id: 'cybersecurity_privacy', name: 'Cybersecurity & Privacy', defaultWeight: 10, maxPerDay: 2, description: 'Zero-day exploits, cryptographic protocols, blockchain security, and network defenses.' },
+        { id: 'biotech_augmentation', name: 'Biotech & Human Augmentation', defaultWeight: 10, maxPerDay: 2, description: 'Brain-computer interfaces, CRISPR therapeutics, synthetic biology, and bionics.' },
+        { id: 'aerospace_defense', name: 'Aerospace & Next-Gen Mobility', defaultWeight: 7, maxPerDay: 2, description: 'Hypersonic flight, orbital commercial stations, eVTOL aircraft, and satellite swarms.' },
+        { id: 'energy_green_tech', name: 'Clean Energy & Green Tech', defaultWeight: 5, maxPerDay: 2, description: 'Solid-state batteries, fusion milestones, perovskite solar cells, and carbon capture.' },
+        { id: 'tech_founders_culture', name: 'Tech Pioneers & Silicon Valley', defaultWeight: 4, maxPerDay: 2, description: 'Startup history, landmark engineering pivots, and legendary technologist profiles.' },
+        { id: 'unsolved_tech_debates', name: 'Emerging Standards & AI Ethics', defaultWeight: 3, maxPerDay: 2, description: 'Superintelligence safety, copyright in generative models, and digital sovereignty.' },
+      ],
+    },
+    motivation_mindset: {
+      name: 'Motivation, Mindset & Psychology',
+      description: 'Behavioral psychology, habit formation, resilience, leadership, and personal growth.',
+      dominantCategory: 'Mindset & Mental Toughness',
+      categories: [
+        { id: 'mindset_toughness', name: 'Mindset & Mental Toughness', defaultWeight: 20, maxPerDay: 1, description: 'Reframing failure, grit development, internal locus of control, and psychological stamina.' },
+        { id: 'habits_productivity', name: 'Habits & Peak Performance', defaultWeight: 15, maxPerDay: 2, description: 'Dopamine management, atomic habit cues, circadian optimization, and morning routines.' },
+        { id: 'cognitive_psychology', name: 'Psychological Biases & Human Nature', defaultWeight: 14, maxPerDay: 2, description: 'Cognitive dissonances, subconscious motivations, behavioral economics, and decision biases.' },
+        { id: 'discipline_focus', name: 'Deep Work, Focus & Willpower', defaultWeight: 12, maxPerDay: 2, description: 'Eliminating digital distractions, flow states, delayed gratification, and attention spans.' },
+        { id: 'stoic_philosophy', name: 'Stoicism & Timeless Wisdom', defaultWeight: 10, maxPerDay: 2, description: 'Marcus Aurelius, Seneca, Epictetus, dichotomy of control, and amor fati.' },
+        { id: 'leadership_influence', name: 'Leadership & Social Dynamics', defaultWeight: 9, maxPerDay: 2, description: 'Persuasive communication, emotional composure, team rallying, and conflict resolution.' },
+        { id: 'resilience_adversity', name: 'Overcoming Adversity & Burnout', defaultWeight: 8, maxPerDay: 2, description: 'Rebuilding after bankruptcy, illness or crisis; post-traumatic growth and stress mitigation.' },
+        { id: 'emotional_intelligence', name: 'Emotional Intelligence & Clarity', defaultWeight: 5, maxPerDay: 2, description: 'Emotional regulation, self-awareness, active listening, and mental equanimity.' },
+        { id: 'decision_making', name: 'Mental Models & Decision Science', defaultWeight: 4, maxPerDay: 2, description: 'First-principles thinking, inversion, second-order effects, and probabilistic forecasting.' },
+        { id: 'biographies_achievers', name: 'Lessons from High Performers', defaultWeight: 3, maxPerDay: 2, description: 'Routines and turning points of world-class athletes, polymaths, and leaders.' },
+      ],
+    },
+    finance_crypto: {
+      name: 'Finance, Wealth & Crypto',
+      description: 'Wealth principles, economics, cryptocurrency, market psychology, and capital growth.',
+      dominantCategory: 'Wealth Creation & Investing',
+      categories: [
+        { id: 'wealth_investing', name: 'Wealth Creation & Investing', defaultWeight: 20, maxPerDay: 1, description: 'Compound interest, value investing principles, asset allocation, and capital preservation.' },
+        { id: 'market_psychology', name: 'Market Cycles & Trading Psychology', defaultWeight: 15, maxPerDay: 2, description: 'FOMO, panic capitulation, liquidity cycles, herd mentality, and contrarian strategies.' },
+        { id: 'bitcoin_crypto', name: 'Bitcoin, DeFi & Digital Assets', defaultWeight: 14, maxPerDay: 2, description: 'Halving cycles, on-chain analytics, self-custody protocols, and Layer-1 economics.' },
+        { id: 'macro_economics', name: 'Macroeconomics, Inflation & Fed Policy', defaultWeight: 12, maxPerDay: 2, description: 'Interest rate cycles, central bank balance sheets, sovereign debt, and dollar hegemony.' },
+        { id: 'financial_freedom', name: 'Cash Flow, Real Estate & Freedom', defaultWeight: 10, maxPerDay: 2, description: 'Passive income architecture, real estate leverage, FIRE principles, and cash flow assets.' },
+        { id: 'business_breakdowns', name: 'Business Case Studies & Moats', defaultWeight: 9, maxPerDay: 2, description: 'Monopolies, network effects, margin resilience, and corporate strategy deconstructions.' },
+        { id: 'personal_finance', name: 'Smart Spending & Wealth Protection', defaultWeight: 7, maxPerDay: 2, description: 'Tax optimization, emergency fund strategies, debt elimination, and spending psychology.' },
+        { id: 'financial_history', name: 'Famous Bubbles & Financial Crashes', defaultWeight: 5, maxPerDay: 2, description: 'Tulip mania, South Sea bubble, 1929 crash, 2008 Lehman collapse, and contagion events.' },
+        { id: 'billionaire_rules', name: 'Billionaire Capital Allocation', defaultWeight: 5, maxPerDay: 2, description: 'Buffett, Munger, Dalio, Simons, and timeless institutional capital management rules.' },
+        { id: 'emerging_markets', name: 'Global Currencies & Commodities', defaultWeight: 3, maxPerDay: 2, description: 'Gold, oil, supply chain shipping corridors, and emerging market currency dynamics.' },
+      ],
+    },
+    nature_wildlife: {
+      name: 'Nature, Wildlife & Planet Earth',
+      description: 'Wildlife ecosystems, apex predators, deep ocean mysteries, and Earth wonders.',
+      dominantCategory: 'Apex Predators & Wild Hunters',
+      categories: [
+        { id: 'apex_predators', name: 'Apex Predators & Wild Hunters', defaultWeight: 20, maxPerDay: 1, description: 'Hunting mechanics, pack dynamics, territorial dominance, and sensory adaptations.' },
+        { id: 'deep_ocean_mysteries', name: 'Deep Ocean & Abyssal Creatures', defaultWeight: 16, maxPerDay: 2, description: 'Hadal zone survival, giant squids, anglerfish bioluminescence, and benthic ecosystems.' },
+        { id: 'rare_species_behavior', name: 'Bizarre Animal Adaptations', defaultWeight: 12, maxPerDay: 2, description: 'Camouflage masters, venom evolution, electro-reception, and regenerative biology.' },
+        { id: 'extreme_climates', name: 'Extreme Ecosystems & Deserts', defaultWeight: 10, maxPerDay: 2, description: 'Atacama desert survival, polar ice biodiversity, salt flat adaptations, and tundra flora.' },
+        { id: 'botanical_wonders', name: 'Ancient Trees & Carnivorous Plants', defaultWeight: 10, maxPerDay: 2, description: 'Bristlecone pines, pitcher plants, jungle canopy warfare, and floral chemical signals.' },
+        { id: 'geological_marvels', name: 'Volcanoes, Caves & Canyons', defaultWeight: 9, maxPerDay: 2, description: 'Supervolcano calderas, crystal caves, plate tectonics, and sinkhole formations.' },
+        { id: 'insect_societies', name: 'Ant Colonies, Spiders & Micro Beasts', defaultWeight: 8, maxPerDay: 2, description: 'Eusocial hierarchy, silk tensile physics, parasite control, and swarm intelligence.' },
+        { id: 'migration_journeys', name: 'Epic Animal Migrations', defaultWeight: 6, maxPerDay: 2, description: 'Arctic terns, wildebeest river crossings, monarch butterflies, and magnetic navigation.' },
+        { id: 'prehistoric_descendants', name: 'Living Fossils & Ancient Lineages', defaultWeight: 5, maxPerDay: 2, description: 'Coelacanths, horseshoe crabs, nautiluses, crocodiles, and evolutionary persistence.' },
+        { id: 'wild_conservation', name: 'Extinction Rescues & Rewilding', defaultWeight: 4, maxPerDay: 2, description: 'Apex predator reintroduction, captive breeding rescues, and ecosystem restoration.' },
+      ],
+    },
+    custom: {
+      name: 'Custom Defined Niche',
+      description: 'Fully custom niche and category definitions tailored to your unique audience.',
+      dominantCategory: 'Primary Focus',
+      categories: [
+        { id: 'custom_cat_1', name: 'Primary Focus', defaultWeight: 25, maxPerDay: 1, description: 'Core central subject of your custom niche.' },
+        { id: 'custom_cat_2', name: 'Secondary Focus', defaultWeight: 20, maxPerDay: 2, description: 'Related subfield or frequent discussion area.' },
+        { id: 'custom_cat_3', name: 'In-Depth Case Studies', defaultWeight: 15, maxPerDay: 2, description: 'Detailed breakdowns, examples, and proof points.' },
+        { id: 'custom_cat_4', name: 'Practical Insights & Tips', defaultWeight: 15, maxPerDay: 2, description: 'Actionable techniques, advice, and best practices.' },
+        { id: 'custom_cat_5', name: 'Industry News & Trends', defaultWeight: 10, maxPerDay: 2, description: 'Current developments, breaking updates, and analysis.' },
+        { id: 'custom_cat_6', name: 'Historical Context', defaultWeight: 8, maxPerDay: 2, description: 'Origins, historical milestones, and pioneer profiles.' },
+        { id: 'custom_cat_7', name: 'Community Questions & Debates', defaultWeight: 7, maxPerDay: 2, description: 'Hot takes, thought-provoking questions, and engagement polls.' },
+      ],
+    },
+  };
+
+  function updateStudioCategoryPills(page) {
+    var nicheBadge = document.getElementById('studioCategoryNicheBadge');
+    var pillsContainer = document.getElementById('studioCategoryPills');
+    if (!pillsContainer) return;
+
+    var nicheKey = (page && (page.niche || (page.content_profile && page.content_profile.niche))) || 'science';
+    var preset = NICHE_PRESETS_CLIENT[nicheKey] || NICHE_PRESETS_CLIENT.science;
+    if (nicheBadge) {
+      nicheBadge.textContent = preset ? preset.name : (page && page.name ? page.name : 'Niche');
+    }
+
+    var weights = (page && (page.category_weights || (page.overrides && page.overrides.category_weights))) || {};
+    var categories = (page && (page.categories || (page.overrides && page.overrides.categories))) || (preset ? preset.categories : []);
+
+    var html = '';
+    categories.forEach(function (cat) {
+      var w = (weights && weights[cat.name] !== undefined) ? weights[cat.name] : cat.defaultWeight;
+      html += '<span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; font-size: 11px; color: #e2e8f0;">' +
+        '<span>' + escapeHtml(cat.name) + '</span>' +
+        '<strong style="color: #38bdf8;">' + w + '%</strong>' +
+      '</span>';
+    });
+    pillsContainer.innerHTML = html;
+  }
+
+  async function switchAnalyticsPageContentMix(pageId) {
+    if (!pageId) return;
+    try {
+      var page = pagesData.find(function(p) { return p.id === pageId; });
+      var editBtn = document.getElementById('analyticsEditCategoryBtn');
+      if (editBtn) editBtn.setAttribute('onclick', "openCategoryWeightsModal('" + pageId + "')");
+
+      var res = await fetch('/api/pages/content-mix?pageId=' + encodeURIComponent(pageId));
+      var data = await res.json();
+      if (!data.success || !data.report) return;
+
+      var report = data.report;
+      var titleElem = document.getElementById('analyticsContentMixTitle');
+      if (titleElem) titleElem.textContent = (report.nicheName || (page ? page.name : 'Page')) + ' Content Mix & Variety Engine';
+
+      var badgeElem = document.getElementById('analyticsContentMixBadge');
+      if (badgeElem) badgeElem.textContent = report.categories.length + ' Deficit-Weighted Categories';
+
+      var pageNameElem = document.getElementById('analyticsContentMixPageName');
+      if (pageNameElem) pageNameElem.textContent = page ? page.name : 'Page';
+
+      var nicheNameElem = document.getElementById('analyticsContentMixNicheName');
+      if (nicheNameElem) nicheNameElem.textContent = report.nicheName || 'General';
+
+      var totalPostsElem = document.getElementById('analyticsContentMixTotalPosts');
+      if (totalPostsElem) totalPostsElem.textContent = String(report.totalPosts);
+
+      var dominantNameElem = document.getElementById('analyticsContentMixDominantName');
+      if (dominantNameElem) dominantNameElem.textContent = report.dominantCategory || 'Dominant';
+
+      // Alerts
+      var alertsElem = document.getElementById('analyticsContentMixAlerts');
+      if (alertsElem) {
+        if (report.alerts && report.alerts.length > 0) {
+          alertsElem.innerHTML = '<div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">' +
+            '<span style="font-size: 20px;">⚠️</span>' +
+            '<div style="font-size: 13px; color: #fca5a5;">' +
+            report.alerts.map(function(a) { return '<strong>Alert:</strong> ' + escapeHtml(a); }).join('<br>') +
+            '</div></div>';
+        } else {
+          alertsElem.innerHTML = '<div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: #6ee7b7; display: flex; align-items: center; gap: 8px;">' +
+            '<span>✓</span> Healthy content distribution across niche categories. Anti-saturation limits enforced in code.</div>';
+        }
+      }
+
+      // Categories
+      var catContainer = document.getElementById('analyticsCategoriesContainer');
+      if (catContainer) {
+        var catHtml = '';
+        report.categories.forEach(function(c) {
+          var isDeficit = c.diff < 0;
+          var isSurplus = c.diff > 0;
+          var diffColor = isDeficit ? '#38bdf8' : isSurplus ? '#f59e0b' : '#34d399';
+          var barWidth = Math.min(100, Math.max(5, (c.actualShare / (c.targetShare * 1.5 || 20)) * 100));
+          var isDominantAlert = c.name === report.dominantCategory && c.actualShare > 30;
+          catHtml += '<div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 12px;">' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">' +
+              '<strong style="font-size: 13px; color: #f1f5f9;">' + escapeHtml(c.name) + '</strong>' +
+              '<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ' + diffColor + '22; color: ' + diffColor + '; font-weight: 700;">' +
+                (c.diff > 0 ? '+' : '') + c.diff + '%' +
+              '</span>' +
+            '</div>' +
+            '<div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">' +
+              '<span>Actual: <strong style="color: #f8fafc;">' + c.actualShare + '%</strong> (' + c.count + ' posts)</span>' +
+              '<span>Target: <strong style="color: #94a3b8;">' + c.targetShare + '%</strong> (Cap: ' + c.maxPerDay + '/day)</span>' +
+            '</div>' +
+            '<div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden;">' +
+              '<div style="width: ' + barWidth + '%; height: 100%; background: ' + (isDominantAlert ? '#ef4444' : '#38bdf8') + '; border-radius: 3px;"></div>' +
+            '</div>' +
+          '</div>';
+        });
+        catContainer.innerHTML = catHtml;
+      }
+
+      // Deduplication
+      var dedupContainer = document.getElementById('analyticsDeduplicationContainer');
+      if (dedupContainer) {
+        if (report.topRepeatedSubjects && report.topRepeatedSubjects.length > 0) {
+          var dedupHtml = '<div style="display: flex; flex-direction: column; gap: 6px;">';
+          report.topRepeatedSubjects.slice(0, 5).forEach(function(s) {
+            dedupHtml += '<div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0, 0, 0, 0.3); border-radius: 4px; font-size: 12px;">' +
+              '<span style="color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px;">' + escapeHtml(s.subject) + '</span>' +
+              '<span class="badge" style="background: ' + (s.count > 1 ? '#7c2d12' : '#064e3b') + '; color: ' + (s.count > 1 ? '#fdba74' : '#6ee7b7') + '; font-size: 10px;">' +
+                s.count + ' post' + (s.count === 1 ? '' : 's') +
+              '</span>' +
+            '</div>';
+          });
+          dedupHtml += '</div>';
+          dedupContainer.innerHTML = dedupHtml;
+        } else {
+          dedupContainer.innerHTML = '<div style="color: #64748b; font-size: 12px; font-style: italic;">No repeat entities detected.</div>';
+        }
+      }
+
+      // Opening phrases
+      var openingsContainer = document.getElementById('analyticsBannedOpeningsContainer');
+      if (openingsContainer) {
+        if (report.openingPhraseFrequency && report.openingPhraseFrequency.length > 0) {
+          var opHtml = '<div style="display: flex; flex-direction: column; gap: 6px;">';
+          report.openingPhraseFrequency.slice(0, 5).forEach(function(op) {
+            opHtml += '<div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0, 0, 0, 0.3); border-radius: 4px; font-size: 12px;">' +
+              '<span style="color: #cbd5e1; font-family: monospace; font-size: 11px;">"' + escapeHtml(op.phrase) + '..."</span>' +
+              '<span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 10px;">' +
+                op.count + 'x' +
+              '</span>' +
+            '</div>';
+          });
+          opHtml += '</div>';
+          openingsContainer.innerHTML = opHtml;
+        } else {
+          openingsContainer.innerHTML = '<div style="color: #64748b; font-size: 12px; font-style: italic;">Zero banned or repeated opening phrases.</div>';
+        }
+      }
+    } catch (e) {
+      console.error('[Dashboard] Error switching analytics content mix:', e);
+    }
+  }
+
+  let currentCwmCategories = [];
+
+  function openCategoryWeightsModal(pageId) {
+    var page = pagesData.find(function(p) { return p.id === pageId; }) || pagesData[0];
+    if (!page) {
+      showToast('No Facebook page found.', 'error');
+      return;
+    }
+
+    var modal = document.getElementById('categoryWeightsModal');
+    if (!modal) return;
+
+    document.getElementById('cwmPageId').value = page.id;
+    var badge = document.getElementById('cwmPageBadge');
+    if (badge) badge.textContent = page.name;
+
+    var nicheKey = (page.niche || (page.content_profile && page.content_profile.niche)) || 'science';
+    var selectElem = document.getElementById('cwmNicheSelect');
+    if (selectElem) selectElem.value = NICHE_PRESETS_CLIENT[nicheKey] ? nicheKey : 'science';
+
+    var dominantCapInput = document.getElementById('cwmMaxDailyDominant');
+    if (dominantCapInput) {
+      dominantCapInput.value = page.max_daily_dominant ?? (page.overrides && page.overrides.max_daily_dominant) ?? page.max_daily_space ?? (page.overrides && page.overrides.max_daily_space) ?? 1;
+    }
+
+    var categoryCapInput = document.getElementById('cwmMaxDailyPerCategory');
+    if (categoryCapInput) {
+      categoryCapInput.value = page.max_daily_per_category ?? (page.overrides && page.overrides.max_daily_per_category) ?? 2;
+    }
+
+    // Load active categories for this page
+    var weights = page.category_weights || (page.overrides && page.overrides.category_weights) || {};
+    var preset = NICHE_PRESETS_CLIENT[selectElem.value] || NICHE_PRESETS_CLIENT.science;
+    var baseCategories = page.categories || (page.overrides && page.overrides.categories) || preset.categories;
+
+    currentCwmCategories = JSON.parse(JSON.stringify(baseCategories));
+    renderCwmCategoriesList(weights);
+
+    var descElem = document.getElementById('cwmPresetDescription');
+    if (descElem && preset) descElem.textContent = preset.description;
+
+    modal.style.display = 'flex';
+  }
+
+  function closeCategoryWeightsModal() {
+    var modal = document.getElementById('categoryWeightsModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  function onCwmNicheChange(nicheKey) {
+    var preset = NICHE_PRESETS_CLIENT[nicheKey] || NICHE_PRESETS_CLIENT.science;
+    var descElem = document.getElementById('cwmPresetDescription');
+    if (descElem && preset) descElem.textContent = preset.description;
+
+    currentCwmCategories = JSON.parse(JSON.stringify(preset.categories));
+    renderCwmCategoriesList({});
+  }
+
+  function renderCwmCategoriesList(customWeights) {
+    var container = document.getElementById('cwmCategoriesList');
+    if (!container) return;
+
+    var html = '';
+    currentCwmCategories.forEach(function(cat, idx) {
+      var weight = (customWeights && customWeights[cat.name] !== undefined) ? customWeights[cat.name] : cat.defaultWeight;
+      html += '<div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #020617; border: 1px solid #1e293b; border-radius: 6px; gap: 12px;">' +
+        '<div style="flex: 1; min-width: 0;">' +
+          '<div style="display: flex; align-items: center; gap: 8px;">' +
+            '<span style="font-size: 13px; font-weight: 600; color: #f8fafc;">' + escapeHtml(cat.name) + '</span>' +
+            '<span style="font-size: 10px; color: #94a3b8; background: #1e293b; padding: 1px 6px; border-radius: 4px;">Cap: ' + (cat.maxPerDay || 2) + '/day</span>' +
+          '</div>' +
+          (cat.description ? '<div style="font-size: 11px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 480px;">' + escapeHtml(cat.description) + '</div>' : '') +
+        '</div>' +
+        '<div style="display: flex; align-items: center; gap: 8px;">' +
+          '<input type="range" min="1" max="50" value="' + weight + '" oninput="syncCwmWeight(' + idx + ', this.value, true)" style="width: 110px; accent-color: #38bdf8;">' +
+          '<div style="display: flex; align-items: center; gap: 4px;">' +
+            '<input type="number" id="cwmWeightInput_' + idx + '" min="1" max="100" value="' + weight + '" oninput="syncCwmWeight(' + idx + ', this.value, false)" class="form-control" style="width: 60px; font-size: 13px; padding: 4px 6px; text-align: center;">' +
+            '<span style="font-size: 12px; color: #94a3b8; font-weight: 600;">%</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    });
+    container.innerHTML = html;
+    updateCwmTotalWeightBadge();
+  }
+
+  function syncCwmWeight(idx, val, fromSlider) {
+    var num = parseInt(val, 10);
+    if (isNaN(num)) num = 0;
+    if (num < 0) num = 0;
+    if (num > 100) num = 100;
+
+    var input = document.getElementById('cwmWeightInput_' + idx);
+    if (input && fromSlider) input.value = num;
+
+    var range = input ? input.parentElement.previousElementSibling : null;
+    if (range && !fromSlider) range.value = num;
+
+    updateCwmTotalWeightBadge();
+  }
+
+  function updateCwmTotalWeightBadge() {
+    var sum = 0;
+    currentCwmCategories.forEach(function(cat, idx) {
+      var input = document.getElementById('cwmWeightInput_' + idx);
+      if (input) {
+        sum += (parseInt(input.value, 10) || 0);
+      }
+    });
+
+    var badge = document.getElementById('cwmTotalWeightBadge');
+    var saveBtn = document.getElementById('cwmSaveBtn');
+    if (!badge) return;
+
+    if (sum === 100) {
+      badge.style.background = 'rgba(52, 211, 153, 0.2)';
+      badge.style.color = '#34d399';
+      badge.textContent = 'Total: 100% ✓';
+      if (saveBtn) saveBtn.disabled = false;
+    } else {
+      badge.style.background = 'rgba(239, 68, 68, 0.2)';
+      badge.style.color = '#f87171';
+      badge.textContent = 'Total: ' + sum + '% (Must equal 100%)';
+      if (saveBtn) saveBtn.disabled = true;
+    }
+  }
+
+  function resetCwmToDefaults() {
+    var selectElem = document.getElementById('cwmNicheSelect');
+    var nicheKey = selectElem ? selectElem.value : 'science';
+    onCwmNicheChange(nicheKey);
+  }
+
+  async function saveCategoryWeightsModal() {
+    var pageId = document.getElementById('cwmPageId').value;
+    if (!pageId) return;
+
+    var nicheKey = document.getElementById('cwmNicheSelect').value;
+    var dominantCap = parseInt(document.getElementById('cwmMaxDailyDominant').value, 10) || 1;
+    var perCategoryCap = parseInt(document.getElementById('cwmMaxDailyPerCategory').value, 10) || 2;
+
+    var weights = {};
+    currentCwmCategories.forEach(function(cat, idx) {
+      var input = document.getElementById('cwmWeightInput_' + idx);
+      if (input) {
+        weights[cat.name] = parseInt(input.value, 10) || cat.defaultWeight;
+      }
+    });
+
+    var saveBtn = document.getElementById('cwmSaveBtn');
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving...';
+    }
+
+    try {
+      var res = await fetch('/api/pages/update-categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pageId: pageId,
+          niche: nicheKey,
+          categories: currentCwmCategories,
+          weights: weights,
+          maxDailyDominant: dominantCap,
+          maxDailySpace: dominantCap,
+          maxDailyPerCategory: perCategoryCap,
+        }),
+      });
+
+      var data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to save categories');
+      }
+
+      showToast('Niche & category rules saved successfully!', 'success');
+      closeCategoryWeightsModal();
+
+      // Update in-memory page
+      var page = pagesData.find(function(p) { return p.id === pageId; });
+      if (page) {
+        page.niche = nicheKey;
+        page.categories = currentCwmCategories;
+        page.category_weights = weights;
+        page.max_daily_dominant = dominantCap;
+        page.max_daily_space = dominantCap;
+        page.max_daily_per_category = perCategoryCap;
+        if (!page.overrides) page.overrides = {};
+        page.overrides.niche = nicheKey;
+        page.overrides.categories = currentCwmCategories;
+        page.overrides.category_weights = weights;
+        page.overrides.max_daily_dominant = dominantCap;
+        page.overrides.max_daily_space = dominantCap;
+        page.overrides.max_daily_per_category = perCategoryCap;
+      }
+
+      // Refresh studio pills if on prompt studio
+      updateStudioCategoryPills(page);
+
+      // Refresh analytics content mix if that page is selected
+      var analyticsPageSelect = document.getElementById('analyticsPageSelector');
+      if (analyticsPageSelect && analyticsPageSelect.value === pageId) {
+        switchAnalyticsPageContentMix(pageId);
+      }
+    } catch (err) {
+      showToast(err.message || 'Error saving category rules', 'error');
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '💾 Save Variety Rules';
+      }
+    }
+  }
+
   // --- Attach all functions to window for global invocation ---
+  window.NICHE_PRESETS_CLIENT = NICHE_PRESETS_CLIENT;
+  window.switchAnalyticsPageContentMix = switchAnalyticsPageContentMix;
+  window.openCategoryWeightsModal = openCategoryWeightsModal;
+  window.closeCategoryWeightsModal = closeCategoryWeightsModal;
+  window.onCwmNicheChange = onCwmNicheChange;
+  window.syncCwmWeight = syncCwmWeight;
+  window.resetCwmToDefaults = resetCwmToDefaults;
+  window.saveCategoryWeightsModal = saveCategoryWeightsModal;
+  window.updateStudioCategoryPills = updateStudioCategoryPills;
   window.openAddAccountModal = openAddAccountModal;
   window.closeAddAccountModal = closeAddAccountModal;
   window.submitNewAccount = submitNewAccount;

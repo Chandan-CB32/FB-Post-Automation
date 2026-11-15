@@ -220,6 +220,12 @@ export interface StoredPage {
   image_min_font_size?: number;
   image_highlight_enabled?: boolean;
   image_highlight_colors?: string[];
+  category_weights?: Record<string, number>;
+  niche?: string;
+  categories?: any[];
+  max_daily_dominant?: number;
+  max_daily_space?: number;
+  max_daily_per_category?: number;
   overrides?: Record<string, any>;
   niche_analysis?: any;
   ai_disclosure_enabled?: boolean;
@@ -866,6 +872,12 @@ export class SystemStore {
       image_min_font_size: row.image_min_font_size ? Number(row.image_min_font_size) : (ov['image.headlinePanel.minFontSize'] ? Number(ov['image.headlinePanel.minFontSize']) : 76),
       image_highlight_enabled: row.image_highlight_enabled !== undefined ? Boolean(row.image_highlight_enabled) : true,
       image_highlight_colors: Array.isArray(row.image_highlight_colors) ? row.image_highlight_colors : (Array.isArray(ov['image.headlinePanel.highlightColors']) ? ov['image.headlinePanel.highlightColors'] : undefined),
+      category_weights: row.category_weights || ov.category_weights || undefined,
+      niche: row.niche || ov.niche || undefined,
+      categories: Array.isArray(row.categories) ? row.categories : (Array.isArray(ov.categories) ? ov.categories : undefined),
+      max_daily_dominant: row.max_daily_dominant !== undefined && row.max_daily_dominant !== null ? Number(row.max_daily_dominant) : (ov.max_daily_dominant !== undefined ? Number(ov.max_daily_dominant) : undefined),
+      max_daily_space: row.max_daily_space !== undefined && row.max_daily_space !== null ? Number(row.max_daily_space) : (ov.max_daily_space !== undefined ? Number(ov.max_daily_space) : undefined),
+      max_daily_per_category: row.max_daily_per_category !== undefined && row.max_daily_per_category !== null ? Number(row.max_daily_per_category) : (ov.max_daily_per_category !== undefined ? Number(ov.max_daily_per_category) : undefined),
       overrides: ov,
       connected_at: row.connected_at || row.created_at,
       last_synced_at: row.last_synced_at || row.updated_at,
@@ -1531,6 +1543,12 @@ export class SystemStore {
       ...(updates.mode_chosen !== undefined ? { mode_chosen: updates.mode_chosen } : {}),
       ...(updates.test_run_verified !== undefined ? { test_run_verified: updates.test_run_verified } : {}),
       ...(updates.test_run_report !== undefined ? { test_run_report: updates.test_run_report } : {}),
+      ...(updates.category_weights !== undefined ? { category_weights: updates.category_weights } : {}),
+      ...(updates.niche !== undefined ? { niche: updates.niche } : {}),
+      ...(updates.categories !== undefined ? { categories: updates.categories } : {}),
+      ...(updates.max_daily_dominant !== undefined ? { max_daily_dominant: updates.max_daily_dominant } : {}),
+      ...(updates.max_daily_space !== undefined ? { max_daily_space: updates.max_daily_space } : {}),
+      ...(updates.max_daily_per_category !== undefined ? { max_daily_per_category: updates.max_daily_per_category } : {}),
       settings_version: updatePayload.settings_version || existingOverrides.settings_version || existingRow.settings_version || existingRow.version || 1,
       schedule_version: updatePayload.schedule_version || existingOverrides.schedule_version || existingRow.schedule_version || 1,
       prompts_version: updatePayload.prompts_version || existingOverrides.prompts_version || existingRow.prompts_version || 1,
