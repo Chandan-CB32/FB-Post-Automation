@@ -93,11 +93,15 @@ export interface PageCategoryConfig {
 }
 
 export interface PostRecordForCategory {
+  id?: string;
   category?: string | null;
   title?: string | null;
   caption?: string | null;
+  topic?: string | null;
   created_at?: string | Date;
   scheduled_for?: string | Date;
+  published_at?: string | Date;
+  [key: string]: any;
 }
 
 export interface CategorySelectionResult {
@@ -279,8 +283,7 @@ export function assignNextCategory(
 }
 
 /**
- * Calculates current content mix shares, top repeated subjects, opening phrase frequency,
- * and checks for alerts (e.g. Space > 30% or daily cap exceeded) across last 50 posts and last 30 days.
+ * Calculates current content mix shares and checks for alerts (e.g. Space > 30%).
  */
 export function calculateContentMixReport(
   posts: PostRecordForCategory[],
@@ -288,6 +291,8 @@ export function calculateContentMixReport(
   now: Date = new Date()
 ) {
   const windowPosts = posts.slice(0, 50);
+  const total = windowPosts.length;
+
   const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
   const cutoff30Days = now.getTime() - thirtyDaysMs;
   const thirtyDayPosts = posts.filter((p) => {
@@ -313,82 +318,74 @@ export function calculateContentMixReport(
         counts[norm] = (counts[norm] || 0) + 1;
       }
     }
-    const total = postSlice.length;
+    const sliceTotal = postSlice.length;
     return DEFAULT_CATEGORIES.map((cat) => {
       const count = counts[cat.name] || 0;
-      const actualShare = total > 0 ? (count / total) * 100 : 0;
+      const actualShare = sliceTotal > 0 ? (count / sliceTotal) * 100 : 0;
       const targetShare = (weights[cat.name] / totalWeight) * 100;
+      const diff = actualShare - targetShare;
       return {
         id: cat.id,
         name: cat.name,
         count,
         actualShare: Math.round(actualShare * 10) / 10,
         targetShare: Math.round(targetShare * 10) / 10,
-        diff: Math.round((actualShare - targetShare) * 10) / 10,
+        diff: Math.round(diff * 10) / 10,
         maxPerDay: cat.maxPerDay,
       };
     });
   };
 
-  const last50Breakdown = calculateBreakdown(windowPosts);
-  const last30DaysBreakdown = calculateBreakdown(thirtyDayPosts);
+  const categories = calculateBreakdown(windowPosts);
+  const last30DaysCategories = calculateBreakdown(thirtyDayPosts);
 
-  // Top repeated subjects analysis
-  const subjectCounts: Record<string, number> = {};
-  for (const p of posts.slice(0, 50)) {
-    const subject = (p.title || '').trim();
-    if (subject) {
-      subjectCounts[subject] = (subjectCounts[subject] || 0) + 1;
-    }
-  }
-  const topRepeatedSubjects = Object.entries(subjectCounts)
-    .map(([subject, count]) => ({ subject, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
-
-  // Opening phrase frequency analysis (first 6 words of caption)
-  const openingCounts: Record<string, number> = {};
-  for (const p of posts.slice(0, 50)) {
-    const cap = (p.caption || '')
-      .replace(/^#+\s+/g, '')
-      .replace(/^\*+[^*]+\*+:?\s*/g, '')
-      .trim();
-    if (cap) {
-      const words = cap.split(/\s+/).filter(Boolean).slice(0, 6).join(' ').toLowerCase();
-      if (words.length > 5) {
-        openingCounts[words] = (openingCounts[words] || 0) + 1;
-      }
-    }
-  }
-  const openingPhraseFrequency = Object.entries(openingCounts)
-    .map(([phrase, count]) => ({ phrase, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
-
-  // Alerts
-  const spaceCategory = last50Breakdown.find((c) => c.name === 'Space & Astronomy');
+  const spaceCategory = categories.find((c) => c.name === 'Space & Astronomy');
   const spaceShare = spaceCategory ? spaceCategory.actualShare : 0;
   const hasSpaceAlert = spaceShare > 30;
 
   const alerts: string[] = [];
   if (hasSpaceAlert) {
-    alerts.push(`Space & Astronomy is at ${spaceShare}% of the last 50 posts (exceeds 30% ceiling). Category engine will strictly divert to deficit categories.`);
+    alerts.push(`Space & Astronomy is at ${spaceShare}% of recent posts (exceeds 30% ceiling). Category engine will prioritize non-space science.`);
   }
 
-  // Check 30-day Space share
-  const space30Days = last30DaysBreakdown.find((c) => c.name === 'Space & Astronomy');
-  if (space30Days && space30Days.actualShare > 30 && !hasSpaceAlert) {
-    alerts.push(`Space & Astronomy is at ${space30Days.actualShare}% over the last 30 days (exceeds 30% ceiling).`);
+  const subjectCounts: Record<string, number> = {};
+  const openingCounts: Record<string, number> = {};
+
+  for (const p of windowPosts) {
+    if (p.title) {
+      const cleanTitle = p.title.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
+      if (cleanTitle) {
+        subjectCounts[cleanTitle] = (subjectCounts[cleanTitle] || 0) + 1;
+      }
+    }
+    if (p.caption) {
+      const firstWords = p.caption.trim().split(/\s+/).slice(0, 4).join(' ');
+      if (firstWords) {
+        openingCounts[firstWords] = (openingCounts[firstWords] || 0) + 1;
+      }
+    }
   }
+
+  const topRepeatedSubjects = Object.entries(subjectCounts)
+    .map(([subject, count]) => ({ subject, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  const openingPhraseFrequency = Object.entries(openingCounts)
+    .map(([phrase, count]) => ({ phrase, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
 
   return {
-    totalPosts: windowPosts.length,
+    totalPosts: total,
     thirtyDayPostsCount: thirtyDayPosts.length,
-    categories: last50Breakdown,
-    last30DaysCategories: last30DaysBreakdown,
-    topRepeatedSubjects,
-    openingPhraseFrequency,
+    categories,
+    last30DaysCategories,
     hasSpaceAlert,
     alerts,
+    topRepeatedSubjects,
+    openingPhraseFrequency,
+    openingPhraseFrequencies: openingPhraseFrequency,
   };
 }
+
