@@ -308,8 +308,13 @@ export function layoutHeadline(
 
     if (bestFs >= minFontSize) {
       const fillRatio = longestWidth / availableWidth;
-      // High score for large font, filling available width >= 78%
-      let score = bestFs * 10;
+      // High score for sweet spot (around 56-60px) when maxFontSize <= 70; for unconstrained mode, score by font size
+      let score = 0;
+      if (maxFontSize <= 70) {
+        score = 300 - Math.abs(bestFs - 58) * 10;
+      } else {
+        score = bestFs * 10;
+      }
       if (fillRatio >= targetFillRatio) {
         score += 200;
       }

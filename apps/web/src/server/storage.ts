@@ -218,6 +218,7 @@ export interface StoredPage {
   image_panel_color?: string;
   image_panel_height_mode?: 'auto' | 'fixed_30' | 'fixed_36' | 'fixed_42' | string;
   image_min_font_size?: number;
+  image_max_font_size?: number;
   image_highlight_enabled?: boolean;
   image_highlight_colors?: string[];
   category_weights?: Record<string, number>;
@@ -869,7 +870,8 @@ export class SystemStore {
       image_font_family: row.image_font_family || ov['image.headlinePanel.fontFamily'] || 'Roboto Condensed',
       image_panel_color: row.image_panel_color || ov['image.headlinePanel.backgroundColor'] || '#000000',
       image_panel_height_mode: row.image_panel_height_mode || ov['image.headlinePanel.heightMode'] || 'auto',
-      image_min_font_size: row.image_min_font_size ? Number(row.image_min_font_size) : (ov['image.headlinePanel.minFontSize'] ? Number(ov['image.headlinePanel.minFontSize']) : 76),
+      image_min_font_size: row.image_min_font_size ? Number(row.image_min_font_size) : (ov['image.headlinePanel.minFontSize'] ? Number(ov['image.headlinePanel.minFontSize']) : 48),
+      image_max_font_size: row.image_max_font_size ? Number(row.image_max_font_size) : (ov['image.headlinePanel.maxFontSize'] ? Number(ov['image.headlinePanel.maxFontSize']) : 64),
       image_highlight_enabled: row.image_highlight_enabled !== undefined ? Boolean(row.image_highlight_enabled) : true,
       image_highlight_colors: Array.isArray(row.image_highlight_colors) ? row.image_highlight_colors : (Array.isArray(ov['image.headlinePanel.highlightColors']) ? ov['image.headlinePanel.highlightColors'] : undefined),
       category_weights: row.category_weights || ov.category_weights || undefined,
@@ -1531,6 +1533,7 @@ export class SystemStore {
       ...(updates.image_panel_color !== undefined ? { 'image.headlinePanel.backgroundColor': updates.image_panel_color } : {}),
       ...(updates.image_panel_height_mode !== undefined ? { 'image.headlinePanel.heightMode': updates.image_panel_height_mode } : {}),
       ...(updates.image_min_font_size !== undefined ? { 'image.headlinePanel.minFontSize': updates.image_min_font_size } : {}),
+      ...((updates as any).image_max_font_size !== undefined ? { 'image.headlinePanel.maxFontSize': (updates as any).image_max_font_size } : {}),
       ...(updates.image_highlight_enabled !== undefined ? { 'image.headlinePanel.highlightEnabled': updates.image_highlight_enabled } : {}),
       ...(updates.image_highlight_colors !== undefined ? { 'image.headlinePanel.highlightColors': updates.image_highlight_colors } : {}),
       ...((updates as any).qa_pass_threshold !== undefined ? { qa_pass_threshold: (updates as any).qa_pass_threshold } : {}),

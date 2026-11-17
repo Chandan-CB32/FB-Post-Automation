@@ -24,6 +24,7 @@ export interface VarietyValidationInput {
   facts: string[];
   imageBrief?: ImageBriefOutput;
   recentOpenings?: string[]; // First 6 words of last 20 posts
+  requireIllustrationDisclaimer?: boolean;
 }
 
 export interface VarietyValidationResult {
@@ -183,13 +184,13 @@ export function validatePostContentVariety(
     });
   }
 
-  // 2. Validate Final Illustration Disclaimer Line
+  // 2. Validate Final Illustration Disclaimer Line (optional per Page/system settings)
   const hasIllustrationDisclaimer =
     lowerCaption.includes('image: ai-generated illustration') ||
     lowerCaption.includes('image: ai generated illustration') ||
     lowerCaption.includes('illustration: ai-generated');
 
-  if (!hasIllustrationDisclaimer) {
+  if (input.requireIllustrationDisclaimer && !hasIllustrationDisclaimer) {
     violations.push({
       rule: 'disclaimer_line_missing',
       message: 'Caption must include the mandatory line "Image: AI-generated illustration."',

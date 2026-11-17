@@ -380,49 +380,132 @@ export function extractAndCleanPostCaption(
   };
   let draft = rawDraft;
 
-  const hasStructuredBlocks =
-    draft.includes("IMAGE_BRIEF") ||
-    draft.includes("HEADLINE") ||
-    draft.includes("CAPTION") ||
-    draft.includes("Subject:") ||
-    draft.includes("Visual Detail:") ||
-    draft.includes("Setting:");
+  // 1. Extract HEADLINE
+  // Matches "HEADLINE: text" or "**HEADLINE:**\ntext" or "HEADLINE:\ntext"
+  const hlMatch = draft.match(/(?:^|\n)\s*[*#_]*HEADLINE[*#_]*\s*:?\s*[*#_]*\s*(?:([A-Za-z0-9][^\n]+)|\n\s*([A-Za-z0-9][^\n]+))/i);
+  if (hlMatch) {
+    let candidateHl = (hlMatch[1] || hlMatch[2] || "").trim();
+    const alphanumeric = candidateHl.replace(/[^A-Za-z0-9]/g, "").trim();
+    const words = candidateHl.replace(/[^A-Za-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+    const lowerHl = candidateHl.toLowerCase();
+    const isInstruction =
+      lowerHl.includes("avoid sensational") ||
+      lowerHl.includes("required structure") ||
+      lowerHl.includes("all-caps") ||
+      lowerHl.includes("punchy 6-12") ||
+      lowerHl.includes("key emphasis");
 
-  if (hasStructuredBlocks) {
-    const hlMatch = draft.match(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*HEADLINE:?\s*(?:\*{1,3})?\s*([^\n]+)/i);
-    if (hlMatch && hlMatch[1]) {
-      parsedHeadline = hlMatch[1].replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "").trim();
-    }
-
-    const subjMatch = draft.match(/(?:^|\n)\s*[-*•]?\s*(?:\*{1,3})?Subject:?\s*(?:\*{1,3})?\s*([^\n]+)/i);
-    const detailMatch = draft.match(/(?:^|\n)\s*[-*•]?\s*(?:\*{1,3})?(?:Visual Detail|VisualDetail|Detail):?\s*(?:\*{1,3})?\s*([^\n]+)/i);
-    const settingMatch = draft.match(/(?:^|\n)\s*[-*•]?\s*(?:\*{1,3})?Setting:?\s*(?:\*{1,3})?\s*([^\n]+)/i);
-
-    if (subjMatch && subjMatch[1]) parsedImageBrief.subject = subjMatch[1].replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "").trim();
-    if (detailMatch && detailMatch[1]) parsedImageBrief.visualDetail = detailMatch[1].replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "").trim();
-    if (settingMatch && settingMatch[1]) parsedImageBrief.setting = settingMatch[1].replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "").trim();
-
-    const capMatch = draft.match(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*CAPTION:?\s*(?:\*{1,3})?\s*([\s\S]+)$/i);
-    if (capMatch && capMatch[1]) {
-      draft = capMatch[1].trim();
-    } else {
-      // If CAPTION: tag was omitted, strip out all preceding metadata lines
-      draft = draft
-        .replace(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*HEADLINE:?[^\n]*/gi, "")
-        .replace(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*IMAGE_BRIEF:?[^\n]*/gi, "")
-        .replace(/(?:^|\n)\s*[-*•]?\s*(?:\*{1,3})?(?:Subject|Visual Detail|VisualDetail|Detail|Setting):?[^\n]*/gi, "")
-        .replace(/(?:^|\n)\s*(?:\*{1,3}|#{1,3})?\s*CAPTION:?[^\n]*/gi, "")
-        .trim();
+    if (alphanumeric.length >= 4 && words.length >= 2 && !isInstruction) {
+      candidateHl = candidateHl.replace(/^[:\s\-*#_]+|[:\s\-*#_]+$/g, "").trim();
+      candidateHl = candidateHl.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "").trim();
+      parsedHeadline = candidateHl;
     }
   }
 
-  // Cleanly strip any leading AI output wrappers (e.g. "**Caption**", "Caption:", "### Caption", or dangling asterisks)
-  draft = draft
-    .replace(/^(?:#{1,3}\s*)?(?:\*{1,2})?(?:caption|post|facebook post|title)(?:\*{1,2})?:?\s*/im, "")
-    .replace(/^[\s\r\n*#-]+/, "")
-    .trim();
+  // 2. Extract IMAGE_BRIEF fields
+  const subjMatch = draft.match(/(?:^|\n)\s*[-*•_]*\s*[*#_]*Subject[*#_]*\s*:?\s*[*#_]*\s*([^\n]+)/i);
+  const detailMatch = draft.match(/(?:^|\n)\s*[-*•_]*\s*[*#_]*(?:Visual Detail|VisualDetail|Detail)[*#_]*\s*:?\s*[*#_]*\s*([^\n]+)/i);
+  const settingMatch = draft.match(/(?:^|\n)\s*[-*•_]*\s*[*#_]*Setting[*#_]*\s*:?\s*[*#_]*\s*([^\n]+)/i);
 
-  // STRICT FACEBOOK PLAIN TEXT: Strip ALL markdown bold/italic asterisks from the caption body
+  if (subjMatch && subjMatch[1]) parsedImageBrief.subject = subjMatch[1].replace(/[*#_]/g, "").trim();
+  if (detailMatch && detailMatch[1]) parsedImageBrief.visualDetail = detailMatch[1].replace(/[*#_]/g, "").trim();
+  if (settingMatch && settingMatch[1]) parsedImageBrief.setting = settingMatch[1].replace(/[*#_]/g, "").trim();
+
+  // 3. Extract CAPTION body
+  const capMatch = draft.match(/(?:^|\n)\s*[*#_]*CAPTION[*#_]*\s*:?\s*[*#_]*\s*([\s\S]+)$/i);
+  if (capMatch && capMatch[1]) {
+    draft = capMatch[1].trim();
+  } else {
+    // If CAPTION: tag was omitted, strip out all leading metadata sections
+    const rawLines = draft.split("\n");
+    let bodyStartIndex = 0;
+    let foundBody = false;
+
+    for (let i = 0; i < rawLines.length; i++) {
+      const line = rawLines[i].trim();
+
+      const isMeta =
+        /^[*#_\s-]*headline[*#_\s:]*/i.test(line) ||
+        /^[*#_\s-]*image_brief[*#_\s:]*/i.test(line) ||
+        /^[-*•_\s]*[*#_]*(?:subject|visual detail|visualdetail|detail|setting|fact-check note|fact-check)[*#_]*\s*:/i.test(line) ||
+        /^[*#_\s-]*caption[*#_\s:]*/i.test(line) ||
+        /^[*#_\s-]{1,5}$/.test(line);
+
+      const isParsedHl =
+        parsedHeadline &&
+        line.replace(/[*#_]/g, "").trim() === parsedHeadline.replace(/[*#_]/g, "").trim();
+
+      if (isMeta || isParsedHl || line === "") {
+        continue;
+      }
+
+      bodyStartIndex = i;
+      foundBody = true;
+      break;
+    }
+
+    if (foundBody) {
+      draft = rawLines.slice(bodyStartIndex).join("\n").trim();
+    }
+  }
+
+  // 4. Remove conversational preambles
+  draft = draft.replace(
+    /^(?:Here is a (?:sample )?(?:Facebook )?post[^\n]*|Sure, here is[^\n]*|Based on the (?:facts|provided|rules)[^\n]*|Never use[^\n]*|Below is the[^\n]*)\n+/im,
+    ""
+  );
+
+  // 5. Remove instruction echoes & topic title repeats from caption
+  const lines = draft.split("\n");
+  const cleanedLines: string[] = [];
+  let foundBodyStart = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const lower = line.toLowerCase();
+
+    const isInstructionEcho =
+      lower.includes("avoid sensational") ||
+      lower.includes("clickbait language") ||
+      lower.includes("verified sources and grounded facts") ||
+      lower.includes("no banned openings") ||
+      lower.includes("plain text rule") ||
+      lower.includes("facebook display compliance") ||
+      lower.includes("required structure") ||
+      lower.includes("editorial rules") ||
+      lower.includes("mandatory plain text") ||
+      lower.includes("strictly enforced") ||
+      lower.includes("assignment block") ||
+      lower.includes("assigned category:") ||
+      lower.includes("hashtag composition rule") ||
+      /^image:\s*ai-generated\s*illustration\.?/i.test(line);
+
+    const isTopicEcho =
+      !foundBodyStart &&
+      topicTitle &&
+      (line.toLowerCase() === topicTitle.toLowerCase() ||
+        lower.startsWith("topic:") ||
+        lower.startsWith("title:"));
+
+    const isMetaDangling =
+      /^[*#_\s-]*headline[*#_\s:]*/i.test(line) ||
+      /^[*#_\s-]*image_brief[*#_\s:]*/i.test(line) ||
+      /^[-*•_\s]*[*#_]*(?:subject|visual detail|visualdetail|detail|setting)[*#_]*\s*:/i.test(line);
+
+    if (!foundBodyStart) {
+      if (isInstructionEcho || isTopicEcho || isMetaDangling || line === "" || /^[*#_\s-]{1,5}$/.test(line)) {
+        continue;
+      }
+      foundBodyStart = true;
+    } else if (isInstructionEcho || isMetaDangling) {
+      continue;
+    }
+
+    cleanedLines.push(lines[i]);
+  }
+  draft = cleanedLines.join("\n").trim();
+
+  // 6. STRICT FACEBOOK PLAIN TEXT: Strip ALL markdown bold/italic asterisks from caption body
   draft = draft
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/__([^_]+)__/g, "$1")
@@ -430,6 +513,16 @@ export function extractAndCleanPostCaption(
     .replace(/^\s*[-*#]{1,4}\s*$/gm, "")
     .replace(/\*{1,3}/g, "")
     .trim();
+
+  // Validate parsedHeadline fallback
+  const wordsInHeadline = (parsedHeadline || "").replace(/[^A-Za-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  if (wordsInHeadline.length < 2) {
+    if (topicTitle && topicTitle.trim()) {
+      parsedHeadline = topicTitle.trim().toUpperCase();
+    } else {
+      parsedHeadline = "BREAKTHROUGH SCIENTIFIC DISCOVERY";
+    }
+  }
 
   return {
     headline: parsedHeadline,
@@ -847,7 +940,7 @@ BANNED FILLER PHRASES (STRICTLY PROHIBITED ANYWHERE IN CAPTION):
 ${BANNED_FILLER_PHRASES.map((b) => `"${b}"`).join(", ")}
 
 REQUIRED STRUCTURE:
-HEADLINE: <All-caps punchy 6-12 word headline with KEY EMPHASIS highlighted>
+HEADLINE: <All-caps punchy 6-12 word headline stating the core fact with **KEY EMPHASIS** highlighted>
 IMAGE_BRIEF:
 Subject: <Concrete physical subject, e.g. An enormous blue whale swimming in sunlit ocean>
 Visual Detail: <One true physical scientific detail, e.g. Barnacles on mottled textured grey skin>
@@ -855,20 +948,25 @@ Setting: <Physical realistic environment, e.g. Open clear Pacific Ocean with dow
 CAPTION:
 <Paragraph 1: Compelling direct hook without clickbait, banned openings, or asterisks>
 
-<Paragraph 2: Detailed scientific findings directly grounded in the verified facts above>
+<Paragraph 2: Detailed findings directly grounded in the verified facts above>
 
 <Paragraph 3: Broader implications and forward perspective>
 
 <Open-ended engaging question for readers>
 
-Image: AI-generated illustration.
 #broad #category #topic1 #topic2 #community
 
 MANDATORY PLAIN TEXT RULE (FACEBOOK DISPLAY COMPLIANCE):
 - NEVER use markdown bold or asterisks (NO "**" or "*") anywhere in the CAPTION. Facebook does NOT support markdown bold and displays raw "**" asterisks as ugly symbols. Write clean plain English text.
 - Do NOT output "HEADLINE:" or "IMAGE_BRIEF:" inside the CAPTION block. The CAPTION block must ONLY contain the actual post text.
 
-HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science, 1 category, 2 topic-specific, 1 community.`;
+STRICT OUTPUT INSTRUCTIONS:
+- You must start your response IMMEDIATELY with "HEADLINE:".
+- Do NOT output any conversational preamble, intro text, summary, or restatement of rules.
+- Do NOT write "**Caption**" or duplicate the topic title before the caption.
+- Do NOT add "Image: AI-generated illustration." to the caption.
+
+HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad niche, 1 category, 2 topic-specific, 1 community.`;
 
   const structureRulesPrompt = `MANDATORY EDITORIAL & STRUCTURE RULES (STRICT COMPLIANCE REQUIRED):
 - Total Word Count: MUST BE strictly between ${minWords} and ${maxWords} words (Target: ${targetWords} words).
@@ -878,14 +976,17 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
 - Hashtags: End with 3 to 5 relevant hashtags on their own final line.
 - Policies: Zero links or URLs. Minimal emojis (1-2 maximum).`;
 
-  const rawEffectivePrompt = [
-    basePrompt,
-    customPromptSection,
-    assignmentBlock,
-    structureRulesPrompt,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const rawEffectivePrompt = (page.custom_caption_prompt && page.custom_caption_prompt_mode === "replace")
+    ? [
+        customPromptSection,
+        assignmentBlock,
+      ].filter(Boolean).join("\n\n")
+    : [
+        basePrompt,
+        customPromptSection,
+        assignmentBlock,
+        structureRulesPrompt,
+      ].filter(Boolean).join("\n\n");
   const effectivePrompt = maskSecretsInPrompt(rawEffectivePrompt);
 
   // Active text providers failover selection sorted by priority ascending (1 = Primary, 2 = Secondary...)
@@ -1081,15 +1182,10 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
       };
     }
 
-    // Ensure mandatory illustration disclaimer line is present
-    if (!draft.toLowerCase().includes("image: ai-generated illustration")) {
-      const parts = draft.split(/(?=\n\s*#[A-Za-z0-9_]+)/);
-      if (parts.length > 1) {
-        draft = `${parts[0].trim()}\n\nImage: AI-generated illustration.\n${parts[1].trim()}`;
-      } else {
-        draft = `${draft.trim()}\n\nImage: AI-generated illustration.`;
-      }
-    }
+    // Strip any unwanted illustration disclaimer line from the caption
+    draft = draft
+      .replace(/(?:^|\n)\s*(?:[-*•]\s*)?Image:\s*AI-generated\s*illustration\.?\s*(?:\n|$)/gi, "\n\n")
+      .trim();
 
     // Ensure exactly 5 valid hashtags conforming to composition rule (1 broad, 1 category, 2 topic, 1 community)
     const existingTags = extractHashtags(draft);
@@ -1794,6 +1890,10 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad science,
     panelColor: (page.overrides?.["image.panelColor"] as string) || "#000000",
     panelHeightMode:
       (page.overrides?.["image.panelHeightMode"] as any) || "auto",
+    minFontSize:
+      (page.overrides?.["image.headlinePanel.minFontSize"] as number) || 48,
+    maxFontSize:
+      (page.overrides?.["image.headlinePanel.maxFontSize"] as number) || 64,
     themeColor: isHorror ? "#e11d48" : "#38bdf8",
     niche: topicCategory,
     imageUrl: thumbnailUrl,

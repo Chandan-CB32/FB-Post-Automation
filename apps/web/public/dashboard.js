@@ -1280,7 +1280,7 @@
 
     const fontFamily = page.image_font_family || overrides['image.headlinePanel.fontFamily'] || 'Roboto';
     const panelHeightMode = page.image_panel_height_mode || overrides['image.headlinePanel.heightMode'] || 'auto';
-    const minFontSize = page.image_min_font_size || overrides['image.headlinePanel.minFontSize'] || 76;
+    const minFontSize = page.image_min_font_size || overrides['image.headlinePanel.minFontSize'] || 48;
     const highlightStyle = overrides['image.headlinePanel.highlightStyle'] || 'alternating';
     const accent1 = (page.image_highlight_colors && page.image_highlight_colors[0]) || overrides['image.headlinePanel.accent1Color'] || '#FFD21F';
     const accent2 = (page.image_highlight_colors && page.image_highlight_colors[1]) || overrides['image.headlinePanel.accent2Color'] || '#22D3EE';

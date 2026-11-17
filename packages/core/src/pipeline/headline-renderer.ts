@@ -56,6 +56,12 @@ export function renderHeadlineCard(
     mergedOptions = { ...options };
   }
 
+  // Guard against lone punctuation (e.g. ":" or "-") or empty headline to prevent rendering lone dots
+  const alphanumericOnly = headlineText.replace(/[^A-Za-z0-9]/g, '').trim();
+  if (!alphanumericOnly) {
+    headlineText = 'DISCOVERY & REVELATION';
+  }
+
   const canvasWidth = mergedOptions.canvasWidth ?? 1080;
   const canvasHeight = mergedOptions.canvasHeight ?? 1350;
   const fontFamily = (mergedOptions.fontFamily as SupportedFontFamily) || 'Roboto';

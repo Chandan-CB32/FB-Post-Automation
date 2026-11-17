@@ -255,6 +255,7 @@ describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
         topic: 'Blue Whale Physiology',
         facts: validFacts,
         imageBrief: validImageBrief,
+        requireIllustrationDisclaimer: true,
       });
 
       expect(res.valid).toBe(false);
@@ -283,6 +284,7 @@ describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
         topic: 'Blue Whale Physiology',
         facts: validFacts,
         imageBrief: validImageBrief,
+        requireIllustrationDisclaimer: true,
       });
 
       expect(res.valid).toBe(false);
@@ -297,6 +299,7 @@ describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
         topic: 'Giant Squid',
         facts: validFacts,
         imageBrief: validImageBrief,
+        requireIllustrationDisclaimer: true,
       });
 
       expect(res.valid).toBe(false);
@@ -312,6 +315,7 @@ describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
         topic: 'Blue Whale Physiology',
         facts: validFacts,
         imageBrief: validImageBrief,
+        requireIllustrationDisclaimer: true,
       });
       expect(res0.valid).toBe(false);
       expect(res0.violations.some((v) => v.rule === 'hashtag_composition')).toBe(true);
@@ -324,6 +328,7 @@ describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
         topic: 'Blue Whale Physiology',
         facts: validFacts,
         imageBrief: validImageBrief,
+        requireIllustrationDisclaimer: true,
       });
       expect(res4.valid).toBe(false);
 
@@ -335,6 +340,7 @@ describe('Content Variety and Image Relevance Engine (Milestone 10)', () => {
         topic: 'Blue Whale Physiology',
         facts: validFacts,
         imageBrief: validImageBrief,
+        requireIllustrationDisclaimer: true,
       });
       expect(res5.valid).toBe(true);
       expect(res5.score).toBe(100);
@@ -378,7 +384,7 @@ Image: AI-generated illustration.
       expect(cleaned.caption).not.toContain('**');
       expect(cleaned.caption).toContain('Under the crushing darkness of the Mariana Trench');
       expect(cleaned.caption).toContain('glowing green organ');
-      expect(cleaned.caption).toContain('Image: AI-generated illustration.');
+      expect(cleaned.caption).not.toContain('Image: AI-generated illustration.');
       expect(cleaned.caption).toContain('#science #animalandoceans #giant #squids #sciencefacts');
     });
   });
