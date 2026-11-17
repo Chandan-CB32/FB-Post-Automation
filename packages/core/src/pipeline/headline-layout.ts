@@ -96,7 +96,8 @@ export function calculatePanelHeight(
   let ratio = 0.36;
   if (lineCount <= 2) ratio = 0.30;
   else if (lineCount === 3) ratio = 0.36;
-  else ratio = 0.42;
+  else if (lineCount === 4) ratio = 0.40;
+  else ratio = 0.44;
 
   const panelHeight = Math.round(canvasHeight * ratio);
   return { panelHeight, panelTop: canvasHeight - panelHeight };
@@ -262,7 +263,7 @@ export function layoutHeadline(
   };
 
   const candidates: CandidateResult[] = [];
-  const candidateLineCounts = tokens.length <= 4 ? [2] : tokens.length <= 8 ? [2, 3] : [3, 4];
+  const candidateLineCounts = tokens.length <= 4 ? [2] : tokens.length <= 8 ? [2, 3] : tokens.length <= 12 ? [3, 4] : [3, 4, 5];
 
   for (const lineCount of candidateLineCounts) {
     const partition = partitionTokens(tokens, lineCount);
@@ -318,7 +319,14 @@ export function layoutHeadline(
       if (fillRatio >= targetFillRatio) {
         score += 200;
       }
-      if (lineCount === 3 && tokens.length >= 6 && tokens.length <= 11) {
+      // Reward higher width fill so the text expands horizontally across the panel
+      score += Math.round(fillRatio * 150);
+
+      if (tokens.length >= 10) {
+        if (lineCount === 3 || lineCount === 4) {
+          score += 150; // 3 or 4 lines is ideal for 10-15 word headlines
+        }
+      } else if (lineCount === 3 && tokens.length >= 6 && tokens.length <= 11) {
         score += 100; // 3 lines is the sweet spot for viral reference look
       }
       candidates.push({

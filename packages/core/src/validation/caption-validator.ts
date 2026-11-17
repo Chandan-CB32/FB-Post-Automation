@@ -499,10 +499,10 @@ export interface HeadlineValidationResult {
 }
 
 /**
- * Shortens a headline down to between 6 and 12 words (hard max 14)
+ * Shortens a headline down to between 10 and 15 words (hard max 17)
  * while preserving key nouns, numbers, and core subject matter.
  */
-export function shortenHeadline(rawHeadline: string, targetWords = 10): string {
+export function shortenHeadline(rawHeadline: string, targetWords = 14): string {
   const plain = (rawHeadline || '').replace(/\*\*/g, '').trim().toUpperCase();
   const words = plain.split(/\s+/).filter(Boolean);
   if (words.length <= targetWords) return plain;
@@ -557,9 +557,9 @@ export function validateHeadline(
     verifiedFacts?: string[];
   } = {}
 ): HeadlineValidationResult {
-  const minWords = options.minWords ?? 6;
-  const maxWords = options.maxWords ?? 12;
-  const hardMaxWords = options.hardMaxWords ?? 14;
+  const minWords = options.minWords ?? 8;
+  const maxWords = options.maxWords ?? 15;
+  const hardMaxWords = options.hardMaxWords ?? 17;
 
   const plain = (rawHeadline || '').replace(/\*\*/g, '').trim();
   const words = plain.split(/\s+/).filter(Boolean);

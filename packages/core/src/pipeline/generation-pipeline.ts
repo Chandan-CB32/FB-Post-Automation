@@ -940,7 +940,7 @@ BANNED FILLER PHRASES (STRICTLY PROHIBITED ANYWHERE IN CAPTION):
 ${BANNED_FILLER_PHRASES.map((b) => `"${b}"`).join(", ")}
 
 REQUIRED STRUCTURE:
-HEADLINE: <All-caps punchy 6-12 word headline stating the core fact with **KEY EMPHASIS** highlighted>
+HEADLINE: <All-caps punchy 10-15 word headline stating the complete discovery with **KEY WORDS** highlighted, filling the image panel horizontally across 3-4 lines>
 IMAGE_BRIEF:
 Subject: <Concrete physical subject, e.g. An enormous blue whale swimming in sunlit ocean>
 Visual Detail: <One true physical scientific detail, e.g. Barnacles on mottled textured grey skin>
@@ -1214,9 +1214,9 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad niche, 1
     headline = accuracyCheck.headline;
 
     const hlValidation = validateHeadline(headline, {
-      minWords: 6,
-      maxWords: 12,
-      hardMaxWords: 14,
+      minWords: 8,
+      maxWords: 15,
+      hardMaxWords: 18,
       verifiedFacts: verifiedFactStrings,
     });
     if (!hlValidation.valid && hlValidation.suggestedShortenedHeadline) {
@@ -1890,6 +1890,10 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad niche, 1
     panelColor: (page.overrides?.["image.panelColor"] as string) || "#000000",
     panelHeightMode:
       (page.overrides?.["image.panelHeightMode"] as any) || "auto",
+    sidePaddingRatio:
+      (page.overrides?.["image.headlinePanel.sidePaddingRatio"] as number) ?? 0.025,
+    topBottomPaddingRatio:
+      (page.overrides?.["image.headlinePanel.topBottomPaddingRatio"] as number) ?? 0.03,
     minFontSize:
       (page.overrides?.["image.headlinePanel.minFontSize"] as number) || 48,
     maxFontSize:

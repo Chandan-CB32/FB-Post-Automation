@@ -213,7 +213,7 @@ Return a STRICT JSON array containing exactly ${neededCount} objects with no add
       "Verified factual claim 3 explaining why this finding matters."
     ],
     "visualSubject": "Concrete, highly detailed visual description of the specific subject and focal point",
-    "headline": "ACCURATE 6-12 WORD ALL CAPS HEADLINE WITH **KEY WORDS** MARKED"
+    "headline": "ACCURATE 10-15 WORD ALL CAPS HEADLINE STATING DISCOVERY WITH **KEY WORDS** MARKED"
   }
 ]`;
 
@@ -495,7 +495,7 @@ Return a STRICT JSON object with no additional commentary:
     "Verified factual claim 3 explaining why this finding matters."
   ],
   "visualSubject": "Concrete, highly detailed visual description of the specific subject and focal point",
-  "headline": "ACCURATE 6-12 WORD ALL CAPS HEADLINE WITH **KEY WORDS** MARKED"
+  "headline": "ACCURATE 10-15 WORD ALL CAPS HEADLINE STATING DISCOVERY WITH **KEY WORDS** MARKED"
 }`;
 
   const textCandidates = (activeProviders || [])
