@@ -27,13 +27,50 @@ export type LibraryAssetStatus =
   | 'matched'
   | 'used'
   | 'image_deleted'
-  | 'archived';
+  | 'archived'
+  | 'missing';
+
+export type LibraryAssetSource = 'upload' | 'drive';
+
+export type LibraryImageSource = 'drive' | 'upload';
+
+export type LibraryAfterPublishAction = 'move_to_posted' | 'trash' | 'leave';
+
+export interface GoogleServiceAccountKey {
+  type?: string;
+  project_id?: string;
+  private_key_id?: string;
+  private_key: string;
+  client_email: string;
+  client_id?: string;
+  auth_uri?: string;
+  token_uri?: string;
+  auth_provider_x509_cert_url?: string;
+  client_x509_cert_url?: string;
+  universe_domain?: string;
+}
+
+export interface DriveFileMetadata {
+  id: string;
+  name: string;
+  mimeType: string;
+  md5Checksum?: string;
+  modifiedTime?: string;
+  parents?: string[];
+  size?: number;
+  trashed?: boolean;
+}
 
 export interface ContentLibrary {
   id: string;
   page_id: string;
   name: string;
   source_type: LibrarySourceType;
+  image_source?: LibraryImageSource;
+  drive_folder_id?: string | null;
+  posted_folder_id?: string | null;
+  after_publish_action?: LibraryAfterPublishAction;
+  last_synced_at?: string | null;
   original_filename?: string | null;
   total_rows: number;
   imported_rows: number;
@@ -76,8 +113,12 @@ export interface LibraryAsset {
   id: string;
   page_id: string;
   library_id?: string | null;
+  source: LibraryAssetSource;
   filename: string;
-  storage_path: string;
+  storage_path?: string | null;
+  drive_file_id?: string | null;
+  drive_md5?: string | null;
+  drive_modified_at?: string | null;
   sha256: string;
   mime_type: string;
   bytes: number;

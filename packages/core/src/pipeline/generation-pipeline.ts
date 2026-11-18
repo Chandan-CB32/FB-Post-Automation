@@ -105,6 +105,7 @@ export interface PipelineAttempt {
 
 export interface GenerationPipelineResult {
   success: boolean;
+  status?: string;
   testedAt: string;
   simulatedAt: string;
   pageName: string;
@@ -169,6 +170,7 @@ export interface GenerationPipelineResult {
     hasText: boolean;
   };
   error?: string;
+  stageErrors?: Record<string, string>;
   usedTextProviderId?: string;
   usedTextProviderName?: string;
   usedImageProviderId?: string;
@@ -224,6 +226,8 @@ export interface GenerationPipelineOptions {
     sourceLinks?: string[];
   };
   libraryImageBuffer?: Buffer;
+  libraryVisionFacts?: string[];
+  libraryVisionContradiction?: boolean;
 }
 
 /**
@@ -922,6 +926,62 @@ export async function runGenerationPipeline(
     options.libraryItem?.teaserSeed ||
     options.queueItem?.headline ||
     `${(topicTitle || profile?.name || "DISCOVERY").toUpperCase()}: THE UNSEEN REVELATION`;
+
+  if (options.libraryVisionContradiction) {
+    stages.push({
+      stage: "Stage 3",
+      name: "Caption Generation",
+      status: "failed",
+      durationMs: 0,
+      provider: "vision-validator",
+      model: "gemini-vision",
+      error: "Vision contradiction detected between caption/idea and image. Marked needs_review.",
+    });
+    const totalLatency = Date.now() - startTime;
+    return {
+      success: false,
+      status: "needs_review",
+      testedAt: new Date().toISOString(),
+      simulatedAt: new Date().toISOString(),
+      pageName: page.name,
+      baseProfile: profile?.name || "Custom",
+      publishingMode: page.publishing_mode || "review",
+      stages,
+      attempts: [],
+      effectivePrompt: "",
+      structureRules: {
+        minWords,
+        targetWords,
+        maxWords,
+        maxSentencesPerParagraph,
+        passThreshold: minRequiredScore,
+      },
+      topic: { title: topicTitle, category: topicCategory },
+      caption: "",
+      imagePrompt: keyScene,
+      wordCount: 0,
+      qaScore: 0,
+      keySceneExtracted: keyScene,
+      imageDimensions: "1080x1350 (4:5 Portrait)",
+      headlinePanel: {
+        enabled: true,
+        headlineText: headline,
+        backgroundColor: "#050b14",
+      },
+      researchSources: sourceUrls,
+      claimVerification: [],
+      thumbnailUrl: "",
+      compositeImageUrl: "",
+      tokensUsed: 0,
+      estimatedCost: "$0.0000",
+      latencyMs: totalLatency,
+      needs_review: true,
+      requires_human_review: true,
+      review_reason: "vision_contradiction",
+      error: "Vision contradiction detected: image does not match content idea. Marked needs_review.",
+      stageErrors: { qa: "Vision contradiction detected" },
+    };
+  }
   const fixedTags =
     (profile?.hashtagSettings?.fixedHashtags || []).slice(0, 5).join(" ") ||
     `#${(profile?.name || "discovery").replace(/\s+/g, "")}`;
@@ -963,7 +1023,7 @@ export async function runGenerationPipeline(
   const assignmentBlock = `ASSIGNMENT BLOCK:
 ASSIGNED CATEGORY: ${topicCategory}
 TOPIC: ${topicTitle}
-VERIFIED FACTS WITH SOURCES:
+${options.libraryItem?.contentIdea ? `CONTENT IDEA: ${options.libraryItem.contentIdea}\n` : ""}${options.libraryItem?.imageIdea ? `IMAGE IDEA: ${options.libraryItem.imageIdea}\n` : ""}${options.libraryItem?.hiddenClue ? `HIDDEN CLUE / TWIST: ${options.libraryItem.hiddenClue}\n` : ""}${options.libraryVisionFacts && options.libraryVisionFacts.length > 0 ? `IMAGE VISIBLE FACTS: ${options.libraryVisionFacts.join("; ")}\n` : ""}VERIFIED FACTS WITH SOURCES:
 ${factItemsWithUrls.map((f) => `- ${f.text} (Source: ${f.url})`).join("\n")}
 
 RECENT POSTS (DO NOT REPEAT SUBJECTS OR ANGLES):

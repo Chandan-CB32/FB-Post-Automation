@@ -20,15 +20,73 @@ export function detectAspectRatio(width?: number | null, height?: number | null)
   return 'other';
 }
 
-function normalizeName(name: string): string {
+export function normalizeDriveName(name: string): string {
   return name
     .toLowerCase()
     .replace(/\.[a-z0-9]+$/i, '') // strip extension
-    .replace(/[^a-z0-9]/g, ''); // strip punctuation and spaces
+    .replace(/[\s_]+/g, '-') // spaces and underscores to hyphens
+    .replace(/[^a-z0-9-]/g, ''); // strip remaining punctuation
+}
+
+function normalizeName(name: string): string {
+  return normalizeDriveName(name);
 }
 
 function stripExt(name: string): string {
   return name.trim().toLowerCase().replace(/\.[a-z0-9]+$/i, '');
+}
+
+/**
+ * Detects duplicate assets inside a library by MD5 checksum or SHA-256.
+ */
+export function detectDuplicateAssets(assets: LibraryAsset[]): Record<string, LibraryAsset[]> {
+  const groups: Record<string, LibraryAsset[]> = {};
+  for (const asset of assets) {
+    const key = asset.drive_md5 || asset.sha256;
+    if (!key) continue;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(asset);
+  }
+
+  const duplicates: Record<string, LibraryAsset[]> = {};
+  for (const [key, list] of Object.entries(groups)) {
+    if (list.length > 1) {
+      duplicates[key] = list;
+    }
+  }
+  return duplicates;
+}
+
+/**
+ * Validates whether a library can become "ready" for scheduling and publishing.
+ * In excel_library mode, ALL non-skipped rows MUST have a matched image.
+ * Hybrid mode allows partial matches (falls back to Full-AI).
+ */
+export function checkLibraryReadiness(
+  items: LibraryItem[],
+  mode: 'full_ai' | 'excel_library' | 'hybrid'
+): { ready: boolean; reason?: string; missingCount: number; activeCount: number } {
+  if (mode === 'full_ai') {
+    return { ready: true, missingCount: 0, activeCount: items.length };
+  }
+
+  const activeItems = items.filter((item) => item.status !== 'skipped');
+  const missingItems = activeItems.filter((item) => !item.matched_asset_id);
+
+  if (mode === 'excel_library' && missingItems.length > 0) {
+    return {
+      ready: false,
+      reason: `Excel Library Mode requires an image for every row. ${missingItems.length} active row(s) lack an image.`,
+      missingCount: missingItems.length,
+      activeCount: activeItems.length,
+    };
+  }
+
+  return {
+    ready: true,
+    missingCount: missingItems.length,
+    activeCount: activeItems.length,
+  };
 }
 
 export interface MatcherOptions {
@@ -119,16 +177,14 @@ export function runAutoMatching(
     }
   }
 
-  // 4. Sequential / Order matching (if explicitly requested or if no hints provided)
-  if (options.enableOrderMatching) {
-    const unassignedItemsNoHint = pendingItems.filter(
-      (i) => !assignedItemIds.has(i.id) && !i.image_filename_hint?.trim()
-    );
+  // 4. Sequential / Order matching (STRICTLY OPT-IN, NEVER runs automatically)
+  if (options.enableOrderMatching === true) {
+    const unassignedItems = pendingItems.filter((i) => !assignedItemIds.has(i.id));
     const unassignedAssets = availableAssets.filter((a) => !assignedAssetIds.has(a.id));
 
-    const minLen = Math.min(unassignedItemsNoHint.length, unassignedAssets.length);
+    const minLen = Math.min(unassignedItems.length, unassignedAssets.length);
     for (let idx = 0; idx < minLen; idx++) {
-      const item = unassignedItemsNoHint[idx];
+      const item = unassignedItems[idx];
       const asset = unassignedAssets[idx];
       recordMatch(item, asset, 'order', 0.6);
     }

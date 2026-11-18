@@ -5,7 +5,11 @@ import {
   encryptPageToken,
   decryptPageToken,
   encrypt,
+  decrypt,
   maskSecret,
+  parseServiceAccountKey,
+  extractDriveFolderId,
+  GoogleDriveClient,
   FacebookGraphClient,
   FacebookGraphError,
   discoverFacebookPages,
@@ -76,6 +80,7 @@ export const VERIFIED_PAGE_COLUMNS = new Set([
   'source_attribution_enabled',
   'last_test_run_at',
   'checklist_status',
+  'content_source_mode',
 ]);
 
 export const VERIFIED_CONTENT_PROFILES_COLUMNS = new Set([
@@ -97,6 +102,7 @@ export const VERIFIED_CONTENT_PROFILES_COLUMNS = new Set([
   'version',
   'created_at',
   'updated_at',
+  'content_source_mode',
 ]);
 
 export interface StoredProvider {
@@ -971,6 +977,7 @@ export class SystemStore {
     min_words?: number | null;
     target_words?: number | null;
     max_words?: number | null;
+    content_source_mode?: 'full_ai' | 'excel_library' | 'hybrid';
     connected_at?: string;
     last_synced_at?: string;
   }): Promise<StoredPage> {
@@ -1025,6 +1032,7 @@ export class SystemStore {
         custom_niche: customNicheVal,
         custom_niche_text: customNicheVal,
         publishing_mode: safeMode,
+        content_source_mode: input.content_source_mode || 'full_ai',
         mode_chosen: Boolean(input.mode_chosen),
         hybrid_min_score: Number(input.hybrid_min_score) || 80,
         daily_cap: input.daily_cap !== undefined ? Number(input.daily_cap) : 3,
@@ -1103,6 +1111,7 @@ export class SystemStore {
       secondary_account_ids: input.secondary_account_ids || [],
       profile_id: safeProfileId,
       publishing_mode: safeMode,
+      content_source_mode: input.content_source_mode || 'full_ai',
       hybrid_min_score: input.hybrid_min_score ?? 80,
       daily_cap: input.daily_cap !== undefined ? Number(input.daily_cap) : 3,
       active: safeActive,
@@ -3927,6 +3936,31 @@ export class SystemStore {
     return updated;
   }
 
+  public async updateLibrary(libraryId: string, updates: any): Promise<any> {
+    const existing = this.memoryLibraries.get(libraryId) || {};
+    const updated = {
+      ...existing,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    this.memoryLibraries.set(libraryId, updated);
+
+    if (!isTestEnv() || this.client) {
+      try {
+        const { data, error } = await this.getClient()
+          .from('content_libraries')
+          .update(updates)
+          .eq('id', libraryId)
+          .select()
+          .maybeSingle();
+        if (!error && data) return data;
+      } catch (e: any) {
+        console.warn('[SystemStore] updateLibrary DB fallback:', e.message);
+      }
+    }
+    return updated;
+  }
+
   public async matchLibraryItem(
     itemId: string,
     assetId: string,
@@ -3944,6 +3978,157 @@ export class SystemStore {
       status: 'matched',
     });
     return item;
+  }
+
+  public async unmatchLibraryItem(itemId: string): Promise<any> {
+    const item = this.memoryLibraryItems.get(itemId);
+    const assetId = item?.matched_asset_id;
+    const updatedItem = await this.updateLibraryItem(itemId, {
+      matched_asset_id: null,
+      match_method: null,
+      match_confidence: null,
+      status: 'pending',
+    });
+    if (assetId) {
+      await this.updateLibraryAsset(assetId, {
+        matched_item_id: null,
+        status: 'unmatched',
+      });
+    }
+    return updatedItem;
+  }
+
+  public async downloadLibraryStorageAsset(storagePath: string): Promise<Buffer | null> {
+    if (!this.client) return null;
+    try {
+      const dlRes = await this.client.storage.from('library-images').download(storagePath);
+      if (dlRes.data) {
+        return Buffer.from(await dlRes.data.arrayBuffer());
+      }
+    } catch (e: any) {
+      console.warn('[SystemStore] downloadLibraryStorageAsset error:', e.message);
+    }
+    return null;
+  }
+
+  // --- Google Drive Credentials Vault (AES-256-GCM Encrypted) ---
+
+  public async saveGoogleDriveServiceAccount(rawJson: string): Promise<{
+    client_email: string;
+    project_id?: string;
+  }> {
+    const parsed = parseServiceAccountKey(rawJson);
+    const encryptedKey = encrypt(rawJson);
+    const record = {
+      client_email: parsed.client_email,
+      project_id: parsed.project_id || '',
+      encrypted_key: encryptedKey,
+      updated_at: new Date().toISOString(),
+    };
+
+    await this.setSetting('google_drive_service_account', record);
+    return {
+      client_email: parsed.client_email,
+      project_id: parsed.project_id,
+    };
+  }
+
+  public async getGoogleDriveServiceAccount(decryptSecret = false): Promise<any | null> {
+    const setting = await this.getSetting<any>('google_drive_service_account');
+    if (!setting) return null;
+
+    if (!decryptSecret) {
+      return {
+        connected: true,
+        client_email: setting.client_email,
+        project_id: setting.project_id,
+        updated_at: setting.updated_at,
+      };
+    }
+
+    if (!setting.encrypted_key) return null;
+    try {
+      const decrypted = decrypt(setting.encrypted_key);
+      return parseServiceAccountKey(decrypted);
+    } catch (err: any) {
+      console.warn('[SystemStore] Failed to decrypt Google Drive service account key:', err.message);
+      return null;
+    }
+  }
+
+  public async syncDriveLibrary(
+    pageId: string,
+    libraryId: string,
+    driveClient: GoogleDriveClient
+  ): Promise<{ added: number; updated: number; missing: number; total: number }> {
+    const folderFiles = await driveClient.listFilesInFolder();
+    const existingAssets = await this.getLibraryAssets(pageId);
+
+    const driveMap = new Map(folderFiles.map((f) => [f.id, f]));
+    const existingDriveAssets = existingAssets.filter((a) => a.source === 'drive');
+    const existingDriveMap = new Map(existingDriveAssets.map((a) => [a.drive_file_id, a]));
+
+    let added = 0;
+    let updated = 0;
+    let missing = 0;
+
+    // 1. Add new files or update modified ones
+    for (const file of folderFiles) {
+      const existing = existingDriveMap.get(file.id);
+      if (!existing) {
+        // Create new library asset
+        await this.saveLibraryAssets([
+          {
+            page_id: pageId,
+            library_id: libraryId,
+            source: 'drive',
+            drive_file_id: file.id,
+            filename: file.name,
+            drive_md5: file.md5Checksum || null,
+            drive_modified_at: file.modifiedTime || null,
+            sha256: file.md5Checksum || `drive-${file.id}`,
+            mime_type: file.mimeType || 'image/jpeg',
+            bytes: file.size ? Number(file.size) : 0,
+            status: 'unmatched',
+            vision_labels: [],
+          },
+        ]);
+        added++;
+      } else {
+        // Check if modified
+        if (existing.drive_md5 !== file.md5Checksum || existing.filename !== file.name) {
+          await this.updateLibraryAsset(existing.id, {
+            filename: file.name,
+            drive_md5: file.md5Checksum,
+            drive_modified_at: file.modifiedTime,
+            status: existing.status === 'missing' ? 'unmatched' : existing.status,
+          });
+          updated++;
+        }
+      }
+    }
+
+    // 2. Mark disappeared assets as 'missing' (idempotent, never deletes rows)
+    for (const existing of existingDriveAssets) {
+      if (existing.drive_file_id && !driveMap.has(existing.drive_file_id)) {
+        if (existing.status !== 'missing' && existing.status !== 'archived') {
+          await this.updateLibraryAsset(existing.id, { status: 'missing' });
+          missing++;
+        }
+      }
+    }
+
+    // 3. Update library stats & last_synced_at
+    await this.updateLibrary(libraryId, {
+      last_synced_at: new Date().toISOString(),
+    });
+
+    return {
+      added,
+      updated,
+      missing,
+      total: folderFiles.length,
+    };
   }
 }
 

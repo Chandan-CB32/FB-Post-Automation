@@ -88,5 +88,18 @@ describe('Database Schema & Migration Validation', () => {
     expect(sql).toContain('public.library_items');
     expect(sql).toContain('library-images');
   });
+
+  it('validates 20261118_content_library_drive migration file', () => {
+    const driveMigPath = path.resolve(__dirname, '../supabase/migrations/20261118_content_library_drive.sql');
+    expect(fs.existsSync(driveMigPath)).toBe(true);
+    const sql = fs.readFileSync(driveMigPath, 'utf8');
+    expect(sql).toContain('image_source');
+    expect(sql).toContain('drive_folder_id');
+    expect(sql).toContain('posted_folder_id');
+    expect(sql).toContain('after_publish_action');
+    expect(sql).toContain('drive_file_id');
+    expect(sql).toContain('drive_md5');
+    expect(sql).toContain('idx_library_assets_lib_drive_file');
+  });
 });
 

@@ -3519,6 +3519,11 @@
       document.getElementById('psmHybridScoreVal').innerText = page.hybrid_min_score || 80;
     }
 
+    var contentModeSelect = document.getElementById('psmContentSourceMode');
+    if (contentModeSelect) {
+      contentModeSelect.value = page.content_source_mode || page.overrides?.content_source_mode || 'full_ai';
+    }
+
     // Advanced inputs
     document.getElementById('psmJitter').value = sched.jitterMinutes !== undefined ? sched.jitterMinutes : 10;
     document.getElementById('psmMinGap').value = sched.minGapMinutes !== undefined ? sched.minGapMinutes : 60;
@@ -3963,6 +3968,7 @@
         custom_niche_text: customNicheText,
         custom_niche_name: customNicheText,
         publishing_mode: document.getElementById('psmPublishingMode').value,
+        content_source_mode: document.getElementById('psmContentSourceMode') ? document.getElementById('psmContentSourceMode').value : 'full_ai',
         mode_chosen: true,
         hybrid_min_score: Number(document.getElementById('psmHybridScore').value) || 80,
         daily_cap: Number(document.getElementById('psmDailyCap').value) || 3,
@@ -5807,6 +5813,54 @@
         r.checked = r.value === mode;
       });
 
+      // Populate active library Drive settings
+      if (data.libraries && data.libraries.length > 0) {
+        window.currentActiveLibraryId = data.libraries[0].id;
+        const lib = data.libraries[0];
+        const driveInput = document.getElementById('libDriveFolderInput');
+        if (driveInput) driveInput.value = lib.drive_folder_id || '';
+        const afterPub = document.getElementById('libAfterPublishAction');
+        if (afterPub) afterPub.value = lib.after_publish_action || 'move_to_posted';
+        const driveBadge = document.getElementById('libDriveStatusBadge');
+        if (driveBadge) {
+          if (lib.drive_folder_id) {
+            driveBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+            driveBadge.style.color = '#34d399';
+            driveBadge.innerText = '● LINKED (' + (lib.last_synced_at ? new Date(lib.last_synced_at).toLocaleTimeString() : 'Not Synced') + ')';
+          } else {
+            driveBadge.style.background = 'rgba(148, 163, 184, 0.15)';
+            driveBadge.style.color = '#94a3b8';
+            driveBadge.innerText = 'NOT CONFIGURED';
+          }
+        }
+      }
+
+      // Check migration requirement
+      const migBanner = document.getElementById('libMigrationBanner');
+      if (migBanner) {
+        migBanner.style.display = data.migrationRequired ? 'block' : 'none';
+      }
+
+      // Update readiness alert
+      const readinessEl = document.getElementById('libReadinessAlert');
+      if (readinessEl) {
+        if (mode === 'excel_library') {
+          const activeRows = (data.items || []).filter(function (it) { return it.status !== 'skipped'; });
+          const missing = activeRows.filter(function (it) { return !it.matched_asset_id; });
+          if (missing.length > 0) {
+            readinessEl.innerHTML = '<span style="color: #f87171; font-weight: 600;">⚠️ Blocked: ' + missing.length + ' active row(s) lack an image. Excel Library requires an image for every row.</span>';
+          } else if (activeRows.length > 0) {
+            readinessEl.innerHTML = '<span style="color: #34d399; font-weight: 600;">✅ Ready: All ' + activeRows.length + ' active row(s) have paired images.</span>';
+          } else {
+            readinessEl.innerHTML = '<span style="color: #94a3b8;">No active rows in library.</span>';
+          }
+        } else if (mode === 'hybrid') {
+          readinessEl.innerHTML = '<span style="color: #fbbf24; font-weight: 600;">⚡ Hybrid: Library items used first, AI fallback active.</span>';
+        } else {
+          readinessEl.innerHTML = '';
+        }
+      }
+
       // Update metrics
       const m = data.metrics || {};
       const elTotal = document.getElementById('libMetricTotalRows');
@@ -5838,7 +5892,7 @@
     if (!tbody) return;
 
     if (!items || items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="padding: 32px; text-align: center; color: var(--text-muted);"><div style="font-size: 24px; margin-bottom: 6px;">📄</div><strong>No content library rows uploaded yet.</strong><div style="font-size: 11px; margin-top: 4px;">Download the template above, fill your ideas/facts, and upload the spreadsheet.</div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="padding: 32px; text-align: center; color: var(--text-muted);"><div style="font-size: 24px; margin-bottom: 6px;">📄</div><strong>No content library rows uploaded yet.</strong><div style="font-size: 11px; margin-top: 4px;">Download the template above, fill your ideas/facts, and upload the spreadsheet or connect Google Drive.</div></td></tr>';
       return;
     }
 
@@ -5849,6 +5903,10 @@
       let statusBadge = '';
       if (item.status === 'published') {
         statusBadge = '<span class="badge" style="background: #064e3b; color: #34d399;">● Published</span>';
+      } else if (item.status === 'skipped') {
+        statusBadge = '<span class="badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8;">○ Skipped</span>';
+      } else if (item.status === 'failed') {
+        statusBadge = '<span class="badge" style="background: #7f1d1d; color: #fca5a5;" title="' + escapeHtml(item.rejection_reason || 'Failed') + '">✕ Failed</span>';
       } else if (item.status === 'needs_review') {
         statusBadge = '<span class="badge" style="background: #7f1d1d; color: #fca5a5;">⚠️ Needs Review</span>';
       } else if (hasMatch) {
@@ -5861,27 +5919,42 @@
 
       const assetDisplay = matchedAsset
         ? '<div style="display: flex; align-items: center; gap: 8px;">' +
-            '<span style="font-size: 16px;">🖼️</span>' +
+            (matchedAsset.id
+              ? '<img src="/api/library/thumbnail?assetId=' + matchedAsset.id + '&pageId=' + encodeURIComponent(window.currentLibraryPageId || '') + '" style="width: 38px; height: 38px; object-fit: cover; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);" onerror="this.style.display=\'none\';">'
+              : '<span style="font-size: 16px;">🖼️</span>') +
             '<div>' +
               '<div style="font-weight: 600; color: #93c5fd; font-size: 11px;">' + escapeHtml(matchedAsset.filename) + '</div>' +
-              '<div style="font-size: 10px; color: var(--text-muted);">' + (matchedAsset.aspect_ratio || 'photo') + '</div>' +
+              '<div style="font-size: 10px; color: var(--text-muted);">' + (matchedAsset.source === 'drive' ? '☁️ Drive' : '📁 Upload') + ' (' + (matchedAsset.aspect_ratio || 'photo') + ')</div>' +
             '</div>' +
           '</div>'
         : '<span style="color: var(--text-muted); font-style: italic;">No image paired</span>';
 
+      let actionsHtml = '';
+      if (item.status === 'skipped') {
+        actionsHtml = '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px;" onclick="toggleSkipItem(\'' + item.id + '\', true)">Unskip</button>';
+      } else if (hasMatch) {
+        actionsHtml = '<div style="display: flex; gap: 4px;">' +
+          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px;" onclick="promptSwapItems(\'' + item.id + '\')" title="Swap photo with another row">Swap</button>' +
+          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px; color: #f87171;" onclick="promptUnmatchItem(\'' + item.id + '\')" title="Unmatch photo">Unmatch</button>' +
+          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px; color: #94a3b8;" onclick="toggleSkipItem(\'' + item.id + '\', false)" title="Skip this row">Skip</button>' +
+        '</div>';
+      } else {
+        actionsHtml = '<div style="display: flex; gap: 4px;">' +
+          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px;" onclick="promptManualMatch(\'' + item.id + '\')">🔗 Match</button>' +
+          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px; color: #94a3b8;" onclick="toggleSkipItem(\'' + item.id + '\', false)">Skip</button>' +
+        '</div>';
+      }
+
       return '<tr>' +
         '<td style="padding: 10px 12px; font-weight: 700; color: var(--text-muted);">' + item.row_index + '</td>' +
         '<td style="padding: 10px 12px;"><div style="font-weight: 600; color: #f3f4f6; max-width: 280px;">' + escapeHtml(item.content_idea) + '</div>' +
+        (item.image_idea ? '<div style="font-size: 11px; color: #38bdf8; margin-top: 2px;">Photo: ' + escapeHtml(item.image_idea.slice(0, 50)) + '...</div>' : '') +
         (item.teaser_seed ? '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Hook: ' + escapeHtml(item.teaser_seed.slice(0, 50)) + '...</div>' : '') + '</td>' +
         '<td style="padding: 10px 12px;"><span class="badge" style="background: #1e293b; color: #94a3b8;">' + escapeHtml(item.category || 'General') + '</span></td>' +
         '<td style="padding: 10px 12px;"><code>' + escapeHtml(item.image_filename_hint || '-') + '</code></td>' +
         '<td style="padding: 10px 12px;">' + assetDisplay + '</td>' +
         '<td style="padding: 10px 12px;">' + statusBadge + '</td>' +
-        '<td style="padding: 10px 12px;">' +
-          (!hasMatch
-            ? '<button class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;" onclick="promptManualMatch(\'' + item.id + '\')">🔗 Match Image</button>'
-            : '<span style="color: #34d399; font-size: 11px;">Ready</span>') +
-        '</td>' +
+        '<td style="padding: 10px 12px;">' + actionsHtml + '</td>' +
       '</tr>';
     }).join('');
   }
@@ -6047,11 +6120,17 @@
     const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
     if (!pageId) return;
 
+    const allowOrder = document.getElementById('libAllowOrderMatch') ? document.getElementById('libAllowOrderMatch').checked : false;
+
     try {
       const res = await fetch('/api/library/match', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'auto', pageId: pageId }),
+        body: JSON.stringify({
+          action: 'auto',
+          pageId: pageId,
+          enableOrderMatching: Boolean(allowOrder),
+        }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -6065,6 +6144,261 @@
     }
   }
   window.runAutoMatchAction = runAutoMatchAction;
+
+  async function saveDriveFolderConfigAction() {
+    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+    const libraryId = window.currentActiveLibraryId;
+    const folderInput = document.getElementById('libDriveFolderInput');
+    const folderVal = folderInput ? folderInput.value.trim() : '';
+    const afterPub = document.getElementById('libAfterPublishAction') ? document.getElementById('libAfterPublishAction').value : 'move_to_posted';
+
+    if (!pageId || !libraryId || !folderVal) {
+      alert('Please select a page, upload a sheet first, and enter a Drive folder ID or URL.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/library/drive-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pageId: pageId,
+          libraryId: libraryId,
+          driveFolderId: folderVal,
+          afterPublishAction: afterPub,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('Saved Google Drive folder configuration!', 'success');
+        loadContentLibraryForPage(pageId);
+      } else {
+        alert('Could not save Drive config: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Error saving Drive config: ' + err.message);
+    }
+  }
+  window.saveDriveFolderConfigAction = saveDriveFolderConfigAction;
+
+  async function syncDriveImagesAction() {
+    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+    const libraryId = window.currentActiveLibraryId;
+    const statusEl = document.getElementById('libDriveSyncStatus');
+
+    if (!pageId || !libraryId) {
+      alert('Please select a page with an active library first.');
+      return;
+    }
+
+    if (statusEl) statusEl.innerText = '⏳ Syncing images from Google Drive...';
+
+    try {
+      const res = await fetch('/api/library/sync-drive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: pageId, libraryId: libraryId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ ' + escapeHtml(data.message) + '</span>';
+        showToast(data.message, 'success');
+        loadContentLibraryForPage(pageId);
+      } else {
+        if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Sync failed') + '</span>';
+        alert('Drive sync failed: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      if (statusEl) statusEl.innerText = '⚠️ Error: ' + err.message;
+    }
+  }
+  window.syncDriveImagesAction = syncDriveImagesAction;
+
+  async function promptUnmatchItem(itemId) {
+    if (!confirm('Unmatch this image from the row?')) return;
+    try {
+      const res = await fetch('/api/library/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unmatch', itemId: itemId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('Unmatched image successfully.', 'success');
+        loadContentLibraryForPage(window.currentLibraryPageId);
+      } else {
+        alert('Unmatch failed: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Error unmatching: ' + err.message);
+    }
+  }
+  window.promptUnmatchItem = promptUnmatchItem;
+
+  async function promptSwapItems(itemId) {
+    const targetRow = prompt('Enter the row number (#) you want to swap photos with:');
+    if (!targetRow) return;
+    const targetIdx = parseInt(targetRow, 10);
+    if (isNaN(targetIdx) || !currentLibraryData || !currentLibraryData.items) {
+      alert('Invalid row number.');
+      return;
+    }
+    const targetItem = currentLibraryData.items.find(function (i) { return i.row_index === targetIdx; });
+    if (!targetItem) {
+      alert('Row #' + targetIdx + ' not found in library.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/library/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'swap',
+          pageId: window.currentLibraryPageId,
+          itemId: itemId,
+          targetItemId: targetItem.id,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('Swapped photos between rows successfully!', 'success');
+        loadContentLibraryForPage(window.currentLibraryPageId);
+      } else {
+        alert('Swap failed: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Error swapping: ' + err.message);
+    }
+  }
+  window.promptSwapItems = promptSwapItems;
+
+  async function toggleSkipItem(itemId, isUnskip) {
+    const action = isUnskip ? 'unskip' : 'skip';
+    try {
+      const res = await fetch('/api/library/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action, itemId: itemId, pageId: window.currentLibraryPageId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(isUnskip ? 'Row restored to pending.' : 'Row marked as skipped.', 'info');
+        loadContentLibraryForPage(window.currentLibraryPageId);
+      }
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+  window.toggleSkipItem = toggleSkipItem;
+
+  async function saveGoogleDriveServiceAccountKeyAction() {
+    const textarea = document.getElementById('driveServiceAccountJson');
+    const statusEl = document.getElementById('driveKeySaveStatus');
+    const rawVal = textarea ? textarea.value.trim() : '';
+
+    if (!rawVal) {
+      alert('Please paste a Google Cloud Service Account JSON key.');
+      return;
+    }
+
+    if (statusEl) statusEl.innerText = '⏳ Encrypting & saving key to Supabase vault...';
+
+    try {
+      const res = await fetch('/api/settings/drive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceAccountJson: rawVal }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (textarea) textarea.value = '';
+        if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ Connected as ' + escapeHtml(data.clientEmail) + '</span>';
+        showToast('Google Drive service account saved encrypted!', 'success');
+        loadGoogleDriveSettingsStatus();
+      } else {
+        if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Failed to save') + '</span>';
+        alert('Could not save service account: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      if (statusEl) statusEl.innerText = '⚠️ Error: ' + err.message;
+    }
+  }
+  window.saveGoogleDriveServiceAccountKeyAction = saveGoogleDriveServiceAccountKeyAction;
+
+  async function testGoogleDriveConnectionAction() {
+    const input = document.getElementById('driveTestFolderInput');
+    const folderVal = input ? input.value.trim() : '';
+    const resultBox = document.getElementById('driveTestResultBox');
+
+    if (!folderVal) {
+      alert('Please enter a Google Drive folder URL or folder ID to test.');
+      return;
+    }
+
+    if (resultBox) {
+      resultBox.style.display = 'block';
+      resultBox.style.background = 'rgba(56, 189, 248, 0.1)';
+      resultBox.style.border = '1px solid #38bdf8';
+      resultBox.style.color = '#7dd3fc';
+      resultBox.innerText = '⏳ Connecting to Google Drive API & scanning folder...';
+    }
+
+    try {
+      const res = await fetch('/api/settings/drive/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId: folderVal }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (resultBox) {
+          resultBox.style.background = 'rgba(16, 185, 129, 0.15)';
+          resultBox.style.border = '1px solid #10b981';
+          resultBox.style.color = '#6ee7b7';
+          resultBox.innerHTML = '<strong>✅ Connection Successful!</strong><br>' +
+            'Service Account: <code>' + escapeHtml(data.clientEmail) + '</code><br>' +
+            'Image Files Found: <strong>' + data.imageFilesCount + '</strong> image(s) (.jpg, .png, .webp)';
+        }
+      } else {
+        if (resultBox) {
+          resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
+          resultBox.style.border = '1px solid #ef4444';
+          resultBox.style.color = '#fca5a5';
+          resultBox.innerHTML = '<strong>❌ Connection Failed:</strong> ' + escapeHtml(data.error || 'Unknown error');
+        }
+      }
+    } catch (err) {
+      if (resultBox) {
+        resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
+        resultBox.style.border = '1px solid #ef4444';
+        resultBox.style.color = '#fca5a5';
+        resultBox.innerText = 'Network error: ' + err.message;
+      }
+    }
+  }
+  window.testGoogleDriveConnectionAction = testGoogleDriveConnectionAction;
+
+  async function loadGoogleDriveSettingsStatus() {
+    try {
+      const badge = document.getElementById('driveSettingsBadge');
+      if (!badge) return;
+      const res = await fetch('/api/settings/drive');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.connected && data.client_email) {
+          badge.style.background = 'rgba(16, 185, 129, 0.15)';
+          badge.style.color = '#34d399';
+          badge.innerText = '● Connected: ' + data.client_email;
+        } else {
+          badge.style.background = 'rgba(245, 158, 11, 0.15)';
+          badge.style.color = '#fbbf24';
+          badge.innerText = '● Not Connected';
+        }
+      }
+    } catch (_) {}
+  }
+  window.loadGoogleDriveSettingsStatus = loadGoogleDriveSettingsStatus;
 
   async function runVisionSuggestAction() {
     const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
@@ -6139,6 +6473,7 @@
     } catch (_) {}
     safeParseInitialData();
     checkMissingTablesBanner();
+    loadGoogleDriveSettingsStatus();
 
     // Bind event listeners to all navigation buttons (resilient architecture)
     document.querySelectorAll('.nav-list .nav-item button').forEach(function (btn) {

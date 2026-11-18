@@ -9,6 +9,36 @@ import { rasterizeHeadlineCardToJpeg } from '../pipeline/headline-renderer.js';
 import { decrypt } from '../crypto/encryption.js';
 import { runDailyContentResearch } from '../topics/daily-research.js';
 import { generateTopicKey } from '../topics/dedup.js';
+import {
+  GoogleDriveClient,
+  parseServiceAccountKey,
+  extractDriveFolderId,
+} from '../library/drive-client.js';
+
+async function getDriveClientForWorker(
+  supabase: any,
+  folderId: string,
+  postedFolderId?: string
+): Promise<GoogleDriveClient | null> {
+  try {
+    const { data: setting } = await supabase
+      .from('settings')
+      .select('value')
+      .eq('key', 'google_drive_service_account')
+      .maybeSingle();
+    if (!setting || !setting.value?.encrypted_key) return null;
+    const decryptedRaw = decrypt(setting.value.encrypted_key);
+    const creds = parseServiceAccountKey(decryptedRaw);
+    return new GoogleDriveClient({
+      credentials: creds,
+      libraryFolderId: folderId,
+      postedFolderId: postedFolderId || undefined,
+    });
+  } catch (err: any) {
+    console.warn('[Autonomous Worker] Could not create Drive client:', err.message);
+    return null;
+  }
+}
 
 export interface AutonomousCycleOptions {
   now?: Date;
@@ -368,7 +398,25 @@ export async function runAutonomousCycle(
                   matchedAssetRecord = assetData;
                 }
 
-                if (matchedAssetRecord?.storage_path) {
+                if (matchedAssetRecord?.drive_file_id) {
+                  try {
+                    const { data: libRec } = await supabase
+                      .from('content_libraries')
+                      .select('drive_folder_id, posted_folder_id')
+                      .eq('id', chosenLibraryItem.library_id)
+                      .maybeSingle();
+                    const driveClient = await getDriveClientForWorker(
+                      supabase,
+                      libRec?.drive_folder_id || 'UNKNOWN',
+                      libRec?.posted_folder_id || undefined
+                    );
+                    if (driveClient) {
+                      libraryImageBuf = await driveClient.downloadFileBuffer(matchedAssetRecord.drive_file_id);
+                    }
+                  } catch (dlEx: any) {
+                    console.warn('[Autonomous Worker] Could not download Drive image:', dlEx?.message);
+                  }
+                } else if (matchedAssetRecord?.storage_path) {
                   try {
                     const { data: dlData, error: dlErr } = await supabase.storage
                       .from('library-images')
@@ -386,6 +434,18 @@ export async function runAutonomousCycle(
             }
 
             if (contentSourceMode === 'excel_library' && (!chosenLibraryItem || !libraryImageBuf)) {
+              if (chosenLibraryItem) {
+                try {
+                  await supabase
+                    .from('library_items')
+                    .update({
+                      status: 'failed',
+                      rejection_reason: 'Missing or failed Drive/Storage image download. Text-only posting is strictly blocked.',
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', chosenLibraryItem.id);
+                } catch {}
+              }
               console.warn(
                 `[Autonomous Worker] Page '${page.name}' in excel_library mode has no valid matched library image. Refusing text-only posting.`
               );
@@ -597,19 +657,66 @@ export async function runAutonomousCycle(
             // Cleanup library item & asset if library was used (Excel + Image Library Mode)
             if (chosenLibraryItem) {
               try {
-                if (matchedAssetRecord?.storage_path) {
+                if (matchedAssetRecord?.drive_file_id) {
+                  try {
+                    const { data: libRec } = await supabase
+                      .from('content_libraries')
+                      .select('drive_folder_id, posted_folder_id, after_publish_action')
+                      .eq('id', chosenLibraryItem.library_id)
+                      .maybeSingle();
+
+                    const action = libRec?.after_publish_action || 'move_to_posted';
+                    const driveClient = await getDriveClientForWorker(
+                      supabase,
+                      libRec?.drive_folder_id || 'UNKNOWN',
+                      libRec?.posted_folder_id || undefined
+                    );
+
+                    if (driveClient) {
+                      if (action === 'move_to_posted') {
+                        let postedFolder = libRec?.posted_folder_id;
+                        if (!postedFolder) {
+                          postedFolder = await driveClient.getOrCreatePostedFolder(libRec?.drive_folder_id);
+                          await supabase
+                            .from('content_libraries')
+                            .update({ posted_folder_id: postedFolder })
+                            .eq('id', chosenLibraryItem.library_id);
+                        }
+                        await driveClient.moveFile(
+                          matchedAssetRecord.drive_file_id,
+                          libRec?.drive_folder_id,
+                          postedFolder
+                        );
+                      } else if (action === 'trash') {
+                        await driveClient.trashFile(matchedAssetRecord.drive_file_id);
+                      }
+                    }
+                  } catch (driveCleanErr: any) {
+                    console.warn('[Autonomous Worker] Drive publish action error:', driveCleanErr?.message);
+                  }
+
+                  if (matchedAssetRecord?.id) {
+                    await supabase
+                      .from('library_assets')
+                      .update({
+                        status: 'archived',
+                        deleted_at: new Date().toISOString(),
+                      })
+                      .eq('id', matchedAssetRecord.id);
+                  }
+                } else if (matchedAssetRecord?.storage_path) {
                   await supabase.storage
                     .from('library-images')
                     .remove([matchedAssetRecord.storage_path]);
-                }
-                if (matchedAssetRecord?.id) {
-                  await supabase
-                    .from('library_assets')
-                    .update({
-                      status: 'image_deleted',
-                      deleted_at: new Date().toISOString(),
-                    })
-                    .eq('id', matchedAssetRecord.id);
+                  if (matchedAssetRecord?.id) {
+                    await supabase
+                      .from('library_assets')
+                      .update({
+                        status: 'image_deleted',
+                        deleted_at: new Date().toISOString(),
+                      })
+                      .eq('id', matchedAssetRecord.id);
+                  }
                 }
                 await supabase
                   .from('library_items')

@@ -91,3 +91,4 @@ export * from './library/sheet-parser.js';
 export * from './library/template-generator.js';
 export * from './library/matching-engine.js';
 export * from './library/vision-service.js';
+export * from './library/drive-client.js';

@@ -85,7 +85,11 @@ import {
   suggestVisionMatches,
   calculateSha256,
   detectAspectRatio,
+  parseServiceAccountKey,
+  extractDriveFolderId,
+  GoogleDriveClient,
 } from '@fb-auto/core';
+import sharp from 'sharp';
 import {
   renderPrivacyPolicyHtml,
   renderTermsHtml,
@@ -1875,6 +1879,23 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       }
       if (data.mode_chosen !== undefined) updates.mode_chosen = Boolean(data.mode_chosen);
 
+      if (data.content_source_mode !== undefined) {
+        if (['full_ai', 'excel_library', 'hybrid'].includes(data.content_source_mode)) {
+          updates.content_source_mode = data.content_source_mode;
+          await store.addAuditLog({
+            level: 'info',
+            category: 'schedule',
+            message: `Page content source mode changed to ${data.content_source_mode}`,
+            page_id: pageId,
+            details: {
+              from: page.content_source_mode || 'full_ai',
+              to: data.content_source_mode,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+      }
+
       if (data.hybrid_min_score !== undefined) {
         updates.hybrid_min_score = Math.max(50, Math.min(99, Number(data.hybrid_min_score) || 80));
       }
@@ -3149,14 +3170,14 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       return;
     }
 
-    // 6.10 API: Match Library Item & Asset (Manual, Auto, Vision)
+    // 6.10 API: Match Library Item & Asset (Manual, Auto, Vision, Swap, Unmatch, Skip)
     if (url.pathname === '/api/library/match' && req.method === 'POST') {
       let body = '';
       req.on('data', (c) => (body += c));
       req.on('end', async () => {
         try {
           const payload = JSON.parse(body || '{}');
-          const { action, itemId, assetId, pageId } = payload;
+          const { action, itemId, assetId, targetItemId, pageId, enableOrderMatching } = payload;
 
           if (action === 'manual') {
             if (!itemId || !assetId) {
@@ -3166,10 +3187,60 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             return sendJson({ success: true, item: updated });
           }
 
+          if (action === 'unmatch') {
+            if (!itemId) return sendJson({ error: 'itemId required for unmatch' }, 400);
+            const updated = await store.unmatchLibraryItem(itemId);
+            return sendJson({ success: true, item: updated });
+          }
+
+          if (action === 'swap') {
+            if (!itemId || !targetItemId) {
+              return sendJson({ error: 'itemId and targetItemId required for swap' }, 400);
+            }
+            const items = await store.getLibraryItems(pageId);
+            const itemA = items.find((i) => i.id === itemId);
+            const itemB = items.find((i) => i.id === targetItemId);
+            if (!itemA || !itemB) return sendJson({ error: 'Items not found' }, 404);
+
+            const assetA = itemA.matched_asset_id;
+            const assetB = itemB.matched_asset_id;
+
+            if (assetB) {
+              await store.matchLibraryItem(itemId, assetB, 'manual', 1.0);
+            } else {
+              await store.unmatchLibraryItem(itemId);
+            }
+
+            if (assetA) {
+              await store.matchLibraryItem(targetItemId, assetA, 'manual', 1.0);
+            } else {
+              await store.unmatchLibraryItem(targetItemId);
+            }
+
+            return sendJson({ success: true, swapped: true });
+          }
+
+          if (action === 'skip') {
+            if (!itemId) return sendJson({ error: 'itemId required for skip' }, 400);
+            const updated = await store.updateLibraryItem(itemId, { status: 'skipped' });
+            return sendJson({ success: true, item: updated });
+          }
+
+          if (action === 'unskip') {
+            if (!itemId) return sendJson({ error: 'itemId required for unskip' }, 400);
+            const item = (await store.getLibraryItems(pageId)).find((i) => i.id === itemId);
+            const nextStatus = item?.matched_asset_id ? 'matched' : 'pending';
+            const updated = await store.updateLibraryItem(itemId, { status: nextStatus });
+            return sendJson({ success: true, item: updated });
+          }
+
           if (action === 'auto') {
             const items = await store.getLibraryItems(pageId);
             const assets = await store.getLibraryAssets(pageId);
-            const matchRes = runAutoMatching(items, assets, { enableOrderMatching: true });
+            // Strict Requirement 2b: enableOrderMatching is opt-in only, never true by default
+            const matchRes = runAutoMatching(items, assets, {
+              enableOrderMatching: Boolean(enableOrderMatching),
+            });
             for (const m of matchRes.matches) {
               await store.matchLibraryItem(m.itemId, m.assetId, m.method, m.confidence);
             }
@@ -3209,12 +3280,234 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             );
           }
           await store.updatePage(pageId, { content_source_mode: mode });
+          // Log mode switch with timestamp
+          await store.addAuditLog({
+            level: 'info',
+            category: 'schedule',
+            message: `Page content source mode updated to ${mode}`,
+            page_id: pageId,
+            details: { mode, timestamp: new Date().toISOString() },
+          });
           return sendJson({ success: true, mode });
         } catch (err: any) {
           return sendJson({ error: err?.message || 'Error updating page mode' }, 500);
         }
       });
       return;
+    }
+
+    // 6.12 API: Get Google Drive Settings Connection Status
+    if (url.pathname === '/api/settings/drive' && req.method === 'GET') {
+      try {
+        const driveInfo = await store.getGoogleDriveServiceAccount(false);
+        return sendJson(driveInfo || { connected: false });
+      } catch (err: any) {
+        return sendJson({ error: err?.message || 'Failed to read Drive settings' }, 500);
+      }
+    }
+
+    // 6.13 API: Save Google Drive Service Account (Encrypted AES-256-GCM)
+    if (url.pathname === '/api/settings/drive' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const { serviceAccountJson } = JSON.parse(body || '{}');
+          if (!serviceAccountJson) {
+            return sendJson({ error: 'serviceAccountJson string is required.' }, 400);
+          }
+          const saved = await store.saveGoogleDriveServiceAccount(serviceAccountJson);
+          return sendJson({
+            success: true,
+            connected: true,
+            clientEmail: saved.client_email,
+            projectId: saved.project_id,
+          });
+        } catch (err: any) {
+          return sendJson({ error: err?.message || 'Failed to save Google Drive service account' }, 400);
+        }
+      });
+      return;
+    }
+
+    // 6.14 API: Test Google Drive Connection & Count Image Files
+    if (url.pathname === '/api/settings/drive/test' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const { folderId, serviceAccountJson } = JSON.parse(body || '{}');
+          if (!folderId) {
+            return sendJson({ error: 'Google Drive folderId or URL is required to test.' }, 400);
+          }
+
+          let creds: any;
+          if (serviceAccountJson && typeof serviceAccountJson === 'string') {
+            creds = parseServiceAccountKey(serviceAccountJson);
+          } else {
+            creds = await store.getGoogleDriveServiceAccount(true);
+          }
+
+          if (!creds) {
+            return sendJson({
+              error: 'No Google Service Account configured. Please paste your service account JSON key.',
+            }, 400);
+          }
+
+          const extractedId = extractDriveFolderId(folderId);
+          const driveClient = new GoogleDriveClient({
+            credentials: creds,
+            libraryFolderId: extractedId,
+          });
+
+          const files = await driveClient.listFilesInFolder(extractedId);
+          return sendJson({
+            success: true,
+            clientEmail: driveClient.getServiceAccountEmail(),
+            folderId: extractedId,
+            imageFilesCount: files.length,
+            message: `Successfully connected! Found ${files.length} image file(s) in folder.`,
+          });
+        } catch (err: any) {
+          return sendJson({
+            success: false,
+            error: err?.message || 'Drive connection test failed.',
+            status: err?.status,
+          }, 400);
+        }
+      });
+      return;
+    }
+
+    // 6.15 API: Configure Drive Source per Library
+    if (url.pathname === '/api/library/drive-config' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const { libraryId, driveFolderId, afterPublishAction } = JSON.parse(body || '{}');
+          if (!libraryId || !driveFolderId) {
+            return sendJson({ error: 'libraryId and driveFolderId are required.' }, 400);
+          }
+          const cleanFolderId = extractDriveFolderId(driveFolderId);
+          const updated = await store.updateLibrary(libraryId, {
+            image_source: 'drive',
+            drive_folder_id: cleanFolderId,
+            after_publish_action: afterPublishAction || 'move_to_posted',
+          });
+          return sendJson({ success: true, library: updated });
+        } catch (err: any) {
+          return sendJson({ error: err?.message || 'Failed to update Drive library config' }, 400);
+        }
+      });
+      return;
+    }
+
+    // 6.16 API: Trigger Drive Sync for Library
+    if (url.pathname === '/api/library/sync-drive' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const { pageId, libraryId } = JSON.parse(body || '{}');
+          if (!pageId || !libraryId) {
+            return sendJson({ error: 'pageId and libraryId required' }, 400);
+          }
+          const creds = await store.getGoogleDriveServiceAccount(true);
+          if (!creds) {
+            return sendJson({
+              error: 'Google Drive service account not configured. Please add it in Settings.',
+            }, 400);
+          }
+          const libraries = await store.getLibraries(pageId);
+          const library = libraries.find((l) => l.id === libraryId);
+          if (!library || !library.drive_folder_id) {
+            return sendJson({ error: 'Library does not have a configured drive_folder_id.' }, 400);
+          }
+
+          const driveClient = new GoogleDriveClient({
+            credentials: creds,
+            libraryFolderId: library.drive_folder_id,
+            postedFolderId: library.posted_folder_id || undefined,
+          });
+
+          const syncStats = await store.syncDriveLibrary(pageId, libraryId, driveClient);
+          return sendJson({
+            success: true,
+            syncStats,
+            message: `Synced ${syncStats.total} files (${syncStats.added} new, ${syncStats.updated} updated, ${syncStats.missing} missing).`,
+          });
+        } catch (err: any) {
+          return sendJson({ error: err?.message || 'Drive sync failed' }, 500);
+        }
+      });
+      return;
+    }
+
+    // 6.17 API: Thumbnail Proxy (Downloads from Drive, resizes to ~300px with Sharp, caches)
+    if (url.pathname === '/api/library/thumbnail' && req.method === 'GET') {
+      try {
+        const assetId = url.searchParams.get('assetId');
+        const pageId = url.searchParams.get('pageId') || '';
+        if (!assetId) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('assetId is required');
+          return;
+        }
+
+        const assets = await store.getLibraryAssets(pageId);
+        const asset = assets.find((a) => a.id === assetId);
+        if (!asset) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Asset not found');
+          return;
+        }
+
+        let rawBuffer: Buffer | null = null;
+        if (asset.source === 'drive' && asset.drive_file_id) {
+          const creds = await store.getGoogleDriveServiceAccount(true);
+          if (!creds) {
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('Google Drive credentials unavailable');
+            return;
+          }
+          const libraries = await store.getLibraries(pageId);
+          const library = libraries.find((l) => l.id === asset.library_id);
+          const folderId = library?.drive_folder_id || 'UNKNOWN';
+
+          const driveClient = new GoogleDriveClient({
+            credentials: creds,
+            libraryFolderId: folderId,
+          });
+          rawBuffer = await driveClient.downloadFileBuffer(asset.drive_file_id);
+        } else if (asset.storage_path) {
+          rawBuffer = await store.downloadLibraryStorageAsset(asset.storage_path);
+        }
+
+        if (!rawBuffer) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Image buffer not found');
+          return;
+        }
+
+        // Resize to 300px thumbnail using Sharp
+        const thumbBuffer = await sharp(rawBuffer)
+          .resize(300, 300, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+
+        res.writeHead(200, {
+          'Content-Type': 'image/jpeg',
+          'Content-Length': thumbBuffer.length,
+          'Cache-Control': 'public, max-age=3600',
+        });
+        res.end(thumbBuffer);
+        return;
+      } catch (thumbErr: any) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Thumbnail generation error: ' + (thumbErr?.message || 'unknown'));
+        return;
+      }
     }
 
     // 7. API: Toggle Kill Switch
@@ -6418,6 +6711,7 @@ async function generateDashboardHtml(
     </div>
 
     <!-- TAB: CONTENT LIBRARY (EXCEL + IMAGE LIBRARY MODE) -->
+    <!-- TAB 6.5: CONTENT LIBRARY (EXCEL + IMAGE LIBRARY MODE) -->
     <div id="tab-library" class="tab-content ${routeInfo.tabId === 'library' ? 'active' : ''}">
       <div class="card" style="margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 12px;">
@@ -6426,7 +6720,7 @@ async function generateDashboardHtml(
               <span>📁 Excel + Image Content Library</span>
               <span id="libActiveModeBadge" class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; font-size: 11px;">FULL AI</span>
             </h3>
-            <p style="color: var(--text-muted); font-size: 13px;">Manage human-curated spreadsheets, uploaded photo assets, and automated 1:1 image matching.</p>
+            <p style="color: var(--text-muted); font-size: 13px;">Manage human-curated spreadsheets, Google Drive image streaming, and automated 1:1 image matching.</p>
           </div>
           <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <select id="libPageSelector" class="form-control" style="font-size: 12px; width: auto; padding: 6px 12px;" onchange="loadContentLibraryForPage(this.value)">
@@ -6436,6 +6730,11 @@ async function generateDashboardHtml(
               📥 Download Template (.xlsx)
             </a>
           </div>
+        </div>
+
+        <!-- Missing Migration Alert Banner -->
+        <div id="libMigrationBanner" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 13px;">
+          ⚠️ <strong>Database Migration Notice:</strong> The Google Drive Content Library migration has not been detected yet. Please run <code>supabase/migrations/20261118_content_library_drive.sql</code> in your Supabase SQL editor to ensure full column compatibility.
         </div>
 
         <!-- Mode Selector Bar -->
@@ -6472,7 +6771,7 @@ async function generateDashboardHtml(
           <div class="card" style="padding: 14px; background: rgba(255,255,255,0.02);">
             <div class="card-title">Available Images</div>
             <div id="libMetricAssets" class="card-val" style="color: #a78bfa; font-size: 24px;">0</div>
-            <div class="card-meta">Unused photo assets</div>
+            <div class="card-meta">Drive & Uploaded photos</div>
           </div>
           <div class="card" style="padding: 14px; background: rgba(255,255,255,0.02);">
             <div class="card-title">Stock Estimate</div>
@@ -6483,28 +6782,51 @@ async function generateDashboardHtml(
 
         <!-- Low Stock Warning Banner -->
         <div id="libLowStockBanner" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fde68a; padding: 10px 14px; border-radius: 6px; margin-bottom: 20px; font-size: 12px;">
-          ⚠️ <strong>Low Content Stock Alert:</strong> Less than 3 days of matched library content remaining. Upload new spreadsheet rows and photos to ensure uninterrupted posting.
+          ⚠️ <strong>Low Content Stock Alert:</strong> Less than 3 days of matched library content remaining. Add new spreadsheet rows or sync more photos to ensure uninterrupted posting.
         </div>
 
-        <!-- Importers Grid: Sheet Upload on Left, Image Upload on Right -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; margin-bottom: 24px;">
+        <!-- Importers Grid: 1. Sheet, 2. Google Drive Source, 3. Direct Upload -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px;">
           <!-- 1. Spreadsheet Importer -->
-          <div style="border: 1px dashed var(--card-border); border-radius: 8px; padding: 18px; background: rgba(0,0,0,0.15);">
+          <div style="border: 1px dashed var(--card-border); border-radius: 8px; padding: 16px; background: rgba(0,0,0,0.15);">
             <h4 style="font-size: 14px; margin: 0 0 8px 0; color: #93c5fd;">📄 Import Spreadsheet (.xlsx / .csv)</h4>
-            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Upload a content schedule with topics, facts, and image filenames.</p>
+            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Upload schedule with topics, facts, and image filenames.</p>
             <input type="file" id="libSheetFileInput" accept=".xlsx,.csv" style="display: none;" onchange="handleSheetFileSelected(this.files)">
-            <button type="button" class="btn btn-secondary" style="width: 100%; padding: 10px; font-weight: 600;" onclick="document.getElementById('libSheetFileInput').click()">
+            <button type="button" class="btn btn-secondary" style="width: 100%; padding: 8px; font-weight: 600; font-size: 12px;" onclick="document.getElementById('libSheetFileInput').click()">
               📂 Choose Spreadsheet File
             </button>
             <div id="libSheetUploadStatus" style="font-size: 11px; margin-top: 8px; color: var(--text-muted);"></div>
           </div>
 
-          <!-- 2. Multi-Image Uploader -->
-          <div style="border: 1px dashed var(--card-border); border-radius: 8px; padding: 18px; background: rgba(0,0,0,0.15);">
-            <h4 style="font-size: 14px; margin: 0 0 8px 0; color: #34d399;">🖼️ Upload Images (Multi-file)</h4>
-            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Client-side resized to max 2160px. SHA-256 deduplicated automatically.</p>
+          <!-- 2. Google Drive Folder Source (Primary Cloud Source) -->
+          <div style="border: 1px dashed rgba(56, 189, 248, 0.4); border-radius: 8px; padding: 16px; background: rgba(56, 189, 248, 0.03);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <h4 style="font-size: 14px; margin: 0; color: #38bdf8;">☁️ Google Drive Folder Source</h4>
+              <span id="libDriveStatusBadge" class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 10px;">IDLE</span>
+            </div>
+            <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+              <input type="text" id="libDriveFolderInput" placeholder="Drive folder URL or ID" class="form-control" style="font-size: 11px; padding: 6px 10px; flex: 1;">
+              <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 6px 10px;" onclick="saveDriveFolderConfigAction()" title="Save Folder ID">💾 Save</button>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+              <select id="libAfterPublishAction" class="form-control" style="font-size: 11px; padding: 4px 8px; width: auto;" onchange="saveDriveFolderConfigAction()">
+                <option value="move_to_posted">Post-Publish: Move to 'Posted'</option>
+                <option value="trash">Post-Publish: Move to Trash</option>
+                <option value="leave">Post-Publish: Leave in folder</option>
+              </select>
+              <button type="button" class="btn btn-primary" style="font-size: 11px; padding: 6px 12px;" onclick="syncDriveImagesAction()">
+                🔄 Sync from Drive
+              </button>
+            </div>
+            <div id="libDriveSyncStatus" style="font-size: 11px; margin-top: 8px; color: var(--text-muted);"></div>
+          </div>
+
+          <!-- 3. Direct Multi-Image Uploader (Optional Local Source) -->
+          <div style="border: 1px dashed var(--card-border); border-radius: 8px; padding: 16px; background: rgba(0,0,0,0.15);">
+            <h4 style="font-size: 14px; margin: 0 0 8px 0; color: #34d399;">🖼️ Direct Image Upload (Optional)</h4>
+            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Client-side resized to max 2160px with SHA-256 deduplication.</p>
             <input type="file" id="libImagesFileInput" accept="image/*" multiple style="display: none;" onchange="handleImageFilesSelected(this.files)">
-            <button type="button" class="btn btn-secondary" style="width: 100%; padding: 10px; font-weight: 600;" onclick="document.getElementById('libImagesFileInput').click()">
+            <button type="button" class="btn btn-secondary" style="width: 100%; padding: 8px; font-weight: 600; font-size: 12px;" onclick="document.getElementById('libImagesFileInput').click()">
               📤 Choose Photos to Upload
             </button>
             <div id="libImageUploadStatus" style="font-size: 11px; margin-top: 8px; color: var(--text-muted);"></div>
@@ -6512,10 +6834,17 @@ async function generateDashboardHtml(
         </div>
 
         <!-- Matching Board & Action Controls -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px;">
-          <h4 style="font-size: 15px; margin: 0; color: #f3f4f6;">🧩 Content & Image Matching Board</h4>
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <button type="button" class="btn btn-secondary" style="font-size: 11px;" onclick="runAutoMatchAction()">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <h4 style="font-size: 15px; margin: 0; color: #f3f4f6;">🧩 Content & Image Matching Board</h4>
+            <div id="libReadinessAlert" style="font-size: 11px; margin-top: 2px;"></div>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); cursor: pointer;" title="Strict warning: Order matching forces 1-to-1 sequential mapping. Never run automatically.">
+              <input type="checkbox" id="libAllowOrderMatch">
+              <span>Match by order (Opt-in)</span>
+            </label>
+            <button type="button" class="btn btn-primary" style="font-size: 11px;" onclick="runAutoMatchAction()">
               ⚡ Run Auto-Match All
             </button>
             <button type="button" class="btn btn-secondary" style="font-size: 11px; color: #c084fc; border-color: rgba(192, 132, 252, 0.4);" onclick="runVisionSuggestAction()">
@@ -6525,16 +6854,16 @@ async function generateDashboardHtml(
         </div>
 
         <!-- Items Table -->
-        <div style="overflow-x: auto; max-height: 400px; border: 1px solid var(--card-border); border-radius: 8px;">
+        <div style="overflow-x: auto; max-height: 480px; border: 1px solid var(--card-border); border-radius: 8px;">
           <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
             <thead>
               <tr style="background: #0f172a; border-bottom: 1px solid var(--card-border); color: var(--text-muted);">
                 <th style="padding: 10px 12px;">#</th>
-                <th style="padding: 10px 12px;">Content Idea</th>
+                <th style="padding: 10px 12px;">Content Idea & Topic</th>
                 <th style="padding: 10px 12px;">Category</th>
                 <th style="padding: 10px 12px;">Image Filename Hint</th>
-                <th style="padding: 10px 12px;">Matched Asset</th>
-                <th style="padding: 10px 12px;">Match Status</th>
+                <th style="padding: 10px 12px;">Matched Photo</th>
+                <th style="padding: 10px 12px;">Status</th>
                 <th style="padding: 10px 12px;">Actions</th>
               </tr>
             </thead>
@@ -6991,6 +7320,52 @@ async function generateDashboardHtml(
           <span id="testFbConnStatus" style="font-size: 13px; color: var(--text-muted);"></span>
         </div>
         <div id="testFbConnResults" style="display: none; margin-top: 14px;"></div>
+      </div>
+
+      <!-- Google Drive Service Account Connection Card (Content Library Source) -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid rgba(56, 189, 248, 0.3);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <h3 style="margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+              <span>☁️</span> Google Drive Service Account (Content Library Source)
+            </h3>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Stream high-resolution images directly from your Google Drive folder. Encrypted with AES-256-GCM.
+            </div>
+          </div>
+          <span id="driveSettingsBadge" class="badge" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; font-size: 11px;">
+            ● Checking status...
+          </span>
+        </div>
+
+        <div style="margin-bottom: 14px;">
+          <label for="driveServiceAccountJson" style="font-size: 12px; font-weight: 600; color: #cbd5e1; display: block; margin-bottom: 6px;">
+            Service Account JSON Key
+          </label>
+          <textarea id="driveServiceAccountJson" class="form-control" rows="4" placeholder="Paste your Google Cloud Service Account JSON key here (starts with { &quot;type&quot;: &quot;service_account&quot;... })..." style="font-family: monospace; font-size: 11px; resize: vertical;"></textarea>
+          <small style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 4px;">
+            Stored encrypted with AES-256-GCM. Never returned to browser or logged in plain text.
+          </small>
+        </div>
+
+        <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-primary" style="font-size: 12px;" onclick="saveGoogleDriveServiceAccountKeyAction()">
+            🔒 Save & Encrypt Service Account
+          </button>
+          <span id="driveKeySaveStatus" style="font-size: 12px; color: var(--text-muted);"></span>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid var(--card-border); margin: 16px 0;">
+
+        <!-- Test Connection Section -->
+        <h4 style="font-size: 13px; margin: 0 0 10px 0; color: #93c5fd;">🧪 Test Google Drive Connection & Count Files</h4>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
+          <input type="text" id="driveTestFolderInput" placeholder="Paste Google Drive folder URL or ID to probe" class="form-control" style="font-size: 12px; flex: 1; min-width: 260px;">
+          <button type="button" class="btn btn-secondary" style="font-size: 12px;" onclick="testGoogleDriveConnectionAction()">
+            🔍 Test Connection
+          </button>
+        </div>
+        <div id="driveTestResultBox" style="display: none; padding: 12px 14px; border-radius: 6px; font-size: 12px; margin-top: 10px;"></div>
       </div>
 
       <div class="card" style="margin-bottom: 24px;">
@@ -7629,6 +8004,20 @@ async function generateDashboardHtml(
             </label>
             <input type="range" id="psmHybridScore" min="50" max="95" value="80" style="width: 100%; margin-top: 6px;" oninput="document.getElementById('psmHybridScoreVal').innerText = this.value; markFormModified();">
             <small style="color: var(--text-muted); font-size: 11px;">Scores below threshold are routed to your Review Inbox for human sign-off.</small>
+          </div>
+          <!-- Content Source Mode Selector (Global -> Profile -> Page hierarchy) -->
+          <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px 14px; margin-top: 14px;">
+            <label for="psmContentSourceMode" style="font-size: 13px; font-weight: 700; color: #93c5fd; display: block; margin-bottom: 6px;">
+              📁 Content Source Mode
+            </label>
+            <select id="psmContentSourceMode" name="psmContentSourceMode" class="form-control" style="background: #111827; border: 1px solid var(--card-border); color: #f9fafb; font-size: 12px; padding: 8px 10px; border-radius: 6px; width: 100%;" onchange="markFormModified();">
+              <option value="full_ai">🤖 Full AI (Default - Autonomous Topic Research & AI Image)</option>
+              <option value="excel_library">📁 Excel + Image Library (Curated Sheet & Google Drive / Uploaded Photos)</option>
+              <option value="hybrid">⚡ Hybrid Mode (Library First, Autonomous AI Fallback)</option>
+            </select>
+            <small style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 4px;">
+              In Excel + Image Library mode, posts are composed strictly using your sheet rows and matched photos from Google Drive or Uploads.
+            </small>
           </div>
         </div>
 
