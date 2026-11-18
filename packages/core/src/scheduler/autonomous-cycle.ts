@@ -331,6 +331,71 @@ export async function runAutonomousCycle(
             }
           }
 
+          // Check for Content Library items (Excel + Image Library Mode)
+          let chosenLibraryItem: any = null;
+          let libraryImageBuf: Buffer | undefined;
+          let matchedAssetRecord: any = null;
+
+          const contentSourceMode =
+            page.content_source_mode || page.overrides?.content_source_mode || 'full_ai';
+
+          if (contentSourceMode === 'excel_library' || contentSourceMode === 'hybrid') {
+            try {
+              let { data: libItems } = await supabase
+                .from('library_items')
+                .select('*, library_assets(*)')
+                .eq('page_id', page.id)
+                .in('status', ['matched', 'qa_passed', 'scheduled', 'pending'])
+                .order('row_index', { ascending: true })
+                .limit(10);
+
+              if (libItems && libItems.length > 0) {
+                // Prioritize matching planned_slot within 30 min, else take earliest pending/matched
+                chosenLibraryItem =
+                  libItems.find(
+                    (li: any) =>
+                      li.planned_slot &&
+                      Math.abs(new Date(li.planned_slot).getTime() - slot.getTime()) <= 30 * 60000
+                  ) || libItems[0];
+
+                matchedAssetRecord = chosenLibraryItem.library_assets || null;
+                if (!matchedAssetRecord && chosenLibraryItem.matched_asset_id) {
+                  const { data: assetData } = await supabase
+                    .from('library_assets')
+                    .select('*')
+                    .eq('id', chosenLibraryItem.matched_asset_id)
+                    .maybeSingle();
+                  matchedAssetRecord = assetData;
+                }
+
+                if (matchedAssetRecord?.storage_path) {
+                  try {
+                    const { data: dlData, error: dlErr } = await supabase.storage
+                      .from('library-images')
+                      .download(matchedAssetRecord.storage_path);
+                    if (dlData && !dlErr) {
+                      libraryImageBuf = Buffer.from(await dlData.arrayBuffer());
+                    }
+                  } catch (dlEx) {
+                    console.warn('[Autonomous Worker] Could not download library image:', dlEx);
+                  }
+                }
+              }
+            } catch (libQueryErr: any) {
+              console.warn('[Autonomous Worker] Library query error:', libQueryErr?.message);
+            }
+
+            if (contentSourceMode === 'excel_library' && (!chosenLibraryItem || !libraryImageBuf)) {
+              console.warn(
+                `[Autonomous Worker] Page '${page.name}' in excel_library mode has no valid matched library image. Refusing text-only posting.`
+              );
+              errors.push(
+                `Page '${page.name}' in excel_library mode has no valid matched library item with image.`
+              );
+              continue;
+            }
+          }
+
           // Prepare effective page with overrides
           const pageWithOverrides = {
             ...page,
@@ -338,6 +403,7 @@ export async function runAutonomousCycle(
             custom_niche: page.overrides?.custom_niche || null,
             custom_caption_prompt: page.overrides?.custom_caption_prompt || null,
             publishing_mode: page.publishing_mode || 'auto',
+            content_source_mode: contentSourceMode,
           };
 
           // Run unified 7-stage generation pipeline with multi-provider failover
@@ -345,8 +411,23 @@ export async function runAutonomousCycle(
             page: pageWithOverrides,
             profile: profile || undefined,
             activeProviders: activeProvidersWithKeys,
-            userTopic: chosenQueueItem?.title,
+            userTopic: chosenLibraryItem?.content_idea || chosenQueueItem?.title,
             queueItem: chosenQueueItem,
+            libraryItem: chosenLibraryItem
+              ? {
+                  id: chosenLibraryItem.id,
+                  contentIdea: chosenLibraryItem.content_idea,
+                  category: chosenLibraryItem.category,
+                  imageIdea: chosenLibraryItem.image_idea,
+                  imagePrompt: chosenLibraryItem.image_prompt,
+                  imageFileName: chosenLibraryItem.image_filename_hint,
+                  teaserSeed: chosenLibraryItem.teaser_seed,
+                  hiddenClue: chosenLibraryItem.hidden_clue,
+                  keyFacts: chosenLibraryItem.key_facts || [],
+                  sourceLinks: chosenLibraryItem.source_links || [],
+                }
+              : undefined,
+            libraryImageBuffer: libraryImageBuf,
             isTestRun: false,
           });
 
@@ -512,6 +593,56 @@ export async function runAutonomousCycle(
             console.log(
               `[Autonomous Worker] Successfully created & scheduled post '${insertedPost.title}' (${postStatus}) for ${slot.toISOString()}!`
             );
+
+            // Cleanup library item & asset if library was used (Excel + Image Library Mode)
+            if (chosenLibraryItem) {
+              try {
+                if (matchedAssetRecord?.storage_path) {
+                  await supabase.storage
+                    .from('library-images')
+                    .remove([matchedAssetRecord.storage_path]);
+                }
+                if (matchedAssetRecord?.id) {
+                  await supabase
+                    .from('library_assets')
+                    .update({
+                      status: 'image_deleted',
+                      deleted_at: new Date().toISOString(),
+                    })
+                    .eq('id', matchedAssetRecord.id);
+                }
+                await supabase
+                  .from('library_items')
+                  .update({
+                    status: 'published',
+                    post_id: insertedPost.id,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', chosenLibraryItem.id);
+
+                if (chosenLibraryItem.library_id) {
+                  const { data: libRec } = await supabase
+                    .from('content_libraries')
+                    .select('published_rows, total_rows')
+                    .eq('id', chosenLibraryItem.library_id)
+                    .single();
+                  if (libRec) {
+                    const newPub = (libRec.published_rows || 0) + 1;
+                    const isExhausted = newPub >= (libRec.total_rows || 0);
+                    await supabase
+                      .from('content_libraries')
+                      .update({
+                        published_rows: newPub,
+                        exhausted: isExhausted,
+                        updated_at: new Date().toISOString(),
+                      })
+                      .eq('id', chosenLibraryItem.library_id);
+                  }
+                }
+              } catch (cleanErr: any) {
+                console.warn('[Autonomous Worker] Library cleanup warning:', cleanErr?.message);
+              }
+            }
 
             // Mark queue item as used
             if (queueItemId) {

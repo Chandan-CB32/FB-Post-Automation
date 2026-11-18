@@ -215,6 +215,95 @@ export class ProviderRouter {
   }
 
   /**
+   * Executes a vision/multimodal generation task (labels, caption grounding, image verification)
+   * across vision-capable providers with automatic failover.
+   */
+  async executeVision(
+    stage: PipelineStage,
+    options: {
+      imageBuffer: Buffer;
+      prompt: string;
+      systemPrompt?: string;
+      model?: string;
+      encryptionKey?: string;
+      jsonMode?: boolean;
+      temperature?: number;
+    }
+  ): Promise<{ text: string; latencyMs: number; modelUsed: string; parsedJson?: unknown; providerId: string; providerName: string }> {
+    const chain = this.chains.get(stage) || this.chains.get('vision_check');
+    let candidateProviders: ProviderDefinition[] = [];
+
+    if (chain && chain.providerIds.length > 0) {
+      for (const id of chain.providerIds) {
+        const prov = this.providers.get(id);
+        if (prov && prov.active) candidateProviders.push(prov);
+      }
+    } else {
+      // Find vision-capable providers (Gemini first)
+      candidateProviders = Array.from(this.providers.values()).filter(
+        (p) => p.active && (p.kind === 'gemini_native' || p.name.toLowerCase().includes('gemini'))
+      );
+      if (candidateProviders.length === 0) {
+        candidateProviders = Array.from(this.providers.values()).filter((p) => p.active);
+      }
+    }
+
+    const attempts: Array<{ provider: string; error: string; kind: string }> = [];
+
+    for (const provider of candidateProviders) {
+      const keyInfo = getNextAvailableKey(provider.keys, new Date(), options.encryptionKey);
+      if (!keyInfo) {
+        attempts.push({
+          provider: provider.name,
+          error: 'No active or cooling-expired keys available in pool.',
+          kind: 'auth',
+        });
+        continue;
+      }
+
+      const { item: keyItem, decryptedKey } = keyInfo;
+      const model = options.model || provider.defaultModel || 'gemini-2.5-flash';
+
+      try {
+        const result = await this.geminiAdapter.generateVision({
+          imageBuffer: options.imageBuffer,
+          prompt: options.prompt,
+          systemPrompt: options.systemPrompt,
+          apiKey: decryptedKey,
+          model,
+          baseUrl: provider.baseUrl,
+          jsonMode: options.jsonMode,
+          temperature: options.temperature,
+        });
+
+        recordKeySuccess(keyItem);
+        provider.requestsToday += 1;
+
+        return {
+          ...result,
+          providerId: provider.providerId,
+          providerName: provider.name,
+        };
+      } catch (err: unknown) {
+        const errorKind = err instanceof ProviderError ? err.kind : 'network_error';
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        recordKeyFailure(keyItem, errorKind);
+
+        attempts.push({
+          provider: provider.name,
+          error: errorMsg,
+          kind: errorKind,
+        });
+      }
+    }
+
+    throw new ProviderRouterError(
+      `All vision providers in chain failed for stage '${stage}'. Attempts: ${attempts.length}`,
+      attempts
+    );
+  }
+
+  /**
    * Executes an image generation stage across the configured provider chain with strict priority failover.
    */
   async executeImage(

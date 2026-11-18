@@ -79,6 +79,12 @@ import {
   NICHE_PRESETS,
   getCategoriesForPage,
   assignNextCategory,
+  parseSheetBuffer,
+  generateLibraryTemplateBuffer,
+  runAutoMatching,
+  suggestVisionMatches,
+  calculateSha256,
+  detectAspectRatio,
 } from '@fb-auto/core';
 import {
   renderPrivacyPolicyHtml,
@@ -2910,6 +2916,307 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       });
     }
 
+    // 6.6 API: Content Library Template Download
+    if (url.pathname === '/api/library/template') {
+      const templateBuffer = generateLibraryTemplateBuffer();
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': 'attachment; filename="content_library_template.xlsx"',
+        'Content-Length': templateBuffer.length,
+      });
+      res.end(templateBuffer);
+      return;
+    }
+
+    // 6.7 API: Content Library Overview & Metrics
+    if (url.pathname === '/api/library') {
+      const pageId = url.searchParams.get('pageId');
+      if (!pageId) {
+        return sendJson({ error: 'pageId parameter required' }, 400);
+      }
+      const page = await store.getPageById(pageId);
+      const libraries = await store.getLibraries(pageId);
+      const items = await store.getLibraryItems(pageId);
+      const assets = await store.getLibraryAssets(pageId);
+
+      const totalRows = items.length;
+      const matchedCount = items.filter(
+        (i) => i.status === 'matched' || i.status === 'drafted' || i.status === 'scheduled'
+      ).length;
+      const publishedCount = items.filter((i) => i.status === 'published').length;
+      const pendingCount = items.filter((i) => i.status === 'pending').length;
+      const needsReviewCount = items.filter((i) => i.status === 'needs_review').length;
+      const postsPerDay = page?.schedule?.postsPerDay || 5;
+      const availableCount = matchedCount;
+      const stockDaysRemaining = postsPerDay > 0 ? Number((availableCount / postsPerDay).toFixed(1)) : 0;
+      const lowStock = stockDaysRemaining <= 3;
+
+      return sendJson({
+        pageId,
+        contentSourceMode:
+          page?.content_source_mode || page?.overrides?.content_source_mode || 'full_ai',
+        libraries,
+        metrics: {
+          totalRows,
+          matchedCount,
+          publishedCount,
+          pendingCount,
+          needsReviewCount,
+          availableAssetsCount: assets.filter(
+            (a) => a.status === 'unmatched' || a.status === 'matched'
+          ).length,
+          totalAssetsCount: assets.length,
+          postsPerDay,
+          stockDaysRemaining,
+          lowStock,
+        },
+        items: items.slice(0, 100),
+        assets: assets.slice(0, 100),
+      });
+    }
+
+    // 6.8 API: Upload Spreadsheet to Content Library
+    if (url.pathname === '/api/library/upload-sheet' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const { pageId, name, filename, base64Data } = payload;
+          if (!pageId || !base64Data) {
+            return sendJson({ error: 'pageId and base64Data required' }, 400);
+          }
+
+          const fileBuf = Buffer.from(base64Data, 'base64');
+          const parseResult = parseSheetBuffer(fileBuf, filename);
+
+          if (parseResult.validRows.length === 0) {
+            return sendJson(
+              {
+                error: 'No valid rows found in sheet. Ensure a Content Idea column exists.',
+                warnings: parseResult.warnings,
+                errors: parseResult.errors,
+              },
+              400
+            );
+          }
+
+          const libRecord = await store.createLibrary({
+            page_id: pageId,
+            name: name || filename || 'Spreadsheet Import',
+            source_type: (filename || '').endsWith('.csv') ? 'csv' : 'excel',
+            original_filename: filename || 'sheet.xlsx',
+            total_rows: parseResult.validRows.length,
+            imported_rows: parseResult.validRows.length,
+          });
+
+          const itemsToSave = parseResult.validRows.map((r) => ({
+            library_id: libRecord.id,
+            page_id: pageId,
+            row_index: r.rowIndex,
+            external_id: r.externalId,
+            planned_slot: r.plannedSlot,
+            category: r.category,
+            content_idea: r.contentIdea,
+            image_idea: r.imageIdea,
+            image_prompt: r.imagePrompt,
+            image_filename_hint: r.imageFileName,
+            teaser_seed: r.teaserSeed,
+            hidden_clue: r.hiddenClue,
+            key_facts: r.keyFacts,
+            source_links: r.sourceLinks,
+            custom_fields: r.customFields,
+            status: 'pending',
+          }));
+
+          const savedItems = await store.saveLibraryItems(itemsToSave);
+
+          const existingAssets = await store.getLibraryAssets(pageId);
+          const matchResult = runAutoMatching(savedItems, existingAssets);
+
+          let autoMatchedCount = 0;
+          for (const m of matchResult.matches) {
+            await store.matchLibraryItem(m.itemId, m.assetId, m.method, m.confidence);
+            autoMatchedCount++;
+          }
+
+          return sendJson({
+            success: true,
+            library: libRecord,
+            totalRows: parseResult.validRows.length,
+            matchedRows: autoMatchedCount,
+            headerMapping: parseResult.headerMapping,
+            warnings: parseResult.warnings,
+            previewRows: parseResult.previewRows,
+          });
+        } catch (err: any) {
+          return sendJson({ error: err?.message || 'Error processing sheet' }, 500);
+        }
+      });
+      return;
+    }
+
+    // 6.9 API: Upload Images to Content Library
+    if (url.pathname === '/api/library/upload-images' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const { pageId, libraryId, images } = payload;
+          if (!pageId || !Array.isArray(images) || images.length === 0) {
+            return sendJson({ error: 'pageId and images array required' }, 400);
+          }
+
+          const existingAssets = await store.getLibraryAssets(pageId);
+          const existingHashes = new Set(existingAssets.map((a: any) => a.sha256));
+
+          const savedAssets: any[] = [];
+          for (const img of images) {
+            const { filename, base64Data, mimeType } = img;
+            if (!filename || !base64Data) continue;
+
+            const buf = Buffer.from(base64Data, 'base64');
+            const sha256 = calculateSha256(buf);
+
+            if (existingHashes.has(sha256)) continue;
+            existingHashes.add(sha256);
+
+            let width: number | null = null;
+            let height: number | null = null;
+            let aspect: '4:5' | '1:1' | '16:9' | 'other' = 'other';
+
+            try {
+              const sharpMod = (await import('sharp')).default;
+              const meta = await sharpMod(buf).metadata();
+              width = meta.width || null;
+              height = meta.height || null;
+              aspect = detectAspectRatio(width, height);
+            } catch (_) {}
+
+            const storagePath = `${pageId}/${Date.now()}_${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+
+            const supabase = getSupabaseClient();
+            if (supabase) {
+              try {
+                await supabase.storage.from('library-images').upload(storagePath, buf, {
+                  contentType: mimeType || 'image/jpeg',
+                  upsert: true,
+                });
+              } catch (sErr) {
+                console.warn('[Storage] Image upload to bucket:', sErr);
+              }
+            }
+
+            const asset = {
+              page_id: pageId,
+              library_id: libraryId || null,
+              filename,
+              storage_path: storagePath,
+              sha256,
+              mime_type: mimeType || 'image/jpeg',
+              bytes: buf.length,
+              width,
+              height,
+              aspect_ratio: aspect,
+              status: 'unmatched',
+              vision_labels: [],
+            };
+            const [saved] = await store.saveLibraryAssets([asset]);
+            savedAssets.push(saved);
+          }
+
+          const pendingItems = await store.getLibraryItems(pageId, { status: 'pending' });
+          const allAssets = await store.getLibraryAssets(pageId);
+          const matchResult = runAutoMatching(pendingItems, allAssets);
+
+          let autoMatchedCount = 0;
+          for (const m of matchResult.matches) {
+            await store.matchLibraryItem(m.itemId, m.assetId, m.method, m.confidence);
+            autoMatchedCount++;
+          }
+
+          return sendJson({
+            success: true,
+            uploadedCount: savedAssets.length,
+            autoMatchedCount,
+            savedAssets,
+          });
+        } catch (err: any) {
+          return sendJson({ error: err?.message || 'Error uploading images' }, 500);
+        }
+      });
+      return;
+    }
+
+    // 6.10 API: Match Library Item & Asset (Manual, Auto, Vision)
+    if (url.pathname === '/api/library/match' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const { action, itemId, assetId, pageId } = payload;
+
+          if (action === 'manual') {
+            if (!itemId || !assetId) {
+              return sendJson({ error: 'itemId and assetId required' }, 400);
+            }
+            const updated = await store.matchLibraryItem(itemId, assetId, 'manual', 1.0);
+            return sendJson({ success: true, item: updated });
+          }
+
+          if (action === 'auto') {
+            const items = await store.getLibraryItems(pageId);
+            const assets = await store.getLibraryAssets(pageId);
+            const matchRes = runAutoMatching(items, assets, { enableOrderMatching: true });
+            for (const m of matchRes.matches) {
+              await store.matchLibraryItem(m.itemId, m.assetId, m.method, m.confidence);
+            }
+            return sendJson({
+              success: true,
+              matchedCount: matchRes.matches.length,
+              matches: matchRes.matches,
+            });
+          }
+
+          if (action === 'vision_suggest') {
+            const items = await store.getLibraryItems(pageId);
+            const assets = await store.getLibraryAssets(pageId);
+            const suggestions = suggestVisionMatches(items, assets);
+            return sendJson({ success: true, suggestions });
+          }
+
+          return sendJson({ error: 'Unknown match action' }, 400);
+        } catch (err: any) {
+          return sendJson({ error: err?.message || 'Match error' }, 500);
+        }
+      });
+      return;
+    }
+
+    // 6.11 API: Update Page Content Source Mode
+    if (url.pathname === '/api/library/set-page-mode' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const { pageId, mode } = JSON.parse(body || '{}');
+          if (!pageId || !['full_ai', 'excel_library', 'hybrid'].includes(mode)) {
+            return sendJson(
+              { error: 'Valid pageId and mode (full_ai, excel_library, hybrid) required' },
+              400
+            );
+          }
+          await store.updatePage(pageId, { content_source_mode: mode });
+          return sendJson({ success: true, mode });
+        } catch (err: any) {
+          return sendJson({ error: err?.message || 'Error updating page mode' }, 500);
+        }
+      });
+      return;
+    }
+
     // 7. API: Toggle Kill Switch
     if (req.method === 'POST' && url.pathname === '/api/kill-switch') {
       const current = await store.getKillSwitch();
@@ -4999,6 +5306,7 @@ async function generateDashboardHtml(
       <li class="nav-item"><button ${routeInfo.tabId === 'accounts' ? 'class="active"' : ''} data-tab="accounts" onclick="showTab('accounts', this)">👥 FB Accounts & IDs (<span id="sidebarAccountCount">${accounts.length}</span>)</button></li>
       <li class="nav-item"><button ${routeInfo.tabId === 'pages' ? 'class="active"' : ''} data-tab="pages" onclick="showTab('pages', this)">📑 Pages & Accounts (<span id="sidebarPageCount">${pages.length}</span>)</button></li>
       <li class="nav-item"><button ${routeInfo.tabId === 'page-prompts' ? 'class="active"' : ''} data-tab="page-prompts" onclick="showTab('page-prompts', this)">✍️ Page Prompt Studio</button></li>
+      <li class="nav-item"><button ${routeInfo.tabId === 'library' ? 'class="active"' : ''} data-tab="library" onclick="showTab('library', this)">📁 Content Library</button></li>
       <li class="nav-item"><button ${routeInfo.tabId === 'review' ? 'class="active"' : ''} data-tab="review" onclick="showTab('review', this)">📬 Review Inbox <span class="badge" id="revBadge">${reviewPosts.length}</span></button></li>
       <li class="nav-item"><button ${routeInfo.tabId === 'calendar' ? 'class="active"' : ''} data-tab="calendar" onclick="showTab('calendar', this)">📅 Schedule Calendar</button></li>
       <li class="nav-item"><button ${routeInfo.tabId === 'analytics' ? 'class="active"' : ''} data-tab="analytics" onclick="showTab('analytics', this)">📈 Analytics & Insights</button></li>
@@ -6105,6 +6413,135 @@ async function generateDashboardHtml(
               })
               .join('');
           })()}
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: CONTENT LIBRARY (EXCEL + IMAGE LIBRARY MODE) -->
+    <div id="tab-library" class="tab-content ${routeInfo.tabId === 'library' ? 'active' : ''}">
+      <div class="card" style="margin-bottom: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <h3 style="font-size: 18px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+              <span>📁 Excel + Image Content Library</span>
+              <span id="libActiveModeBadge" class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; font-size: 11px;">FULL AI</span>
+            </h3>
+            <p style="color: var(--text-muted); font-size: 13px;">Manage human-curated spreadsheets, uploaded photo assets, and automated 1:1 image matching.</p>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <select id="libPageSelector" class="form-control" style="font-size: 12px; width: auto; padding: 6px 12px;" onchange="loadContentLibraryForPage(this.value)">
+              ${pages.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+            </select>
+            <a href="/api/library/template" class="btn btn-secondary" style="font-size: 12px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;" download="content_library_template.xlsx">
+              📥 Download Template (.xlsx)
+            </a>
+          </div>
+        </div>
+
+        <!-- Mode Selector Bar -->
+        <div style="background: #0b0f19; border: 1px solid var(--card-border); border-radius: 8px; padding: 14px 18px; margin-bottom: 20px;">
+          <div style="font-size: 12px; font-weight: 700; color: #93c5fd; margin-bottom: 8px;">Content Source Mode for Selected Page:</div>
+          <div style="display: flex; gap: 14px; flex-wrap: wrap;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px;">
+              <input type="radio" name="libPageSourceMode" value="full_ai" onchange="updatePageContentSourceMode(this.value)">
+              <span>🤖 <strong>Full-AI</strong> (Autonomous research & AI images)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px;">
+              <input type="radio" name="libPageSourceMode" value="excel_library" onchange="updatePageContentSourceMode(this.value)">
+              <span>📑 <strong>Excel + Image Library</strong> (Strictly curated, never posts text-only)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px;">
+              <input type="radio" name="libPageSourceMode" value="hybrid" onchange="updatePageContentSourceMode(this.value)">
+              <span>⚡ <strong>Hybrid</strong> (Library first, AI fallback on exhaustion)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Metric Cards -->
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px;">
+          <div class="card" style="padding: 14px; background: rgba(255,255,255,0.02);">
+            <div class="card-title">Total Sheet Rows</div>
+            <div id="libMetricTotalRows" class="card-val" style="color: #60a5fa; font-size: 24px;">0</div>
+            <div class="card-meta">Imported spreadsheet topics</div>
+          </div>
+          <div class="card" style="padding: 14px; background: rgba(255,255,255,0.02);">
+            <div class="card-title">Ready & Matched</div>
+            <div id="libMetricMatched" class="card-val" style="color: #34d399; font-size: 24px;">0</div>
+            <div class="card-meta">Paired with image asset</div>
+          </div>
+          <div class="card" style="padding: 14px; background: rgba(255,255,255,0.02);">
+            <div class="card-title">Available Images</div>
+            <div id="libMetricAssets" class="card-val" style="color: #a78bfa; font-size: 24px;">0</div>
+            <div class="card-meta">Unused photo assets</div>
+          </div>
+          <div class="card" style="padding: 14px; background: rgba(255,255,255,0.02);">
+            <div class="card-title">Stock Estimate</div>
+            <div id="libMetricStock" class="card-val" style="color: #f59e0b; font-size: 24px;">0 days</div>
+            <div id="libMetricCadence" class="card-meta">Based on page cadence</div>
+          </div>
+        </div>
+
+        <!-- Low Stock Warning Banner -->
+        <div id="libLowStockBanner" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fde68a; padding: 10px 14px; border-radius: 6px; margin-bottom: 20px; font-size: 12px;">
+          ⚠️ <strong>Low Content Stock Alert:</strong> Less than 3 days of matched library content remaining. Upload new spreadsheet rows and photos to ensure uninterrupted posting.
+        </div>
+
+        <!-- Importers Grid: Sheet Upload on Left, Image Upload on Right -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; margin-bottom: 24px;">
+          <!-- 1. Spreadsheet Importer -->
+          <div style="border: 1px dashed var(--card-border); border-radius: 8px; padding: 18px; background: rgba(0,0,0,0.15);">
+            <h4 style="font-size: 14px; margin: 0 0 8px 0; color: #93c5fd;">📄 Import Spreadsheet (.xlsx / .csv)</h4>
+            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Upload a content schedule with topics, facts, and image filenames.</p>
+            <input type="file" id="libSheetFileInput" accept=".xlsx,.csv" style="display: none;" onchange="handleSheetFileSelected(this.files)">
+            <button type="button" class="btn btn-secondary" style="width: 100%; padding: 10px; font-weight: 600;" onclick="document.getElementById('libSheetFileInput').click()">
+              📂 Choose Spreadsheet File
+            </button>
+            <div id="libSheetUploadStatus" style="font-size: 11px; margin-top: 8px; color: var(--text-muted);"></div>
+          </div>
+
+          <!-- 2. Multi-Image Uploader -->
+          <div style="border: 1px dashed var(--card-border); border-radius: 8px; padding: 18px; background: rgba(0,0,0,0.15);">
+            <h4 style="font-size: 14px; margin: 0 0 8px 0; color: #34d399;">🖼️ Upload Images (Multi-file)</h4>
+            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Client-side resized to max 2160px. SHA-256 deduplicated automatically.</p>
+            <input type="file" id="libImagesFileInput" accept="image/*" multiple style="display: none;" onchange="handleImageFilesSelected(this.files)">
+            <button type="button" class="btn btn-secondary" style="width: 100%; padding: 10px; font-weight: 600;" onclick="document.getElementById('libImagesFileInput').click()">
+              📤 Choose Photos to Upload
+            </button>
+            <div id="libImageUploadStatus" style="font-size: 11px; margin-top: 8px; color: var(--text-muted);"></div>
+          </div>
+        </div>
+
+        <!-- Matching Board & Action Controls -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px;">
+          <h4 style="font-size: 15px; margin: 0; color: #f3f4f6;">🧩 Content & Image Matching Board</h4>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-secondary" style="font-size: 11px;" onclick="runAutoMatchAction()">
+              ⚡ Run Auto-Match All
+            </button>
+            <button type="button" class="btn btn-secondary" style="font-size: 11px; color: #c084fc; border-color: rgba(192, 132, 252, 0.4);" onclick="runVisionSuggestAction()">
+              👁️ Suggest with Vision AI
+            </button>
+          </div>
+        </div>
+
+        <!-- Items Table -->
+        <div style="overflow-x: auto; max-height: 400px; border: 1px solid var(--card-border); border-radius: 8px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
+            <thead>
+              <tr style="background: #0f172a; border-bottom: 1px solid var(--card-border); color: var(--text-muted);">
+                <th style="padding: 10px 12px;">#</th>
+                <th style="padding: 10px 12px;">Content Idea</th>
+                <th style="padding: 10px 12px;">Category</th>
+                <th style="padding: 10px 12px;">Image Filename Hint</th>
+                <th style="padding: 10px 12px;">Matched Asset</th>
+                <th style="padding: 10px 12px;">Match Status</th>
+                <th style="padding: 10px 12px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="libItemsTableBody">
+              <tr><td colspan="7" style="padding: 24px; text-align: center; color: var(--text-muted);">Loading library items...</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

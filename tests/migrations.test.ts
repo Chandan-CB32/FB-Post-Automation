@@ -77,5 +77,16 @@ describe('Database Schema & Migration Validation', () => {
     expect(sql).toContain('image_font_family');
     expect(sql).toContain('image_highlight_colors');
   });
+
+  it('validates 20261118_content_library migration file', () => {
+    const libMigPath = path.resolve(__dirname, '../supabase/migrations/20261118_content_library.sql');
+    expect(fs.existsSync(libMigPath)).toBe(true);
+    const sql = fs.readFileSync(libMigPath, 'utf8');
+    expect(sql).toContain('content_source_mode');
+    expect(sql).toContain('public.content_libraries');
+    expect(sql).toContain('public.library_assets');
+    expect(sql).toContain('public.library_items');
+    expect(sql).toContain('library-images');
+  });
 });
 

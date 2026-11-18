@@ -169,6 +169,7 @@ export interface StoredPage {
   secondary_account_ids?: string[];
   profile_id?: string | null;
   publishing_mode: 'auto' | 'review' | 'hybrid';
+  content_source_mode?: 'full_ai' | 'excel_library' | 'hybrid';
   hybrid_min_score: number;
   daily_cap: number;
   active: boolean;
@@ -378,6 +379,9 @@ export class SystemStore {
   private memoryAuditLogs: StoredAuditLog[] = [];
   private memorySettings: Map<string, any> = new Map();
   private memoryContentProfiles: Map<string, any> = new Map();
+  private memoryLibraries: Map<string, any> = new Map();
+  private memoryLibraryItems: Map<string, any> = new Map();
+  private memoryLibraryAssets: Map<string, any> = new Map();
 
   // In-memory query cache for sub-50ms dashboard response times
   private queryCache: Map<string, { data: any; expiresAt: number }> = new Map();
@@ -3704,6 +3708,242 @@ export class SystemStore {
       };
       return fallbackResult;
     }
+  }
+
+  // --- Content Library & Asset CRUD ---
+
+  public async getLibraries(pageId: string): Promise<any[]> {
+    if (isTestEnv() && !this.client) {
+      return Array.from(this.memoryLibraries.values()).filter((l) => l.page_id === pageId);
+    }
+    const { data, error } = await this.getClient()
+      .from('content_libraries')
+      .select('*')
+      .eq('page_id', pageId)
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.warn('[SystemStore] getLibraries error:', error.message);
+      return Array.from(this.memoryLibraries.values()).filter((l) => l.page_id === pageId);
+    }
+    return data || [];
+  }
+
+  public async createLibrary(data: any): Promise<any> {
+    const id = data.id || `lib-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const record = {
+      id,
+      page_id: data.page_id,
+      name: data.name || 'Untitled Library',
+      source_type: data.source_type || 'excel',
+      original_filename: data.original_filename || null,
+      total_rows: data.total_rows || 0,
+      imported_rows: data.imported_rows || 0,
+      matched_rows: data.matched_rows || 0,
+      published_rows: data.published_rows || 0,
+      exhausted: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    this.memoryLibraries.set(id, record);
+
+    if (!isTestEnv() || this.client) {
+      try {
+        const { data: dbData, error } = await this.getClient()
+          .from('content_libraries')
+          .insert(record)
+          .select()
+          .single();
+        if (!error && dbData) return dbData;
+      } catch (e: any) {
+        console.warn('[SystemStore] createLibrary DB fallback:', e.message);
+      }
+    }
+    return record;
+  }
+
+  public async getLibraryItems(
+    pageId: string,
+    options: { libraryId?: string; status?: string } = {}
+  ): Promise<any[]> {
+    if (isTestEnv() && !this.client) {
+      return Array.from(this.memoryLibraryItems.values()).filter((item) => {
+        if (item.page_id !== pageId) return false;
+        if (options.libraryId && item.library_id !== options.libraryId) return false;
+        if (options.status && item.status !== options.status) return false;
+        return true;
+      });
+    }
+
+    let query: any = this.getClient()
+      .from('library_items')
+      .select('*, library_assets(*)')
+      .eq('page_id', pageId);
+
+    if (options.libraryId) query = query.eq('library_id', options.libraryId);
+    if (options.status) query = query.eq('status', options.status);
+    query = query.order('row_index', { ascending: true });
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn('[SystemStore] getLibraryItems error:', error.message);
+      return Array.from(this.memoryLibraryItems.values()).filter((item) => {
+        if (item.page_id !== pageId) return false;
+        if (options.libraryId && item.library_id !== options.libraryId) return false;
+        return true;
+      });
+    }
+    return data || [];
+  }
+
+  public async saveLibraryItems(items: any[]): Promise<any[]> {
+    const saved: any[] = [];
+    for (const item of items) {
+      const id = item.id || `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const rec = {
+        ...item,
+        id,
+        created_at: item.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      this.memoryLibraryItems.set(id, rec);
+      saved.push(rec);
+    }
+
+    if (!isTestEnv() || this.client) {
+      try {
+        const { data, error } = await this.getClient()
+          .from('library_items')
+          .insert(saved)
+          .select();
+        if (!error && data) return data;
+      } catch (e: any) {
+        console.warn('[SystemStore] saveLibraryItems DB fallback:', e.message);
+      }
+    }
+    return saved;
+  }
+
+  public async updateLibraryItem(itemId: string, updates: any): Promise<any> {
+    const existing = this.memoryLibraryItems.get(itemId) || {};
+    const updated = {
+      ...existing,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    this.memoryLibraryItems.set(itemId, updated);
+
+    if (!isTestEnv() || this.client) {
+      try {
+        const { data, error } = await this.getClient()
+          .from('library_items')
+          .update(updates)
+          .eq('id', itemId)
+          .select()
+          .maybeSingle();
+        if (!error && data) return data;
+      } catch (e: any) {
+        console.warn('[SystemStore] updateLibraryItem DB fallback:', e.message);
+      }
+    }
+    return updated;
+  }
+
+  public async getLibraryAssets(
+    pageId: string,
+    options: { status?: string } = {}
+  ): Promise<any[]> {
+    if (isTestEnv() && !this.client) {
+      return Array.from(this.memoryLibraryAssets.values()).filter((a) => {
+        if (a.page_id !== pageId) return false;
+        if (options.status && a.status !== options.status) return false;
+        return true;
+      });
+    }
+
+    let query: any = this.getClient()
+      .from('library_assets')
+      .select('*')
+      .eq('page_id', pageId);
+
+    if (options.status) query = query.eq('status', options.status);
+    query = query.order('uploaded_at', { ascending: false });
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn('[SystemStore] getLibraryAssets error:', error.message);
+      return Array.from(this.memoryLibraryAssets.values()).filter((a) => a.page_id === pageId);
+    }
+    return data || [];
+  }
+
+  public async saveLibraryAssets(assets: any[]): Promise<any[]> {
+    const saved: any[] = [];
+    for (const a of assets) {
+      const id = a.id || `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const rec = {
+        ...a,
+        id,
+        uploaded_at: a.uploaded_at || new Date().toISOString(),
+      };
+      this.memoryLibraryAssets.set(id, rec);
+      saved.push(rec);
+    }
+
+    if (!isTestEnv() || this.client) {
+      try {
+        const { data, error } = await this.getClient()
+          .from('library_assets')
+          .insert(saved)
+          .select();
+        if (!error && data) return data;
+      } catch (e: any) {
+        console.warn('[SystemStore] saveLibraryAssets DB fallback:', e.message);
+      }
+    }
+    return saved;
+  }
+
+  public async updateLibraryAsset(assetId: string, updates: any): Promise<any> {
+    const existing = this.memoryLibraryAssets.get(assetId) || {};
+    const updated = {
+      ...existing,
+      ...updates,
+    };
+    this.memoryLibraryAssets.set(assetId, updated);
+
+    if (!isTestEnv() || this.client) {
+      try {
+        const { data, error } = await this.getClient()
+          .from('library_assets')
+          .update(updates)
+          .eq('id', assetId)
+          .select()
+          .maybeSingle();
+        if (!error && data) return data;
+      } catch (e: any) {
+        console.warn('[SystemStore] updateLibraryAsset DB fallback:', e.message);
+      }
+    }
+    return updated;
+  }
+
+  public async matchLibraryItem(
+    itemId: string,
+    assetId: string,
+    method = 'manual',
+    confidence = 1.0
+  ): Promise<any> {
+    const item = await this.updateLibraryItem(itemId, {
+      matched_asset_id: assetId,
+      match_method: method,
+      match_confidence: confidence,
+      status: 'matched',
+    });
+    await this.updateLibraryAsset(assetId, {
+      matched_item_id: itemId,
+      status: 'matched',
+    });
+    return item;
   }
 }
 

@@ -42,6 +42,7 @@
     accounts: ['Facebook Accounts & Identities', 'Manage multiple Facebook User/Business IDs, token rotation, and linked pages.'],
     pages: ['Pages & Accounts', 'Manage connected Facebook Pages across multiple Facebook IDs, schedule slots, and publishing modes.'],
     'page-prompts': ['Page Prompt Studio', 'Configure page-specific prompt packs, voice overrides, headline styles, and First Comment booster.'],
+    library: ['Content Library', 'Manage Excel spreadsheets, multi-file image library, and matching board.'],
     review: ['Review Inbox', 'Owner verification gate for posts flagged for review or in hybrid mode.'],
     calendar: ['Schedule Calendar Grid', 'Interactive visual 7-day schedule grid across all connected Facebook pages.'],
     analytics: ['Analytics & Content Insights', 'Aggregated reach, reactions, impressions, and top performing posts leaderboard.'],
@@ -56,6 +57,7 @@
     accounts: '/accounts',
     pages: '/pages',
     'page-prompts': '/prompts',
+    library: '/library',
     review: '/review',
     calendar: '/calendar',
     analytics: '/analytics',
@@ -70,6 +72,7 @@
     '/accounts': 'accounts',
     '/pages': 'pages',
     '/prompts': 'page-prompts',
+    '/library': 'library',
     '/review': 'review',
     '/calendar': 'calendar',
     '/analytics': 'analytics',
@@ -242,6 +245,10 @@
       fetchAccountsTab();
     } else if (tabId === 'pages' && pagesData.length === 0) {
       fetchPagesTab();
+    } else if (tabId === 'library') {
+      const pageSel = document.getElementById('libPageSelector');
+      const pageId = pageSel ? pageSel.value : (pagesData[0] ? pagesData[0].id : null);
+      if (pageId) loadContentLibraryForPage(pageId);
     } else if (tabId === 'providers' && providersData.length === 0) {
       fetchProvidersTab();
     } else if (tabId === 'audit' && auditLogsData.length === 0) {
@@ -5759,6 +5766,368 @@
       }
     }
   }
+
+  // --- Content Library Handlers ---
+  let currentLibraryData = null;
+
+  async function loadContentLibraryForPage(pageId) {
+    if (!pageId) {
+      const sel = document.getElementById('libPageSelector');
+      pageId = sel ? sel.value : (pagesData[0] ? pagesData[0].id : null);
+    }
+    if (!pageId) return;
+    window.currentLibraryPageId = pageId;
+
+    try {
+      const res = await fetch('/api/library?pageId=' + encodeURIComponent(pageId));
+      if (!res.ok) throw new Error('Status ' + res.status);
+      const data = await res.json();
+      currentLibraryData = data;
+
+      // Update badge & radios
+      const mode = data.contentSourceMode || 'full_ai';
+      const badge = document.getElementById('libActiveModeBadge');
+      if (badge) {
+        if (mode === 'excel_library') {
+          badge.style.background = 'rgba(16, 185, 129, 0.2)';
+          badge.style.color = '#34d399';
+          badge.innerText = 'EXCEL + IMAGE LIBRARY';
+        } else if (mode === 'hybrid') {
+          badge.style.background = 'rgba(245, 158, 11, 0.2)';
+          badge.style.color = '#fbbf24';
+          badge.innerText = 'HYBRID MODE';
+        } else {
+          badge.style.background = 'rgba(59, 130, 246, 0.2)';
+          badge.style.color = '#60a5fa';
+          badge.innerText = 'FULL AI';
+        }
+      }
+
+      document.querySelectorAll('input[name="libPageSourceMode"]').forEach(function (r) {
+        r.checked = r.value === mode;
+      });
+
+      // Update metrics
+      const m = data.metrics || {};
+      const elTotal = document.getElementById('libMetricTotalRows');
+      if (elTotal) elTotal.innerText = m.totalRows || 0;
+      const elMatched = document.getElementById('libMetricMatched');
+      if (elMatched) elMatched.innerText = m.matchedCount || 0;
+      const elAssets = document.getElementById('libMetricAssets');
+      if (elAssets) elAssets.innerText = m.availableAssetsCount || 0;
+      const elStock = document.getElementById('libMetricStock');
+      if (elStock) elStock.innerText = (m.stockDaysRemaining || 0) + ' days';
+      const elCadence = document.getElementById('libMetricCadence');
+      if (elCadence) elCadence.innerText = '@ ' + (m.postsPerDay || 5) + ' posts/day';
+
+      const lowBanner = document.getElementById('libLowStockBanner');
+      if (lowBanner) {
+        lowBanner.style.display = (m.lowStock && m.totalRows > 0) ? 'block' : 'none';
+      }
+
+      // Render items table
+      renderLibraryItemsTable(data.items || [], data.assets || []);
+    } catch (err) {
+      console.warn('[Library] Error loading library for page:', err);
+    }
+  }
+  window.loadContentLibraryForPage = loadContentLibraryForPage;
+
+  function renderLibraryItemsTable(items, assets) {
+    const tbody = document.getElementById('libItemsTableBody');
+    if (!tbody) return;
+
+    if (!items || items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="padding: 32px; text-align: center; color: var(--text-muted);"><div style="font-size: 24px; margin-bottom: 6px;">📄</div><strong>No content library rows uploaded yet.</strong><div style="font-size: 11px; margin-top: 4px;">Download the template above, fill your ideas/facts, and upload the spreadsheet.</div></td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = items.map(function (item) {
+      const matchedAsset = item.library_assets || assets.find(function (a) { return a.id === item.matched_asset_id; });
+      const hasMatch = Boolean(matchedAsset);
+
+      let statusBadge = '';
+      if (item.status === 'published') {
+        statusBadge = '<span class="badge" style="background: #064e3b; color: #34d399;">● Published</span>';
+      } else if (item.status === 'needs_review') {
+        statusBadge = '<span class="badge" style="background: #7f1d1d; color: #fca5a5;">⚠️ Needs Review</span>';
+      } else if (hasMatch) {
+        const confPct = Math.round((item.match_confidence || 1.0) * 100);
+        const method = item.match_method || 'exact';
+        statusBadge = '<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">✓ ' + method.toUpperCase() + ' (' + confPct + '%)</span>';
+      } else {
+        statusBadge = '<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;">● Unmatched</span>';
+      }
+
+      const assetDisplay = matchedAsset
+        ? '<div style="display: flex; align-items: center; gap: 8px;">' +
+            '<span style="font-size: 16px;">🖼️</span>' +
+            '<div>' +
+              '<div style="font-weight: 600; color: #93c5fd; font-size: 11px;">' + escapeHtml(matchedAsset.filename) + '</div>' +
+              '<div style="font-size: 10px; color: var(--text-muted);">' + (matchedAsset.aspect_ratio || 'photo') + '</div>' +
+            '</div>' +
+          '</div>'
+        : '<span style="color: var(--text-muted); font-style: italic;">No image paired</span>';
+
+      return '<tr>' +
+        '<td style="padding: 10px 12px; font-weight: 700; color: var(--text-muted);">' + item.row_index + '</td>' +
+        '<td style="padding: 10px 12px;"><div style="font-weight: 600; color: #f3f4f6; max-width: 280px;">' + escapeHtml(item.content_idea) + '</div>' +
+        (item.teaser_seed ? '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Hook: ' + escapeHtml(item.teaser_seed.slice(0, 50)) + '...</div>' : '') + '</td>' +
+        '<td style="padding: 10px 12px;"><span class="badge" style="background: #1e293b; color: #94a3b8;">' + escapeHtml(item.category || 'General') + '</span></td>' +
+        '<td style="padding: 10px 12px;"><code>' + escapeHtml(item.image_filename_hint || '-') + '</code></td>' +
+        '<td style="padding: 10px 12px;">' + assetDisplay + '</td>' +
+        '<td style="padding: 10px 12px;">' + statusBadge + '</td>' +
+        '<td style="padding: 10px 12px;">' +
+          (!hasMatch
+            ? '<button class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;" onclick="promptManualMatch(\'' + item.id + '\')">🔗 Match Image</button>'
+            : '<span style="color: #34d399; font-size: 11px;">Ready</span>') +
+        '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  async function updatePageContentSourceMode(mode) {
+    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+    if (!pageId) return;
+
+    try {
+      const res = await fetch('/api/library/set-page-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: pageId, mode: mode }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('Updated content mode to ' + mode.toUpperCase(), 'success');
+        loadContentLibraryForPage(pageId);
+      } else {
+        alert('Could not update content source mode: ' + (data.error || 'Unknown error'));
+      }
+    } catch (e) {
+      alert('Network error updating mode: ' + e.message);
+    }
+  }
+  window.updatePageContentSourceMode = updatePageContentSourceMode;
+
+  function handleSheetFileSelected(files) {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+    if (!pageId) {
+      alert('Please select a Facebook Page first.');
+      return;
+    }
+
+    const statusEl = document.getElementById('libSheetUploadStatus');
+    if (statusEl) statusEl.innerText = '⏳ Reading and parsing sheet...';
+
+    const reader = new FileReader();
+    reader.onload = async function (e) {
+      try {
+        const base64 = e.target.result.split(',')[1];
+        if (statusEl) statusEl.innerText = '⏳ Uploading and importing rows to Supabase...';
+
+        const res = await fetch('/api/library/upload-sheet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pageId: pageId,
+            filename: file.name,
+            base64Data: base64,
+          }),
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ Imported ' + data.totalRows + ' rows (' + data.matchedRows + ' auto-matched with photos)!</span>';
+          showToast('✅ Imported ' + data.totalRows + ' spreadsheet rows!', 'success');
+          loadContentLibraryForPage(pageId);
+        } else {
+          if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Import failed') + '</span>';
+          alert('Upload failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        if (statusEl) statusEl.innerText = '⚠️ Error: ' + err.message;
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+  window.handleSheetFileSelected = handleSheetFileSelected;
+
+  async function handleImageFilesSelected(files) {
+    if (!files || files.length === 0) return;
+    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+    if (!pageId) {
+      alert('Please select a Facebook Page first.');
+      return;
+    }
+
+    const statusEl = document.getElementById('libImageUploadStatus');
+    if (statusEl) statusEl.innerText = '⏳ Processing and resizing ' + files.length + ' image(s)...';
+
+    const processedImages = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const dataUrl = await new Promise(function (resolve, reject) {
+          const r = new FileReader();
+          r.onload = function () { resolve(r.result); };
+          r.onerror = reject;
+          r.readAsDataURL(file);
+        });
+
+        const resizedDataUrl = await new Promise(function (resolve) {
+          const img = new Image();
+          img.onload = function () {
+            let w = img.width;
+            let h = img.height;
+            const maxDim = 2160;
+            if (w > maxDim || h > maxDim) {
+              if (w > h) {
+                h = Math.round((h * maxDim) / w);
+                w = maxDim;
+              } else {
+                w = Math.round((w * maxDim) / h);
+                h = maxDim;
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, w, h);
+              resolve(canvas.toDataURL(file.type || 'image/jpeg', 0.92));
+            } else {
+              resolve(dataUrl);
+            }
+          };
+          img.onerror = function () { resolve(dataUrl); };
+          img.src = dataUrl;
+        });
+
+        const base64 = resizedDataUrl.split(',')[1];
+        processedImages.push({
+          filename: file.name,
+          mimeType: file.type || 'image/jpeg',
+          base64Data: base64,
+        });
+      } catch (fErr) {
+        console.warn('Error reading file:', file.name, fErr);
+      }
+    }
+
+    if (statusEl) statusEl.innerText = '⏳ Uploading ' + processedImages.length + ' photos to private storage...';
+
+    try {
+      const res = await fetch('/api/library/upload-images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pageId: pageId,
+          images: processedImages,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ Uploaded ' + data.uploadedCount + ' photos (' + data.autoMatchedCount + ' auto-matched)!</span>';
+        showToast('✅ Uploaded ' + data.uploadedCount + ' photos!', 'success');
+        loadContentLibraryForPage(pageId);
+      } else {
+        if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Upload failed') + '</span>';
+        alert('Photo upload failed: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      if (statusEl) statusEl.innerText = '⚠️ Network error: ' + err.message;
+    }
+  }
+  window.handleImageFilesSelected = handleImageFilesSelected;
+
+  async function runAutoMatchAction() {
+    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+    if (!pageId) return;
+
+    try {
+      const res = await fetch('/api/library/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'auto', pageId: pageId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('⚡ Auto-matched ' + data.matchedCount + ' items with photos!', 'success');
+        loadContentLibraryForPage(pageId);
+      } else {
+        alert('Auto-match failed: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Auto-match network error: ' + err.message);
+    }
+  }
+  window.runAutoMatchAction = runAutoMatchAction;
+
+  async function runVisionSuggestAction() {
+    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+    if (!pageId) return;
+
+    try {
+      const res = await fetch('/api/library/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'vision_suggest', pageId: pageId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const count = (data.suggestions || []).length;
+        if (count > 0) {
+          showToast('👁️ Vision AI found ' + count + ' suggested visual match(es)!', 'success');
+          for (let s of data.suggestions) {
+            await fetch('/api/library/match', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'manual', itemId: s.itemId, assetId: s.assetId }),
+            });
+          }
+          loadContentLibraryForPage(pageId);
+        } else {
+          showToast('No vision matches suggested for unmatched items.', 'info');
+        }
+      }
+    } catch (err) {
+      alert('Vision suggest error: ' + err.message);
+    }
+  }
+  window.runVisionSuggestAction = runVisionSuggestAction;
+
+  function promptManualMatch(itemId) {
+    if (!currentLibraryData || !currentLibraryData.assets || currentLibraryData.assets.length === 0) {
+      alert('No uploaded image assets found. Please upload photos first.');
+      return;
+    }
+    const assetOptions = currentLibraryData.assets.map(function (a, idx) {
+      return (idx + 1) + '. ' + a.filename + ' (' + (a.aspect_ratio || 'photo') + ')';
+    }).join('\n');
+
+    const choice = prompt('Select an image number to match with this item:\n\n' + assetOptions);
+    if (!choice) return;
+    const chosenIdx = parseInt(choice, 10) - 1;
+    if (isNaN(chosenIdx) || chosenIdx < 0 || chosenIdx >= currentLibraryData.assets.length) {
+      alert('Invalid selection.');
+      return;
+    }
+    const selectedAsset = currentLibraryData.assets[chosenIdx];
+    fetch('/api/library/match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'manual', itemId: itemId, assetId: selectedAsset.id }),
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (res.success) {
+        showToast('Matched with ' + selectedAsset.filename, 'success');
+        loadContentLibraryForPage(window.currentLibraryPageId);
+      }
+    });
+  }
+  window.promptManualMatch = promptManualMatch;
 
   // --- Master Initialization Routine ---
   function initDashboard() {

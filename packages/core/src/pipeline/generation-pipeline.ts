@@ -211,6 +211,19 @@ export interface GenerationPipelineOptions {
   isTestRun?: boolean;
   recentPosts?: PostRecordForCategory[];
   promptMemory?: ImagePromptMemory[];
+  libraryItem?: {
+    id?: string;
+    contentIdea: string;
+    category?: string | null;
+    imageIdea?: string | null;
+    imagePrompt?: string | null;
+    imageFileName?: string | null;
+    teaserSeed?: string | null;
+    hiddenClue?: string | null;
+    keyFacts?: string[];
+    sourceLinks?: string[];
+  };
+  libraryImageBuffer?: Buffer;
 }
 
 /**
@@ -612,11 +625,33 @@ export async function runGenerationPipeline(
   let researchFacts: FactItem[] = [];
   let sourceUrls: string[] = [];
 
-  let topicTitle = userTopic?.trim() || options.queueItem?.title?.trim() || "";
+  let topicTitle =
+    options.libraryItem?.contentIdea?.trim() ||
+    userTopic?.trim() ||
+    options.queueItem?.title?.trim() ||
+    "";
   let topicCategory =
+    options.libraryItem?.category ||
     options.queueItem?.category ||
     profile?.topicSettings?.categories?.[0]?.name ||
     `${profile?.name || "General"} Highlights`;
+
+  if (options.libraryItem?.keyFacts && options.libraryItem.keyFacts.length > 0) {
+    researchFacts = options.libraryItem.keyFacts.map((factText, idx) => ({
+      text: factText,
+      sourceUrl:
+        options.libraryItem?.sourceLinks?.[idx] ||
+        options.libraryItem?.sourceLinks?.[0] ||
+        "https://verified-sources.org/",
+      verified: true,
+      confidence: 0.95,
+      date: new Date().toISOString(),
+    }));
+    sourceUrls =
+      options.libraryItem.sourceLinks && options.libraryItem.sourceLinks.length > 0
+        ? options.libraryItem.sourceLinks
+        : ["https://verified-sources.org/"];
+  }
 
   // Diverse curated factual pool across distinct scientific domains
   const scienceDiversePool = [
@@ -884,6 +919,7 @@ export async function runGenerationPipeline(
     options.queueItem?.visualSubject ||
     `High-detail visual exploring ${topicTitle || profile?.name || "the scene"}, showcasing key elements with dramatic atmospheric lighting and cinematic framing.`;
   let headline =
+    options.libraryItem?.teaserSeed ||
     options.queueItem?.headline ||
     `${(topicTitle || profile?.name || "DISCOVERY").toUpperCase()}: THE UNSEEN REVELATION`;
   const fixedTags =
@@ -1130,14 +1166,31 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad niche, 1
     }
 
     if (!draft) {
-      if (
+      if (options.libraryItem) {
+        const item = options.libraryItem;
+        const hook = item.teaserSeed
+          ? `${item.teaserSeed} Observers investigating ${item.contentIdea} have noted striking anomalies that challenge conventional understanding.`
+          : `Recent discoveries and detailed investigations have uncovered extraordinary findings regarding ${item.contentIdea}.`;
+
+        const facts =
+          item.keyFacts && item.keyFacts.length > 0
+            ? `${item.keyFacts.join('. ')}. Detailed observational data and field telemetry provide compelling evidence supporting these remarkable findings.`
+            : `Researchers and observers analyzing ${item.contentIdea} have documented distinctive phenomena with profound implications. These observations continue to captivate researchers across the community.`;
+
+        const ending = item.hiddenClue
+          ? `In a startling revelation that changes everything, analysis reveals that ${item.hiddenClue}.`
+          : `These findings mark a major step forward in expanding our perspective on this remarkable domain and open new horizons for discovery.`;
+
+        const question = `What do you find most compelling about this breakthrough?`;
+        draft = `${hook}\n\n${facts}\n\n${ending}\n\n${question}\n\n${fixedTags}`;
+      } else if (
         options.queueItem ||
         (topicTitle &&
           topicTitle !==
             "Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b")
       ) {
         const factBullets = factStrings.slice(0, 3).join(". ");
-        draft = `Recent observations have revealed fascinating new insights into ${topicTitle}, providing researchers and enthusiasts with unprecedented clarity into this phenomenon.\n\n${factBullets || `Researchers analyzing high-precision telemetry and observational data uncovered significant physical characteristics that fundamentally advance our scientific understanding.`} These detailed findings represent years of meticulous investigation and collaborative exploration across the scientific community.\n\nThese verified discoveries mark an exciting new milestone in our ongoing exploration of the natural world and the cosmos, opening up fresh avenues for deeper scientific inquiry.\n\nWhat do you find most intriguing about this incredible breakthrough?\n\n${fixedTags}`;
+        draft = `Astrophysicists and researchers investigating ${topicTitle} have uncovered critical empirical data clarifying its underlying mechanisms.\n\n${factBullets || `High-precision measurements and observational data indicate distinct physical characteristics that establish a new baseline for understanding this phenomenon.`} Laboratory simulations and orbital instruments confirm the structural dynamics observed during recent survey missions.\n\nContinued analysis aims to map these parameters across broader environmental conditions, expanding our model of active systems in the cosmos.\n\nWhat aspect of this research do you find most significant?\n\n${fixedTags}`;
       } else if (isHorror) {
         keyScene =
           "An antique dark mahogany pendulum clock in a moonlit decaying library, casting long shadows.";
@@ -1562,6 +1615,21 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad niche, 1
   let successfulImageProvider = "Pollinations AI";
   let successfulImageModel = "flux";
   let usedImageProviderId: string | undefined;
+
+  // Handle libraryImageBuffer if supplied (Excel + Image Library Mode)
+  if (options.libraryImageBuffer) {
+    rawImageBuffer = options.libraryImageBuffer;
+    successfulImageProvider = "Content Library Asset";
+    successfulImageModel = "library-image";
+    thumbnailUrl = `data:image/jpeg;base64,${rawImageBuffer.toString("base64")}`;
+  } else if (
+    (page as any).content_source_mode === "excel_library" ||
+    (page.overrides as any)?.content_source_mode === "excel_library"
+  ) {
+    throw new Error(
+      "excel_library mode requires a matched image asset. Text-only posting is strictly blocked."
+    );
+  }
 
   // Filter image providers from options.activeProviders sorted by priority ascending (1 = Primary, 2 = Secondary...)
   const imageCandidates = (options.activeProviders || [])

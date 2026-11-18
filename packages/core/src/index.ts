@@ -85,3 +85,9 @@ export * from './review/inbox-manager.js';
 
 // Series Continuity & Story Memory
 export * from './series/series-engine.js';
+
+// Content Library Engine (Excel + Image Library Mode)
+export * from './library/sheet-parser.js';
+export * from './library/template-generator.js';
+export * from './library/matching-engine.js';
+export * from './library/vision-service.js';

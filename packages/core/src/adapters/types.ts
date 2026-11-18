@@ -92,3 +92,24 @@ export interface ImageProviderAdapter {
   generateImage(options: ImageGenerateOptions): Promise<ImageGenerateResult>;
 }
 
+export interface VisionGenerateOptions {
+  imageBuffer: Buffer;
+  prompt: string;
+  systemPrompt?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  jsonMode?: boolean;
+  timeoutMs?: number;
+  apiKey: string;
+  baseUrl?: string;
+}
+
+export interface VisionGenerateResult {
+  text: string;
+  latencyMs: number;
+  modelUsed: string;
+  parsedJson?: unknown;
+}
+
+

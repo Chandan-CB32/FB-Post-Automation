@@ -408,6 +408,83 @@ Return a STRICT JSON object:
     };
   }
 
+  /**
+   * General purpose vision completion using Gemini multimodal capabilities.
+   */
+  async generateVision(options: {
+    imageBuffer: Buffer;
+    prompt: string;
+    systemPrompt?: string;
+    apiKey: string;
+    model?: string;
+    baseUrl?: string;
+    jsonMode?: boolean;
+    temperature?: number;
+    timeoutMs?: number;
+  }): Promise<{ text: string; latencyMs: number; modelUsed: string; parsedJson?: unknown }> {
+    const rawModel = options.model || 'gemini-2.5-flash';
+    const model = rawModel.startsWith('models/') ? rawModel.replace('models/', '') : rawModel;
+    const baseUrl = (options.baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
+    const endpoint = `${baseUrl}/models/${model}:generateContent`;
+
+    const requestBody: Record<string, unknown> = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: options.imageBuffer.toString('base64'),
+              },
+            },
+            {
+              text: options.prompt,
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: options.temperature ?? 0.2,
+        ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}),
+      },
+    };
+
+    if (options.systemPrompt) {
+      requestBody.systemInstruction = {
+        parts: [{ text: options.systemPrompt }],
+      };
+    }
+
+    const startTime = Date.now();
+    const timeoutMs = options.timeoutMs || 35000;
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': options.apiKey,
+      },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    const latencyMs = Date.now() - startTime;
+    if (!response.ok) {
+      await this.handleErrorResponse(response);
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parsedJson = options.jsonMode ? extractJsonFromText(text) : undefined;
+
+    return {
+      text,
+      latencyMs,
+      modelUsed: model,
+      parsedJson,
+    };
+  }
+
   private async handleErrorResponse(response: Response): Promise<never> {
     const status = response.status;
     let bodyText = '';

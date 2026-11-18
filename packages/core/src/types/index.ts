@@ -33,7 +33,8 @@ export type PipelineStage =
   | 'polish'
   | 'qa'
   | 'image'
-  | 'vision_check';
+  | 'vision_check'
+  | 'vision';
 
 export type ProviderAdapterKind =
   | 'openai_compatible_chat'
@@ -160,4 +161,7 @@ export interface PostingSchedule {
     endDate: string;
   };
 }
+
+export * from './library.js';
+
 
