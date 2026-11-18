@@ -1154,6 +1154,7 @@ export class SystemStore {
       delete payload.last_synced_at;
       delete payload.niche_analysis;
       delete payload.checklist_status;
+      delete payload.content_source_mode;
       if (payload.token_status === 'cannot_publish' || payload.token_status === 'inaccessible') {
         payload.token_status = 'revoked';
       }
@@ -1605,6 +1606,7 @@ export class SystemStore {
       delete filteredPayload.last_synced_at;
       delete filteredPayload.niche_analysis;
       delete filteredPayload.checklist_status;
+      delete filteredPayload.content_source_mode;
       if (filteredPayload.token_status === 'cannot_publish' || filteredPayload.token_status === 'inaccessible') {
         filteredPayload.token_status = 'revoked';
       }
