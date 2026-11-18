@@ -3661,23 +3661,42 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             isTestRun: true,
           });
 
-          // Update page with test run results & checklist status
-          const updatedPage = await store.updatePage(
-            page.id,
-            {
-              test_run_verified: pipelineResult.success,
-              last_test_run_at: pipelineResult.testedAt,
-              test_run_report: pipelineResult,
-            },
-            { isOperational: true }
-          );
+          // Sanitize test_run_report for database persistence: exclude large base64 data URIs
+          const sanitizedReport = {
+            ...pipelineResult,
+            compositeImageUrl:
+              typeof pipelineResult.compositeImageUrl === 'string' && pipelineResult.compositeImageUrl.length > 5000
+                ? '[composite_jpeg_rendered]'
+                : pipelineResult.compositeImageUrl,
+            thumbnailUrl:
+              typeof pipelineResult.thumbnailUrl === 'string' && pipelineResult.thumbnailUrl.length > 5000
+                ? '[thumbnail_rendered]'
+                : pipelineResult.thumbnailUrl,
+          };
+          delete (sanitizedReport as any).rawImageBuffer;
+          delete (sanitizedReport as any).compositeJpegBuffer;
 
-          const checklist = evaluatePageChecklist(updatedPage);
+          const checklist = evaluatePageChecklist({
+            ...page,
+            test_run_verified: pipelineResult.success,
+            last_test_run_at: pipelineResult.testedAt,
+          });
           const cleanChecklist = {
             ...checklist,
             testRunReport: null,
           };
-          await store.updatePage(page.id, { checklist_status: cleanChecklist }, { isOperational: true });
+
+          // Update page with test run results & checklist status in a single efficient call
+          await store.updatePage(
+            page.id,
+            {
+              test_run_verified: pipelineResult.success,
+              last_test_run_at: pipelineResult.testedAt,
+              test_run_report: sanitizedReport,
+              checklist_status: cleanChecklist,
+            },
+            { isOperational: true }
+          );
 
           if (!pipelineResult.success) {
             return sendJson(

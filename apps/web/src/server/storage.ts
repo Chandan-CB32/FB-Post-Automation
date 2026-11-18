@@ -842,6 +842,7 @@ export class SystemStore {
       secondary_account_ids: Array.isArray(row.secondary_account_ids) ? row.secondary_account_ids : [],
       profile_id: row.profile_id || null,
       publishing_mode: row.publishing_mode || 'review',
+      content_source_mode: row.content_source_mode || ov.content_source_mode || 'full_ai',
       hybrid_min_score: Number(row.hybrid_min_score) || 80,
       daily_cap: row.daily_cap !== undefined ? Number(row.daily_cap) : 3,
       active: isLive,
@@ -1251,7 +1252,31 @@ export class SystemStore {
             .select('id')
             .eq('id', updates.profile_id)
             .maybeSingle();
-          profileExists = Boolean(pRow);
+          if (pRow) {
+            profileExists = true;
+          } else {
+            // Check if matches by name or in seed profiles
+            const seed = getAllNicheProfiles().find(
+              (p) =>
+                p.id === updates.profile_id ||
+                p.name.toLowerCase() === updates.profile_id?.toLowerCase() ||
+                p.name.toLowerCase().includes(updates.profile_id?.toLowerCase() || '') ||
+                (p as any).customVariables?.niche === updates.profile_id
+            );
+            if (seed) {
+              const { data: pRowByName } = await this.getClient()
+                .from('content_profiles')
+                .select('id')
+                .ilike('name', `%${seed.name}%`)
+                .maybeSingle();
+              if (pRowByName) {
+                updates.profile_id = pRowByName.id;
+                profileExists = true;
+              } else {
+                profileExists = true;
+              }
+            }
+          }
         }
         if (!profileExists) {
           const err = new Error('Selected profile no longer exists. Please choose a valid profile or switch to Custom niche.');
@@ -1494,6 +1519,7 @@ export class SystemStore {
     if (updates.custom_niche !== undefined) updatePayload.custom_niche = updates.custom_niche;
     if (updates.custom_niche_text !== undefined) updatePayload.custom_niche_text = updates.custom_niche_text;
     if (updates.publishing_mode) updatePayload.publishing_mode = updates.publishing_mode;
+    if (updates.content_source_mode) updatePayload.content_source_mode = updates.content_source_mode;
     if (updates.mode_chosen !== undefined) updatePayload.mode_chosen = updates.mode_chosen;
     if (updates.hybrid_min_score !== undefined) updatePayload.hybrid_min_score = updates.hybrid_min_score;
     if (updates.daily_cap !== undefined) updatePayload.daily_cap = updates.daily_cap;
@@ -1519,9 +1545,22 @@ export class SystemStore {
     if (updates.ai_disclosure_text !== undefined) updatePayload.ai_disclosure_text = updates.ai_disclosure_text;
     if (updates.source_attribution_enabled !== undefined) updatePayload.source_attribution_enabled = updates.source_attribution_enabled;
     if (updates.last_test_run_at !== undefined) updatePayload.last_test_run_at = updates.last_test_run_at;
+    let safeTestRunReport = updates.test_run_report;
+    if (safeTestRunReport && typeof safeTestRunReport === 'object') {
+      safeTestRunReport = { ...safeTestRunReport };
+      if (typeof safeTestRunReport.compositeImageUrl === 'string' && safeTestRunReport.compositeImageUrl.length > 5000) {
+        safeTestRunReport.compositeImageUrl = '[composite_jpeg_rendered]';
+      }
+      if (typeof safeTestRunReport.thumbnailUrl === 'string' && safeTestRunReport.thumbnailUrl.length > 5000) {
+        safeTestRunReport.thumbnailUrl = '[thumbnail_rendered]';
+      }
+      delete safeTestRunReport.rawImageBuffer;
+      delete safeTestRunReport.compositeJpegBuffer;
+    }
+
     if (updates.checklist_status !== undefined) updatePayload.checklist_status = updates.checklist_status;
     if (updates.test_run_verified !== undefined) updatePayload.test_run_verified = updates.test_run_verified;
-    if (updates.test_run_report !== undefined) updatePayload.test_run_report = updates.test_run_report;
+    if (updates.test_run_report !== undefined) updatePayload.test_run_report = safeTestRunReport;
     if ((updates as any).qa_pass_threshold !== undefined) updatePayload.qa_pass_threshold = (updates as any).qa_pass_threshold;
     if ((updates as any).max_sentences_per_paragraph !== undefined) updatePayload.max_sentences_per_paragraph = (updates as any).max_sentences_per_paragraph;
     if ((updates as any).min_words !== undefined) updatePayload.min_words = (updates as any).min_words;
@@ -1558,8 +1597,9 @@ export class SystemStore {
       ...(updates.custom_niche !== undefined ? { custom_niche: updates.custom_niche } : {}),
       ...(updates.custom_niche_text !== undefined ? { custom_niche_text: updates.custom_niche_text } : {}),
       ...(updates.mode_chosen !== undefined ? { mode_chosen: updates.mode_chosen } : {}),
+      ...(updates.content_source_mode !== undefined ? { content_source_mode: updates.content_source_mode } : {}),
       ...(updates.test_run_verified !== undefined ? { test_run_verified: updates.test_run_verified } : {}),
-      ...(updates.test_run_report !== undefined ? { test_run_report: updates.test_run_report } : {}),
+      ...(updates.test_run_report !== undefined ? { test_run_report: safeTestRunReport } : {}),
       ...(updates.category_weights !== undefined ? { category_weights: updates.category_weights } : {}),
       ...(updates.niche !== undefined ? { niche: updates.niche } : {}),
       ...(updates.categories !== undefined ? { categories: updates.categories } : {}),

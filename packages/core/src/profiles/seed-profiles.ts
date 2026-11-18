@@ -12,7 +12,7 @@ import {
 
 export function createHorrorStoryProfile(): ContentProfile {
   return {
-    id: crypto.randomUUID(),
+    id: '7860cc4b-715c-46c1-9f37-655806289216',
     name: 'Horror Story',
     description: 'Suspenseful and psychological original horror stories for Facebook',
     type: 'fiction',
@@ -96,7 +96,7 @@ export function createHorrorStoryProfile(): ContentProfile {
 
 export function createCrimeStoryProfile(): ContentProfile {
   return {
-    id: crypto.randomUUID(),
+    id: '5ed2e4fc-1630-4a99-952d-9bb34bd1c4a2',
     name: 'Crime Story',
     description: 'Suspenseful detective mysteries and whodunits',
     type: 'fiction',
@@ -180,7 +180,7 @@ export function createCrimeStoryProfile(): ContentProfile {
 
 export function createScienceStoryProfile(): ContentProfile {
   return {
-    id: crypto.randomUUID(),
+    id: '61282cb3-345c-4d8d-ba29-3ea94771e107',
     name: 'Science Story',
     description: 'Real discoveries, breakthrough experiments, and astronomy narratives',
     type: 'factual',
