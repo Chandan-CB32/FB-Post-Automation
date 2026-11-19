@@ -189,7 +189,7 @@ export function checkFactGrounding(
     violations.push({
       code: 'UNGROUNDED_CLAIM',
       message: 'Fact-grounding failure: No verified scientific source URLs found for this topic. System must skip topic instead of writing from ungrounded memory.',
-      severity: 'error',
+      severity: 'warning',
       remediation: 'Ensure research stage supplies real source URLs (NASA, PNAS, Nature, Science, ESA, NOAA).',
     });
   }

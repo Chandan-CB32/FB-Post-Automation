@@ -338,6 +338,10 @@
     const kind = (p.adapter_kind || p.kind || '').toLowerCase();
     const name = (p.name || '').toLowerCase();
     const model = (p.model_name || '').toLowerCase();
+    if (kind === 'cloudflare_workers_ai' || kind === 'cloudflare' || name.includes('cloudflare')) {
+      if (model.includes('llama') || model.includes('mistral') || model.includes('qwen')) return false;
+      return true;
+    }
     return (
       kind === 'pollinations' ||
       kind === 'openai_compatible_images' ||
@@ -1822,18 +1826,22 @@
       { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B Instruct (100% Free)', type: 'text' },
       { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen 2.5 72B Instruct (100% Free)', type: 'text' },
       { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 (100% Free)', type: 'text' },
+      { id: 'riverflow-v2-fast', name: 'Riverflow v2.5 Fast (Free Tier Image)', type: 'image' },
+      { id: 'black-forest-labs/flux-1-schnell', name: 'FLUX.1 Schnell (Image)', type: 'image' },
     ],
     nvidia: [
       { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct (1,000 Free Credits)', type: 'text' },
       { id: 'mistralai/mistral-large-2-instruct', name: 'Mistral Large 2 (Free Credits)', type: 'text' },
       { id: 'nvidia/nemotron-4-340b-instruct', name: 'Nemotron 4 340B Instruct (Free Credits)', type: 'text' },
+      { id: 'stabilityai/stable-diffusion-3.5-large', name: 'SD 3.5 Large (Free Credits)', type: 'image' },
     ],
     cloudflare: [
+      { id: '@cf/black-forest-labs/flux-1-schnell', name: 'FLUX.1 Schnell (Workers AI Image Free)', type: 'image' },
+      { id: '@cf/stabilityai/stable-diffusion-xl-base-1.0', name: 'SDXL Base 1.0 (Workers AI Image)', type: 'image' },
+      { id: '@cf/bytedance/stable-diffusion-xl-lightning', name: 'SDXL Lightning (Workers AI Image)', type: 'image' },
       { id: '@cf/meta/llama-3.1-8b-instruct', name: 'Llama 3.1 8B Instruct (10k Neurons/day Free)', type: 'text' },
       { id: '@cf/meta/llama-3-8b-instruct', name: 'Llama 3 8B Instruct (Free)', type: 'text' },
       { id: '@cf/mistral/mistral-7b-instruct-v0.1', name: 'Mistral 7B (Free)', type: 'text' },
-      { id: '@cf/black-forest-labs/flux-1-schnell', name: 'FLUX.1 Schnell (Image Free)', type: 'image' },
-      { id: '@cf/stabilityai/stable-diffusion-xl-base-1.0', name: 'SDXL Base 1.0 (Image Free)', type: 'image' },
     ],
     pollinations: [
       { id: 'flux', name: 'FLUX.1 Schnell (100% Free Photorealistic)', type: 'image' },
@@ -1842,24 +1850,206 @@
       { id: 'seedream', name: 'Seedream (ByteDance SDXL)', type: 'image' },
     ],
     zenmux: [
-      { id: 'google/gemini-2.5-flash-free', name: 'Gemini 2.5 Flash (Free Tier)', type: 'text' },
       { id: 'google/gemini-2.5-flash-image-free', name: 'Gemini 2.5 Flash Image (Free Tier)', type: 'image' },
       { id: 'black-forest-labs/flux-1-schnell-free', name: 'FLUX.1 Schnell (Free Tier)', type: 'image' },
+      { id: 'google/gemini-2.5-flash-free', name: 'Gemini 2.5 Flash (Free Tier)', type: 'text' },
     ],
     deepseek: [
       { id: 'deepseek-chat', name: 'DeepSeek V3 Chat', type: 'text' },
       { id: 'deepseek-reasoner', name: 'DeepSeek R1 Reasoning', type: 'text' },
     ],
     together: [
-      { id: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', name: 'Llama 3.1 70B Turbo', type: 'text' },
       { id: 'black-forest-labs/FLUX.1-schnell', name: 'FLUX.1 Schnell (Image)', type: 'image' },
+      { id: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', name: 'Llama 3.1 70B Turbo', type: 'text' },
     ],
     ollama: [
       { id: 'llama3.2', name: 'Llama 3.2 (Local Free)', type: 'text' },
       { id: 'mistral', name: 'Mistral (Local Free)', type: 'text' },
       { id: 'qwen2.5', name: 'Qwen 2.5 (Local Free)', type: 'text' },
     ],
+    openai: [
+      { id: 'gpt-4o', name: 'ChatGPT GPT-4o', type: 'text' },
+      { id: 'gpt-4o-mini', name: 'ChatGPT GPT-4o Mini', type: 'text' },
+      { id: 'dall-e-3', name: 'DALL-E 3', type: 'image' },
+    ],
   };
+
+  const TEXT_PROVIDER_PRESETS = [
+    {
+      id: 'preset-gemini',
+      name: 'Google Gemini',
+      kind: 'gemini_native',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      defaultModel: 'gemini-2.5-flash',
+      limit: 1500,
+      instructions: 'Get a free API key at Google AI Studio (https://aistudio.google.com). 15 RPM / 1,500 RPD free tier.'
+    },
+    {
+      id: 'preset-groq',
+      name: 'Groq',
+      kind: 'openai_compatible_chat',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      defaultModel: 'meta-llama/llama-3.3-70b-versatile',
+      limit: 14400,
+      instructions: 'Get a free high-speed API key at https://console.groq.com/keys. 30 RPM / 14,400 RPD free tier.'
+    },
+    {
+      id: 'preset-openrouter',
+      name: 'OpenRouter',
+      kind: 'openai_compatible_chat',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      defaultModel: 'meta-llama/llama-3.3-70b-instruct:free',
+      limit: 200,
+      instructions: 'Get an API key at https://openrouter.ai/keys. Hundreds of free and open-source models.'
+    },
+    {
+      id: 'preset-nvidia-nim',
+      name: 'NVIDIA NIM',
+      kind: 'openai_compatible_chat',
+      baseUrl: 'https://integrate.api.nvidia.com/v1',
+      defaultModel: 'meta/llama-3.3-70b-instruct',
+      limit: 1000,
+      instructions: 'Sign up for 1,000 free inference credits at https://build.nvidia.com.'
+    },
+    {
+      id: 'preset-deepseek',
+      name: 'DeepSeek',
+      kind: 'openai_compatible_chat',
+      baseUrl: 'https://api.deepseek.com/v1',
+      defaultModel: 'deepseek-chat',
+      limit: 10000,
+      instructions: 'Get an API key at https://platform.deepseek.com/api_keys.'
+    },
+    {
+      id: 'preset-together',
+      name: 'Together AI',
+      kind: 'openai_compatible_chat',
+      baseUrl: 'https://api.together.xyz/v1',
+      defaultModel: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
+      limit: 5000,
+      instructions: 'Get an API key at https://api.together.ai/settings/api-keys.'
+    },
+    {
+      id: 'preset-openai',
+      name: 'OpenAI (ChatGPT)',
+      kind: 'openai_compatible_chat',
+      baseUrl: 'https://api.openai.com/v1',
+      defaultModel: 'gpt-4o',
+      limit: 10000,
+      instructions: 'Get an API key at https://platform.openai.com/api-keys.'
+    },
+    {
+      id: 'preset-cloudflare-text',
+      name: 'Cloudflare Workers AI (Text)',
+      kind: 'cloudflare_workers_ai',
+      baseUrl: 'https://api.cloudflare.com/client/v4',
+      defaultModel: '@cf/meta/llama-3.1-8b-instruct',
+      limit: 1000,
+      instructions: 'Create an API token at https://dash.cloudflare.com/profile/api-tokens with Workers AI Read permissions.'
+    },
+    {
+      id: 'preset-ollama',
+      name: 'Ollama Local (Offline / Free)',
+      kind: 'openai_compatible_chat',
+      baseUrl: 'http://localhost:11434/v1',
+      defaultModel: 'llama3.2',
+      limit: 100000,
+      instructions: 'Self-hosted Ollama server running locally on http://localhost:11434.'
+    },
+    {
+      id: 'preset-custom-text',
+      name: 'Custom OpenAI-Compatible Text API',
+      kind: 'openai_compatible_chat',
+      baseUrl: '',
+      defaultModel: 'auto',
+      limit: 1000,
+      instructions: 'Enter custom base URL, model name, and API key.'
+    }
+  ];
+
+  const IMAGE_PROVIDER_PRESETS = [
+    {
+      id: 'preset-cloudflare',
+      name: 'Cloudflare Workers AI',
+      kind: 'cloudflare_workers_ai',
+      baseUrl: 'https://api.cloudflare.com/client/v4',
+      defaultModel: '@cf/black-forest-labs/flux-1-schnell',
+      limit: 100,
+      instructions: 'Create an API token at https://dash.cloudflare.com/profile/api-tokens with Workers AI Read permissions. Free tier offers 10,000 neurons/day (~100 FLUX.1 Schnell images).'
+    },
+    {
+      id: 'preset-pollinations',
+      name: 'Pollinations AI',
+      kind: 'pollinations',
+      baseUrl: 'https://gen.pollinations.ai',
+      defaultModel: 'flux',
+      limit: 1000,
+      instructions: '100% Free for FLUX.1 Schnell photorealistic generation. Works keyless or with optional API key.'
+    },
+    {
+      id: 'preset-zenmux',
+      name: 'ZenMux (Free Image Models)',
+      kind: 'openai_compatible_images',
+      baseUrl: 'https://zenmux.ai/api/v1',
+      defaultModel: 'google/gemini-2.5-flash-image-free',
+      limit: 1000,
+      instructions: 'Get a free API key at https://zenmux.ai. Select Gemini 2.5 Flash Image Free or FLUX.1 Schnell.'
+    },
+    {
+      id: 'preset-nvidia-nim-image',
+      name: 'NVIDIA NIM (SD 3.5 Large)',
+      kind: 'openai_compatible_images',
+      baseUrl: 'https://integrate.api.nvidia.com/v1',
+      defaultModel: 'stabilityai/stable-diffusion-3.5-large',
+      limit: 1000,
+      instructions: 'Sign up for free inference credits at https://build.nvidia.com. High-resolution Stable Diffusion 3.5 Large.'
+    },
+    {
+      id: 'preset-together-image',
+      name: 'Together AI (FLUX.1 Schnell)',
+      kind: 'openai_compatible_images',
+      baseUrl: 'https://api.together.xyz/v1',
+      defaultModel: 'black-forest-labs/FLUX.1-schnell',
+      limit: 5000,
+      instructions: 'Get your API key at https://api.together.ai/settings/api-keys.'
+    },
+    {
+      id: 'preset-openrouter-image',
+      name: 'OpenRouter (Riverflow Fast Free)',
+      kind: 'openai_compatible_images',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      defaultModel: 'riverflow-v2-fast',
+      limit: 200,
+      instructions: 'Get an API key at https://openrouter.ai/keys.'
+    },
+    {
+      id: 'preset-gemini-image',
+      name: 'Google Gemini (Flash Image)',
+      kind: 'gemini_native',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      defaultModel: 'gemini-2.5-flash-image',
+      limit: 1500,
+      instructions: 'Get an API key at Google AI Studio (https://aistudio.google.com). Requires billing/project configured.'
+    },
+    {
+      id: 'preset-openai-image',
+      name: 'OpenAI (DALL-E 3)',
+      kind: 'openai_compatible_images',
+      baseUrl: 'https://api.openai.com/v1',
+      defaultModel: 'dall-e-3',
+      limit: 1000,
+      instructions: 'Get an API key at https://platform.openai.com/api-keys.'
+    },
+    {
+      id: 'preset-custom-image',
+      name: 'Custom Image Generation API / Proxy',
+      kind: 'openai_compatible_images',
+      baseUrl: '',
+      defaultModel: 'auto',
+      limit: 1000,
+      instructions: 'Enter custom base URL, image model name, and API key.'
+    }
+  ];
 
   function getCatalogForProvider(presetId, kind, name) {
     const pId = (presetId || '').toLowerCase();
@@ -1875,20 +2065,23 @@
     if (pId.includes('deepseek') || n.includes('deepseek')) return FREE_MODELS_CATALOG.deepseek;
     if (pId.includes('together') || n.includes('together')) return FREE_MODELS_CATALOG.together;
     if (pId.includes('ollama') || n.includes('ollama')) return FREE_MODELS_CATALOG.ollama;
+    if (pId.includes('openai') || n.includes('openai')) return FREE_MODELS_CATALOG.openai;
     return [];
   }
 
-  function updateModelDropdown(prefix, presetId, kind, name, currentModel) {
+  function updateModelDropdown(prefix, presetId, kind, name, currentModel, chainType) {
     const select = document.getElementById(prefix + 'ProviderModelSelect');
     const customWrap = document.getElementById(prefix + 'ProviderCustomModelWrapper');
     const customInput = document.getElementById(prefix + 'ProviderCustomModel');
     const hiddenModel = document.getElementById(prefix + 'ProviderModel');
     if (!select) return;
 
-    const catalog = getCatalogForProvider(presetId, kind, name);
+    const fullCatalog = getCatalogForProvider(presetId, kind, name);
+    const catalog = chainType ? fullCatalog.filter(function (m) { return m.type === chainType; }) : fullCatalog;
+
     let optionsHtml = '<option value="auto">✨ Auto (Automatic Free-Tier Model Selection)</option>';
     if (catalog.length > 0) {
-      optionsHtml += '<optgroup label="Verified Free Models for this Provider">';
+      optionsHtml += '<optgroup label="Verified Free ' + (chainType === 'image' ? 'Image' : (chainType === 'text' ? 'Text' : '')) + ' Models for this Provider">';
       catalog.forEach(function (m) {
         optionsHtml += '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.name) + '</option>';
       });
@@ -1944,12 +2137,38 @@
   }
 
   // --- Provider Modal & Actions ---
-  function openAddProviderModal() {
+  let currentAddingChainType = 'text';
+
+  function openAddProviderModal(chainType) {
+    currentAddingChainType = (chainType === 'image') ? 'image' : 'text';
     const modal = document.getElementById('addProviderModal');
     if (modal) modal.classList.add('active');
+
+    const titleEl = document.getElementById('addProviderModalTitle');
+    const subEl = document.getElementById('addProviderModalSubtitle');
+    if (titleEl) {
+      titleEl.innerText = currentAddingChainType === 'image'
+        ? '🎨 Add Image Generation API Provider'
+        : '🔤 Add Text Generation API Provider';
+    }
+    if (subEl) {
+      subEl.innerText = currentAddingChainType === 'image'
+        ? 'Select an image generation provider and paste your secret token/key. Base URLs, optimal models (e.g. FLUX.1 Schnell, SDXL), failover routing, and encryption are configured automatically.'
+        : 'Select your AI text provider and paste your API key. Base URLs, optimal free text models, failover routing, and AES-256-GCM encryption are configured automatically.';
+    }
+
     const select = document.getElementById('quickProviderSelect');
-    if (select && select.value) {
-      onQuickProviderChange(select.value);
+    if (select) {
+      const presets = currentAddingChainType === 'image' ? IMAGE_PROVIDER_PRESETS : TEXT_PROVIDER_PRESETS;
+      let html = '';
+      presets.forEach(function (p) {
+        html += '<option value="' + escapeHtml(p.id) + '" data-name="' + escapeHtml(p.name) + '" data-kind="' + escapeHtml(p.kind) + '" data-baseurl="' + escapeHtml(p.baseUrl) + '" data-model="' + escapeHtml(p.defaultModel) + '" data-limit="' + escapeHtml(String(p.limit)) + '" data-instructions="' + escapeHtml(p.instructions) + '">' + escapeHtml(p.name) + '</option>';
+      });
+      select.innerHTML = html;
+      if (presets.length > 0) {
+        select.value = presets[0].id;
+        onQuickProviderChange(presets[0].id);
+      }
     }
   }
 
@@ -1990,6 +2209,12 @@
     const limit = option.getAttribute('data-limit') || '1000';
     const instructions = option.getAttribute('data-instructions') || '';
 
+    const isCf = (kind === 'cloudflare_workers_ai' || (presetId && presetId.includes('cloudflare')) || (name && name.toLowerCase().includes('cloudflare')));
+    const cfGroup = document.getElementById('quickProviderAccountIdGroup');
+    if (cfGroup) {
+      cfGroup.style.display = isCf ? 'block' : 'none';
+    }
+
     const infoBox = document.getElementById('quickProviderInstructions');
     if (infoBox) {
       if (!instructions) {
@@ -2013,6 +2238,9 @@
       if (presetId === 'preset-pollinations' || presetId === 'preset-ollama') {
         keyInput.placeholder = 'Optional / Keyless (Click Connect & Save directly!)';
         keyHint.innerText = '💡 Keyless: This provider functions without an API key.';
+      } else if (isCf) {
+        keyInput.placeholder = 'Paste Cloudflare API Token (Workers AI Read permissions)';
+        keyHint.innerText = 'AES-256-GCM encrypted upon saving. Stored securely in database.';
       } else {
         keyInput.placeholder = 'sk-... or AIzaSy... (Paste your secret API key here)';
         keyHint.innerText = 'AES-256-GCM encrypted upon saving. Never stored or logged in plaintext.';
@@ -2026,7 +2254,7 @@
     const baseInput = document.getElementById('newProviderBaseUrl');
     if (baseInput) baseInput.value = baseUrl;
     
-    updateModelDropdown('new', presetId, kind, name, model);
+    updateModelDropdown('new', presetId, kind, name, model, currentAddingChainType);
 
     const limitInput = document.getElementById('newProviderDailyLimit');
     if (limitInput) limitInput.value = limit;
@@ -2053,6 +2281,9 @@
     const daily_limit = parseInt(document.getElementById('newProviderDailyLimit').value, 10) || 1000;
     const initial_key = document.getElementById('quickApiKey').value;
 
+    const cfAccountIdInput = document.getElementById('quickProviderAccountId');
+    const account_id = (cfAccountIdInput && cfAccountIdInput.value) ? cfAccountIdInput.value.trim() : '8a49b9104077d7d64bf20ffc9249b891';
+
     const res = await fetch('/api/providers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2066,6 +2297,8 @@
         daily_limit: daily_limit,
         initial_key: initial_key,
         key_label: 'Primary Key',
+        chain_type: currentAddingChainType,
+        account_id: account_id,
       }),
     });
 
@@ -2301,7 +2534,16 @@
     document.getElementById('editProviderAdapter').value = p.adapter_kind;
     document.getElementById('editProviderBaseUrl').value = p.base_url || '';
     
-    updateModelDropdown('edit', p.preset_id || p.id, p.adapter_kind, p.name, p.model_name);
+    const editChainType = isImageProvider(p) ? 'image' : 'text';
+    updateModelDropdown('edit', p.preset_id || p.id, p.adapter_kind, p.name, p.model_name, editChainType);
+
+    const isCf = (p.adapter_kind === 'cloudflare_workers_ai' || (p.name || '').toLowerCase().includes('cloudflare'));
+    const editCfGroup = document.getElementById('editProviderAccountIdGroup');
+    const editCfInput = document.getElementById('editProviderAccountId');
+    if (editCfGroup) editCfGroup.style.display = isCf ? 'block' : 'none';
+    if (editCfInput && isCf) {
+      editCfInput.value = (p.config && p.config.account_id) || '8a49b9104077d7d64bf20ffc9249b891';
+    }
 
     document.getElementById('editProviderPriority').value = p.priority;
     
@@ -2366,6 +2608,8 @@
     const daily_limit = parseInt(document.getElementById('editProviderDailyLimit').value, 10) || 1000;
     const enabled = document.getElementById('editProviderEnabled').checked;
     const new_keys = document.getElementById('editProviderNewKeys')?.value || '';
+    const editCfInput = document.getElementById('editProviderAccountId');
+    const account_id = (editCfInput && editCfInput.value) ? editCfInput.value.trim() : undefined;
 
     const res = await fetch('/api/providers', {
       method: 'PUT',
@@ -2380,6 +2624,7 @@
         daily_limit: daily_limit,
         enabled: enabled,
         new_keys: new_keys,
+        account_id: account_id,
       }),
     });
 

@@ -527,6 +527,10 @@ export function getProviderChain(provider: { name?: string; adapter_kind?: strin
   const kind = (provider.adapter_kind || (provider as any).kind || '').toLowerCase();
   const name = (provider.name || '').toLowerCase();
   const model = (provider.model_name || '').toLowerCase();
+  if (kind === 'cloudflare_workers_ai' || kind === 'cloudflare' || name.includes('cloudflare')) {
+    if (model.includes('llama') || model.includes('mistral') || model.includes('qwen')) return 'text';
+    return 'image';
+  }
   if (
     kind === 'pollinations' ||
     kind === 'openai_compatible_images' ||
@@ -534,6 +538,9 @@ export function getProviderChain(provider: { name?: string; adapter_kind?: strin
     model.includes('flux') ||
     model.includes('dall-e') ||
     model.includes('stable-diffusion') ||
+    model.includes('seedream') ||
+    model.includes('gptimage') ||
+    model.includes('nanobanana') ||
     model.includes('lucid') ||
     model.includes('phoenix') ||
     model.includes('wanx') ||
@@ -3888,7 +3895,14 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             let base_url = data.base_url;
             let model_name = data.model_name;
             let daily_limit = Number(data.daily_limit) || 1000;
-            let priority = Number(data.priority) || 1;
+            let priority = Number(data.priority) || 0;
+            const chainType: 'text' | 'image' = data.chain_type === 'image' ||
+              data.adapter_kind === 'openai_compatible_images' ||
+              data.adapter_kind === 'pollinations' ||
+              (data.preset_id && data.preset_id.includes('image'))
+                ? 'image'
+                : 'text';
+            const accountId = data.account_id || (data.adapter_kind === 'cloudflare_workers_ai' || data.preset_id?.includes('cloudflare') ? (process.env.CLOUDFLARE_ACCOUNT_ID || '8a49b9104077d7d64bf20ffc9249b891') : undefined);
 
             let existingProvider: StoredProvider | undefined = undefined;
 
@@ -3905,26 +3919,44 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
                 name = name || preset.name;
                 adapter_kind = adapter_kind || preset.kind;
                 base_url = base_url || preset.baseUrl;
-                model_name = model_name || preset.defaultTextModel || preset.defaultImageModel;
+                model_name = model_name || (chainType === 'image' ? (preset.defaultImageModel || preset.defaultTextModel) : (preset.defaultTextModel || preset.defaultImageModel));
                 daily_limit = data.daily_limit ? Number(data.daily_limit) : preset.rpdLimit;
 
                 existingProvider = (await store.getProviders()).find(
                   (p) =>
-                    p.id === data.preset_id ||
-                    p.id === preset.id ||
-                    p.name.toLowerCase().trim() === preset.name.toLowerCase().trim()
+                    (p.id === data.preset_id ||
+                      p.id === preset.id ||
+                      p.name.toLowerCase().trim() === preset.name.toLowerCase().trim()) &&
+                    getProviderChain(p) === chainType
                 );
               }
             }
 
             if (!existingProvider && name) {
               existingProvider = (await store.getProviders()).find(
-                (p) => p.name.toLowerCase().trim() === name.toLowerCase().trim()
+                (p) => p.name.toLowerCase().trim() === name.toLowerCase().trim() && getProviderChain(p) === chainType
               );
             }
 
             if (!name || !adapter_kind) {
               return sendJson({ error: 'Provider name and adapter_kind are required.' }, 400);
+            }
+
+            if (chainType === 'image' && (adapter_kind === 'cloudflare_workers_ai' || name.toLowerCase().includes('cloudflare'))) {
+              if (!model_name || model_name === 'auto' || model_name.includes('llama')) {
+                model_name = '@cf/black-forest-labs/flux-1-schnell';
+              }
+              if (daily_limit === 1000) {
+                daily_limit = 100;
+              }
+            }
+
+            // Auto-compute priority per chain
+            if (!priority && !existingProvider) {
+              const chainProviders = (await store.getProviders()).filter((p) => getProviderChain(p) === chainType);
+              priority = chainProviders.length > 0 ? Math.max(...chainProviders.map((p) => p.priority)) + 1 : 1;
+            } else if (!priority && existingProvider) {
+              priority = existingProvider.priority;
             }
 
             let targetProvider: StoredProvider;
@@ -3935,6 +3967,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
                 daily_limit: daily_limit || existingProvider.daily_limit,
                 priority: priority || existingProvider.priority,
                 enabled: data.enabled !== false,
+                chain_type: chainType,
+                account_id: accountId,
               });
             } else {
               targetProvider = await store.createProvider({
@@ -3945,6 +3979,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
                 daily_limit,
                 priority,
                 enabled: data.enabled !== false,
+                chain_type: chainType,
+                account_id: accountId,
               });
             }
 
@@ -7312,7 +7348,7 @@ async function generateDashboardHtml(
               Sequential failover priority for captions, ideas, outlines, and niche evaluation. If Primary fails, worker automatically cascades to Secondary and Fallbacks.
             </p>
           </div>
-          <button class="btn btn-primary" onclick="openAddProviderModal()">➕ Add Provider</button>
+          <button class="btn btn-primary" onclick="openAddProviderModal('text')">➕ Add Text Generation API</button>
         </div>
         <table>
           <thead>
@@ -7345,7 +7381,10 @@ async function generateDashboardHtml(
               Sequential image generation providers (Gemini Native, ZenMux, Pollinations, Cloudflare Workers AI) with live health tracking.
             </p>
           </div>
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+            <button class="btn btn-primary" style="font-size: 13px; font-weight: 700; background: #3b82f6; border-color: #2563eb; padding: 6px 14px;" onclick="openAddProviderModal('image')">
+              ➕ Add Image Generation API
+            </button>
             <button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #34d399; border: 1px solid rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.08); padding: 6px 14px; cursor: pointer;" onclick="autoConfigureFreeTierAction(this)" title="Auto-set all providers to Free-Tier models and Cloudflare to 100 reqs/day">
               ⚡ Auto-Set All to Free Tier (100 RPD)
             </button>
@@ -7846,10 +7885,10 @@ async function generateDashboardHtml(
   <div class="modal" id="addProviderModal">
     <div class="modal-content" style="max-width: 600px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-        <h3 style="font-size: 18px; margin: 0;">➕ Add AI Provider & API Key</h3>
+        <h3 id="addProviderModalTitle" style="font-size: 18px; margin: 0;">➕ Add AI Provider & API Key</h3>
         <button onclick="closeAddProviderModal()" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
       </div>
-      <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 18px;">
+      <p id="addProviderModalSubtitle" style="color: var(--text-muted); font-size: 13px; margin-bottom: 18px;">
         Select your AI provider and paste your API key. Base URLs, optimal models, failover routing, and AES-256-GCM encryption are configured automatically.
       </p>
 
@@ -7860,6 +7899,13 @@ async function generateDashboardHtml(
           <select id="quickProviderSelect" name="quickProviderSelect" class="form-control" onchange="onQuickProviderChange(this.value)" style="font-size: 14px; padding: 10px 12px; font-weight: 500;" required>
             ${renderProviderPresetOptions()}
           </select>
+        </div>
+
+        <!-- Cloudflare Account ID Field (Shown dynamically when Cloudflare Workers AI is chosen) -->
+        <div class="form-group" id="quickProviderAccountIdGroup" style="display: none; margin-bottom: 16px;">
+          <label for="quickProviderAccountId" style="font-weight: 600; font-size: 13px; color: #f3f4f6;">Cloudflare Account ID *</label>
+          <input type="text" id="quickProviderAccountId" name="quickProviderAccountId" class="form-control" value="8a49b9104077d7d64bf20ffc9249b891" placeholder="8a49b9104077d7d64bf20ffc9249b891" style="font-size: 13px; font-family: monospace;">
+          <small style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 4px;">Found on your Cloudflare Dashboard right sidebar (Workers &amp; Pages &gt; Account ID).</small>
         </div>
 
         <!-- Dynamic Instructions Banner -->
@@ -8630,6 +8676,11 @@ async function generateDashboardHtml(
         <div class="form-group">
           <label for="editProviderBaseUrl">Base URL</label>
           <input type="text" id="editProviderBaseUrl" name="editProviderBaseUrl" class="form-control" autocomplete="off">
+        </div>
+
+        <div class="form-group" id="editProviderAccountIdGroup" style="display: none;">
+          <label for="editProviderAccountId">Cloudflare Account ID</label>
+          <input type="text" id="editProviderAccountId" name="editProviderAccountId" class="form-control" placeholder="8a49b9104077d7d64bf20ffc9249b891" style="font-family: monospace;">
         </div>
 
         <div class="form-group">

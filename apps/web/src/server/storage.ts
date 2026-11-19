@@ -2442,6 +2442,7 @@ export class SystemStore {
         used_today: usageMap[row.id] || 0,
         enabled: row.active !== false,
         priority: row.priority || 1,
+        config: row.config || {},
         health_status: row.config?.health_status || 'unknown',
         latency_ms: row.config?.latency_ms,
         test_error: row.config?.test_error,
@@ -2481,6 +2482,7 @@ export class SystemStore {
       adapter_kind: data.kind,
       base_url: data.base_url || '',
       model_name: data.model_name || data.config?.default_text_model || data.config?.default_image_model || '',
+      config: data.config || {},
       daily_limit: data.rpd_limit || 1000,
       used_today: usageRow?.requests_count || 0,
       enabled: data.active !== false,
@@ -2507,6 +2509,9 @@ export class SystemStore {
     daily_limit?: number;
     enabled?: boolean;
     priority?: number;
+    config?: Record<string, any>;
+    chain_type?: 'text' | 'image';
+    account_id?: string;
   }): Promise<StoredProvider> {
     // If provider with exact name exists, update rather than error
     const existing = await this.findProviderByNameOrPreset(input.name);
@@ -2517,8 +2522,21 @@ export class SystemStore {
         daily_limit: input.daily_limit ? Number(input.daily_limit) : existing.daily_limit,
         priority: input.priority ? Number(input.priority) : existing.priority,
         enabled: input.enabled !== false,
+        config: {
+          ...(existing.config || {}),
+          ...(input.config || {}),
+          ...(input.chain_type ? { chain_type: input.chain_type } : {}),
+          ...(input.account_id ? { account_id: input.account_id } : {}),
+        },
       });
     }
+
+    const configPayload: Record<string, any> = {
+      default_text_model: input.model_name || undefined,
+      ...(input.config || {}),
+    };
+    if (input.chain_type) configPayload.chain_type = input.chain_type;
+    if (input.account_id) configPayload.account_id = input.account_id;
 
     if (isTestEnv() && !this.client) {
       const id = crypto.randomUUID();
@@ -2529,6 +2547,7 @@ export class SystemStore {
         adapter_kind: input.adapter_kind,
         base_url: input.base_url || '',
         model_name: input.model_name || '',
+        config: configPayload,
         daily_limit: input.daily_limit ? Number(input.daily_limit) : 1000,
         used_today: 0,
         enabled: input.enabled !== false,
@@ -2545,9 +2564,7 @@ export class SystemStore {
       kind: input.adapter_kind,
       base_url: input.base_url || null,
       model_name: input.model_name || null,
-      config: {
-        default_text_model: input.model_name || undefined,
-      },
+      config: configPayload,
       rpd_limit: Number(input.daily_limit) || 1000,
       rpm_limit: 60,
       concurrency_limit: 2,
@@ -2569,6 +2586,7 @@ export class SystemStore {
       adapter_kind: data.kind,
       base_url: data.base_url || '',
       model_name: data.model_name || '',
+      config: data.config || configPayload,
       daily_limit: data.rpd_limit || 1000,
       used_today: 0,
       enabled: data.active !== false,
@@ -2578,18 +2596,32 @@ export class SystemStore {
     };
   }
 
-  public async updateProvider(id: string, updates: Partial<StoredProvider>): Promise<StoredProvider> {
+  public async updateProvider(id: string, updates: Partial<StoredProvider> & { chain_type?: 'text' | 'image'; account_id?: string }): Promise<StoredProvider> {
     if (isTestEnv() && !this.client) {
       const existing = this.memoryProviders.get(id);
       if (!existing) throw new Error(`Provider ${id} not found.`);
       const updated: StoredProvider = {
         ...existing,
         ...updates,
+        config: {
+          ...(existing.config || {}),
+          ...(updates.config || {}),
+          ...(updates.chain_type ? { chain_type: updates.chain_type } : {}),
+          ...(updates.account_id ? { account_id: updates.account_id } : {}),
+        },
         updated_at: new Date().toISOString(),
       };
       this.memoryProviders.set(id, updated);
       return updated;
     }
+
+    const existingRow = await this.getProviderById(id);
+    const mergedConfig: Record<string, any> = {
+      ...(existingRow?.config || {}),
+      ...(updates.config || {}),
+    };
+    if (updates.chain_type) mergedConfig.chain_type = updates.chain_type;
+    if (updates.account_id) mergedConfig.account_id = updates.account_id;
 
     const updatePayload: Record<string, any> = {
       updated_at: new Date().toISOString(),
@@ -2600,7 +2632,7 @@ export class SystemStore {
     if (updates.base_url !== undefined) updatePayload.base_url = updates.base_url || null;
     if (updates.model_name !== undefined) {
       updatePayload.model_name = updates.model_name || null;
-      updatePayload.config = { default_text_model: updates.model_name || undefined };
+      mergedConfig.default_text_model = updates.model_name || undefined;
     }
     if (updates.daily_limit !== undefined) updatePayload.rpd_limit = Number(updates.daily_limit);
     if (updates.enabled !== undefined) updatePayload.active = updates.enabled;
@@ -2612,14 +2644,13 @@ export class SystemStore {
       updates.test_error !== undefined ||
       updates.last_tested_at !== undefined
     ) {
-      updatePayload.config = {
-        ...(updatePayload.config || {}),
-        health_status: updates.health_status,
-        latency_ms: updates.latency_ms,
-        test_error: updates.test_error,
-        last_tested_at: updates.last_tested_at,
-      };
+      mergedConfig.health_status = updates.health_status;
+      mergedConfig.latency_ms = updates.latency_ms;
+      mergedConfig.test_error = updates.test_error;
+      mergedConfig.last_tested_at = updates.last_tested_at;
     }
+
+    updatePayload.config = mergedConfig;
 
     const { data, error } = await this.getClient()
       .from('providers')
@@ -2639,6 +2670,7 @@ export class SystemStore {
       adapter_kind: data.kind,
       base_url: data.base_url || '',
       model_name: data.model_name || '',
+      config: data.config || mergedConfig,
       daily_limit: data.rpd_limit || 1000,
       used_today: 0,
       enabled: data.active !== false,

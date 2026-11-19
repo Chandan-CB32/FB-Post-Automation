@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { resolveEffectiveModel } from '../packages/core/src/index.js';
+import { getProviderChain } from '../apps/web/src/server.js';
 
 describe('Free Models Catalog & Auto Resolution', () => {
   it('automatically resolves "auto" or empty model to verified free models for each provider', () => {
@@ -61,5 +62,71 @@ describe('Dashboard Client Array Safety (Fix for providerKeysData.filter is not 
     const safeObj = Array.isArray(objPayload) ? objPayload : (Array.isArray((objPayload as any)?.keys) ? (objPayload as any).keys : []);
     expect(Array.isArray(safeObj)).toBe(true);
     expect(safeObj.filter((k: any) => k.id === '1')).toEqual([]);
+  });
+});
+
+describe('Provider Chains & Cloudflare Workers AI Image Separation', () => {
+  it('correctly classifies Cloudflare Workers AI and image providers into the Image chain', () => {
+    // Cloudflare with Flux
+    expect(
+      getProviderChain({
+        name: 'Cloudflare Workers AI',
+        adapter_kind: 'cloudflare_workers_ai',
+        model_name: '@cf/black-forest-labs/flux-1-schnell',
+      })
+    ).toBe('image');
+
+    // Cloudflare with explicit config.chain_type
+    expect(
+      getProviderChain({
+        name: 'Cloudflare Workers AI',
+        adapter_kind: 'cloudflare_workers_ai',
+        config: { chain_type: 'image' },
+      })
+    ).toBe('image');
+
+    // Cloudflare with Llama text model
+    expect(
+      getProviderChain({
+        name: 'Cloudflare Workers AI',
+        adapter_kind: 'cloudflare_workers_ai',
+        model_name: '@cf/meta/llama-3.1-8b-instruct',
+      })
+    ).toBe('text');
+
+    // ZenMux Image Free
+    expect(
+      getProviderChain({
+        name: 'ZenMux (Gemini Image Free)',
+        adapter_kind: 'openai_compatible_images',
+        model_name: 'google/gemini-2.5-flash-image-free',
+      })
+    ).toBe('image');
+
+    // Pollinations
+    expect(
+      getProviderChain({
+        name: 'Pollinations AI',
+        adapter_kind: 'pollinations',
+        model_name: 'flux',
+      })
+    ).toBe('image');
+
+    // Standard text providers
+    expect(
+      getProviderChain({
+        name: 'Google Gemini',
+        adapter_kind: 'gemini_native',
+        model_name: 'gemini-2.5-flash',
+      })
+    ).toBe('text');
+
+    expect(
+      getProviderChain({
+        name: 'Groq',
+        adapter_kind: 'openai_compatible_chat',
+        model_name: 'meta-llama/llama-3.3-70b-versatile',
+      })
+    ).toBe('text');
   });
 });
