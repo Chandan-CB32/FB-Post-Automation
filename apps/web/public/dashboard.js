@@ -27,7 +27,7 @@
         if (parsed.pages) pagesData = parsed.pages;
         if (parsed.posts) postsData = parsed.posts;
         if (parsed.providers) providersData = parsed.providers;
-        if (parsed.providerKeys) providerKeysData = parsed.providerKeys;
+        if (parsed.providerKeys) providerKeysData = Array.isArray(parsed.providerKeys) ? parsed.providerKeys : (Array.isArray(parsed.providerKeys?.keys) ? parsed.providerKeys.keys : []);
         if (parsed.auditLogs) auditLogsData = parsed.auditLogs;
         if (parsed.storageHealth) storageHealth = parsed.storageHealth;
       }
@@ -324,7 +324,7 @@
       if (pRes.ok) providersData = await pRes.json();
       if (kRes.ok) {
         const keysObj = await kRes.json();
-        providerKeysData = keysObj.keys || keysObj;
+        providerKeysData = Array.isArray(keysObj) ? keysObj : (Array.isArray(keysObj?.keys) ? keysObj.keys : []);
       }
       renderProvidersTables();
     } catch (err) {
@@ -391,7 +391,7 @@
     }
 
     tbody.innerHTML = chainProviders.map(function (p, idx) {
-      const keys = providerKeysData.filter(function (k) { return k.provider_id === p.id; });
+      const keys = (Array.isArray(providerKeysData) ? providerKeysData : []).filter(function (k) { return k.provider_id === p.id; });
       const activeKeys = keys.filter(function (k) { return k.is_active; });
       const keyBadges = keys.length > 0
         ? keys.map(function (k) {
@@ -1800,6 +1800,149 @@
     }
   }
 
+  // --- Verified Free Models Catalog & Dropdown Helper ---
+  const FREE_MODELS_CATALOG = {
+    gemini: [
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (15 RPM / 1,500 RPD Free)', type: 'text' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (15 RPM / 1,500 RPD Free)', type: 'text' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (2 RPM / 50 RPD Free)', type: 'text' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Experimental Free)', type: 'text' },
+      { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image (Nano Banana)', type: 'image' },
+    ],
+    groq: [
+      { id: 'meta-llama/llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile (14,400 RPD Free)', type: 'text' },
+      { id: 'meta-llama/llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant (14,400 RPD Free)', type: 'text' },
+      { id: 'qwen/qwen-2.5-32b-instruct', name: 'Qwen 2.5 32B Instruct (14,400 RPD Free)', type: 'text' },
+      { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT (14,400 RPD Free)', type: 'text' },
+    ],
+    openrouter: [
+      { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'Nemotron 3 Nano 30B (100% Free)', type: 'text' },
+      { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B Instruct (100% Free)', type: 'text' },
+      { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash Exp (100% Free)', type: 'text' },
+      { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B Instruct (100% Free)', type: 'text' },
+      { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen 2.5 72B Instruct (100% Free)', type: 'text' },
+      { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 (100% Free)', type: 'text' },
+    ],
+    nvidia: [
+      { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct (1,000 Free Credits)', type: 'text' },
+      { id: 'mistralai/mistral-large-2-instruct', name: 'Mistral Large 2 (Free Credits)', type: 'text' },
+      { id: 'nvidia/nemotron-4-340b-instruct', name: 'Nemotron 4 340B Instruct (Free Credits)', type: 'text' },
+    ],
+    cloudflare: [
+      { id: '@cf/meta/llama-3.1-8b-instruct', name: 'Llama 3.1 8B Instruct (10k Neurons/day Free)', type: 'text' },
+      { id: '@cf/meta/llama-3-8b-instruct', name: 'Llama 3 8B Instruct (Free)', type: 'text' },
+      { id: '@cf/mistral/mistral-7b-instruct-v0.1', name: 'Mistral 7B (Free)', type: 'text' },
+      { id: '@cf/black-forest-labs/flux-1-schnell', name: 'FLUX.1 Schnell (Image Free)', type: 'image' },
+      { id: '@cf/stabilityai/stable-diffusion-xl-base-1.0', name: 'SDXL Base 1.0 (Image Free)', type: 'image' },
+    ],
+    pollinations: [
+      { id: 'flux', name: 'FLUX.1 Schnell (100% Free Photorealistic)', type: 'image' },
+      { id: 'turbo', name: 'SDXL Turbo (High-speed Free)', type: 'image' },
+      { id: 'gptimage', name: 'GPT Image (High Adherence)', type: 'image' },
+      { id: 'seedream', name: 'Seedream (ByteDance SDXL)', type: 'image' },
+    ],
+    zenmux: [
+      { id: 'google/gemini-2.5-flash-free', name: 'Gemini 2.5 Flash (Free Tier)', type: 'text' },
+      { id: 'google/gemini-2.5-flash-image-free', name: 'Gemini 2.5 Flash Image (Free Tier)', type: 'image' },
+      { id: 'black-forest-labs/flux-1-schnell-free', name: 'FLUX.1 Schnell (Free Tier)', type: 'image' },
+    ],
+    deepseek: [
+      { id: 'deepseek-chat', name: 'DeepSeek V3 Chat', type: 'text' },
+      { id: 'deepseek-reasoner', name: 'DeepSeek R1 Reasoning', type: 'text' },
+    ],
+    together: [
+      { id: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', name: 'Llama 3.1 70B Turbo', type: 'text' },
+      { id: 'black-forest-labs/FLUX.1-schnell', name: 'FLUX.1 Schnell (Image)', type: 'image' },
+    ],
+    ollama: [
+      { id: 'llama3.2', name: 'Llama 3.2 (Local Free)', type: 'text' },
+      { id: 'mistral', name: 'Mistral (Local Free)', type: 'text' },
+      { id: 'qwen2.5', name: 'Qwen 2.5 (Local Free)', type: 'text' },
+    ],
+  };
+
+  function getCatalogForProvider(presetId, kind, name) {
+    const pId = (presetId || '').toLowerCase();
+    const k = (kind || '').toLowerCase();
+    const n = (name || '').toLowerCase();
+    if (pId.includes('gemini') || k.includes('gemini') || n.includes('gemini')) return FREE_MODELS_CATALOG.gemini;
+    if (pId.includes('groq') || n.includes('groq')) return FREE_MODELS_CATALOG.groq;
+    if (pId.includes('openrouter') || n.includes('openrouter')) return FREE_MODELS_CATALOG.openrouter;
+    if (pId.includes('nvidia') || n.includes('nvidia')) return FREE_MODELS_CATALOG.nvidia;
+    if (pId.includes('cloudflare') || k.includes('cloudflare') || n.includes('cloudflare')) return FREE_MODELS_CATALOG.cloudflare;
+    if (pId.includes('pollinations') || k.includes('pollinations') || n.includes('pollinations')) return FREE_MODELS_CATALOG.pollinations;
+    if (pId.includes('zenmux') || n.includes('zenmux')) return FREE_MODELS_CATALOG.zenmux;
+    if (pId.includes('deepseek') || n.includes('deepseek')) return FREE_MODELS_CATALOG.deepseek;
+    if (pId.includes('together') || n.includes('together')) return FREE_MODELS_CATALOG.together;
+    if (pId.includes('ollama') || n.includes('ollama')) return FREE_MODELS_CATALOG.ollama;
+    return [];
+  }
+
+  function updateModelDropdown(prefix, presetId, kind, name, currentModel) {
+    const select = document.getElementById(prefix + 'ProviderModelSelect');
+    const customWrap = document.getElementById(prefix + 'ProviderCustomModelWrapper');
+    const customInput = document.getElementById(prefix + 'ProviderCustomModel');
+    const hiddenModel = document.getElementById(prefix + 'ProviderModel');
+    if (!select) return;
+
+    const catalog = getCatalogForProvider(presetId, kind, name);
+    let optionsHtml = '<option value="auto">✨ Auto (Automatic Free-Tier Model Selection)</option>';
+    if (catalog.length > 0) {
+      optionsHtml += '<optgroup label="Verified Free Models for this Provider">';
+      catalog.forEach(function (m) {
+        optionsHtml += '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.name) + '</option>';
+      });
+      optionsHtml += '</optgroup>';
+    }
+    optionsHtml += '<option value="__custom__">➕ Custom Model Name (Enter Manually...)</option>';
+    select.innerHTML = optionsHtml;
+
+    const cleanModel = (currentModel || '').trim();
+    const hasInCatalog = catalog.some(function (m) { return m.id === cleanModel; });
+
+    if (!cleanModel || cleanModel.toLowerCase() === 'auto' || cleanModel.toLowerCase() === 'default') {
+      select.value = 'auto';
+      if (customWrap) customWrap.style.display = 'none';
+      if (hiddenModel) hiddenModel.value = 'auto';
+    } else if (hasInCatalog) {
+      select.value = cleanModel;
+      if (customWrap) customWrap.style.display = 'none';
+      if (hiddenModel) hiddenModel.value = cleanModel;
+    } else {
+      select.value = '__custom__';
+      if (customWrap) customWrap.style.display = 'block';
+      if (customInput) customInput.value = cleanModel;
+      if (hiddenModel) hiddenModel.value = cleanModel;
+    }
+  }
+
+  function onModelSelectChange(prefix) {
+    const select = document.getElementById(prefix + 'ProviderModelSelect');
+    const customWrap = document.getElementById(prefix + 'ProviderCustomModelWrapper');
+    const customInput = document.getElementById(prefix + 'ProviderCustomModel');
+    const hiddenModel = document.getElementById(prefix + 'ProviderModel');
+    if (!select) return;
+
+    if (select.value === '__custom__') {
+      if (customWrap) customWrap.style.display = 'block';
+      if (customInput) {
+        customInput.focus();
+        if (hiddenModel) hiddenModel.value = customInput.value.trim() || 'auto';
+      }
+    } else {
+      if (customWrap) customWrap.style.display = 'none';
+      if (hiddenModel) hiddenModel.value = select.value;
+    }
+  }
+
+  function onCustomModelInput(prefix) {
+    const customInput = document.getElementById(prefix + 'ProviderCustomModel');
+    const hiddenModel = document.getElementById(prefix + 'ProviderModel');
+    if (customInput && hiddenModel) {
+      hiddenModel.value = customInput.value.trim() || 'auto';
+    }
+  }
+
   // --- Provider Modal & Actions ---
   function openAddProviderModal() {
     const modal = document.getElementById('addProviderModal');
@@ -1882,23 +2025,9 @@
     if (kindInput) kindInput.value = kind;
     const baseInput = document.getElementById('newProviderBaseUrl');
     if (baseInput) baseInput.value = baseUrl;
-    const modelInput = document.getElementById('newProviderModel');
-    if (modelInput) {
-      modelInput.value = model;
-      let datalist = document.getElementById('newProviderModelSuggestions');
-      if (!datalist) {
-        datalist = document.createElement('datalist');
-        datalist.id = 'newProviderModelSuggestions';
-        modelInput.setAttribute('list', 'newProviderModelSuggestions');
-        modelInput.parentNode.appendChild(datalist);
-      }
-      let suggestions = [];
-      if (kind.includes('gemini')) suggestions = ['gemini-2.5-flash-image', 'gemini-3-pro-image', 'gemini-2.0-flash'];
-      else if (kind.includes('pollinations')) suggestions = ['flux', 'turbo', 'gptimage', 'seedream', 'nanobanana'];
-      else if (kind.includes('zenmux') || name.toLowerCase().includes('zenmux')) suggestions = ['google/gemini-2.5-flash-image-free', 'openai/gpt-4o-mini', 'deepseek/deepseek-chat'];
-      else if (kind.includes('cloudflare')) suggestions = ['@cf/stabilityai/stable-diffusion-xl-base-1.0', '@cf/black-forest-labs/flux-1-schnell'];
-      datalist.innerHTML = suggestions.map(function(s) { return '<option value="' + s + '">'; }).join('');
-    }
+    
+    updateModelDropdown('new', presetId, kind, name, model);
+
     const limitInput = document.getElementById('newProviderDailyLimit');
     if (limitInput) limitInput.value = limit;
   }
@@ -1910,7 +2039,16 @@
     const name = document.getElementById('newProviderName').value;
     const adapter_kind = document.getElementById('newProviderAdapter').value;
     const base_url = document.getElementById('newProviderBaseUrl').value;
-    const model_name = document.getElementById('newProviderModel').value;
+    
+    const modelSelect = document.getElementById('newProviderModelSelect');
+    const customModelInput = document.getElementById('newProviderCustomModel');
+    let model_name = document.getElementById('newProviderModel')?.value || 'auto';
+    if (modelSelect && modelSelect.value === '__custom__') {
+      model_name = (customModelInput?.value || '').trim() || 'auto';
+    } else if (modelSelect) {
+      model_name = modelSelect.value;
+    }
+
     const priority = parseInt(document.getElementById('newProviderPriority').value, 10) || 1;
     const daily_limit = parseInt(document.getElementById('newProviderDailyLimit').value, 10) || 1000;
     const initial_key = document.getElementById('quickApiKey').value;
@@ -2162,24 +2300,9 @@
     document.getElementById('editProviderName').value = p.name;
     document.getElementById('editProviderAdapter').value = p.adapter_kind;
     document.getElementById('editProviderBaseUrl').value = p.base_url || '';
-    const editModelInput = document.getElementById('editProviderModel');
-    if (editModelInput) {
-      editModelInput.value = p.model_name || 'auto';
-      let datalist = document.getElementById('editProviderModelSuggestions');
-      if (!datalist) {
-        datalist = document.createElement('datalist');
-        datalist.id = 'editProviderModelSuggestions';
-        editModelInput.setAttribute('list', 'editProviderModelSuggestions');
-        editModelInput.parentNode.appendChild(datalist);
-      }
-      const kind = (p.adapter_kind || '').toLowerCase();
-      let suggestions = ['auto'];
-      if (kind.includes('gemini')) suggestions.push('gemini-2.5-flash-image', 'gemini-3-pro-image', 'gemini-2.0-flash');
-      else if (kind.includes('pollinations')) suggestions.push('flux', 'turbo', 'gptimage', 'seedream', 'nanobanana');
-      else if (kind.includes('zenmux') || p.name.toLowerCase().includes('zenmux')) suggestions.push('google/gemini-2.5-flash-image-free', 'openai/gpt-4o-mini', 'deepseek/deepseek-chat');
-      else if (kind.includes('cloudflare')) suggestions.push('@cf/black-forest-labs/flux-1-schnell', '@cf/stabilityai/stable-diffusion-xl-base-1.0');
-      datalist.innerHTML = suggestions.map(function(s) { return '<option value="' + s + '">' + (s === 'auto' ? 'Auto (Free-Tier Model Selection)' : s) + '</option>'; }).join('');
-    }
+    
+    updateModelDropdown('edit', p.preset_id || p.id, p.adapter_kind, p.name, p.model_name);
+
     document.getElementById('editProviderPriority').value = p.priority;
     
     let displayLimit = p.daily_limit;
@@ -2193,7 +2316,7 @@
     document.getElementById('editProviderDailyLimit').value = displayLimit;
     document.getElementById('editProviderEnabled').checked = p.enabled !== false;
 
-    const keys = providerKeysData.filter(function (k) { return k.provider_id === p.id; });
+    const keys = (Array.isArray(providerKeysData) ? providerKeysData : []).filter(function (k) { return k.provider_id === p.id; });
     const summary = document.getElementById('editProviderKeysSummary');
     if (summary) {
       if (keys.length === 0) {
@@ -2229,7 +2352,16 @@
     const name = document.getElementById('editProviderName').value;
     const adapter_kind = document.getElementById('editProviderAdapter').value;
     const base_url = document.getElementById('editProviderBaseUrl').value;
-    const model_name = document.getElementById('editProviderModel').value;
+    
+    const modelSelect = document.getElementById('editProviderModelSelect');
+    const customModelInput = document.getElementById('editProviderCustomModel');
+    let model_name = document.getElementById('editProviderModel')?.value || 'auto';
+    if (modelSelect && modelSelect.value === '__custom__') {
+      model_name = (customModelInput?.value || '').trim() || 'auto';
+    } else if (modelSelect) {
+      model_name = modelSelect.value;
+    }
+
     const priority = parseInt(document.getElementById('editProviderPriority').value, 10) || 1;
     const daily_limit = parseInt(document.getElementById('editProviderDailyLimit').value, 10) || 1000;
     const enabled = document.getElementById('editProviderEnabled').checked;
@@ -2262,8 +2394,12 @@
   }
 
   function setEditModelToAuto() {
-    const editModelInput = document.getElementById('editProviderModel');
-    if (editModelInput) editModelInput.value = 'auto';
+    const select = document.getElementById('editProviderModelSelect');
+    if (select) select.value = 'auto';
+    const customWrap = document.getElementById('editProviderCustomModelWrapper');
+    if (customWrap) customWrap.style.display = 'none';
+    const hiddenModel = document.getElementById('editProviderModel');
+    if (hiddenModel) hiddenModel.value = 'auto';
     const adapter = (document.getElementById('editProviderAdapter').value || '').toLowerCase();
     const name = (document.getElementById('editProviderName').value || '').toLowerCase();
     if (adapter.includes('cloudflare') || name.includes('cloudflare')) {
@@ -2304,16 +2440,24 @@
 
   async function deleteProviderAction(id) {
     if (!confirm('Are you sure you want to delete this provider and all associated API keys?')) return;
-    const res = await fetch('/api/providers', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: id }),
-    });
-    if (res.ok) {
-      showToast('Provider deleted.');
-      fetchProvidersTab();
-    } else {
-      showToast('Failed to delete provider.', 'error');
+    try {
+      const res = await fetch('/api/providers', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id }),
+      });
+      if (res.ok) {
+        showToast('Provider deleted.');
+        providersData = (Array.isArray(providersData) ? providersData : []).filter(function (p) { return p.id !== id; });
+        providerKeysData = (Array.isArray(providerKeysData) ? providerKeysData : []).filter(function (k) { return k.provider_id !== id; });
+        renderProvidersTables();
+        await fetchProvidersTab();
+      } else {
+        const err = await res.json().catch(function () { return {}; });
+        showToast('Failed to delete provider: ' + (err.error || 'Server error'), 'error');
+      }
+    } catch (e) {
+      showToast('Error deleting provider: ' + e.message, 'error');
     }
   }
 
@@ -2345,7 +2489,7 @@
   }
 
   function renderKeysList(providerId) {
-    const keys = providerKeysData.filter(function (k) { return k.provider_id === providerId; });
+    const keys = (Array.isArray(providerKeysData) ? providerKeysData : []).filter(function (k) { return k.provider_id === providerId; });
     const container = document.getElementById('keysListContainer');
     if (!container) return;
     if (keys.length === 0) {
@@ -2373,7 +2517,7 @@
   function updateProviderTableRow(providerId) {
     const row = document.getElementById('provider-row-' + providerId);
     if (!row) return;
-    const keys = providerKeysData.filter(function (k) { return k.provider_id === providerId; });
+    const keys = (Array.isArray(providerKeysData) ? providerKeysData : []).filter(function (k) { return k.provider_id === providerId; });
     const activeKeys = keys.filter(function (k) { return k.is_active; });
     const keyBadges = keys.length > 0
       ? keys.map(function (k) {
@@ -2413,6 +2557,7 @@
     if (res.ok) {
       const result = await res.json();
       const newKeys = result.addedKeys || (result.key ? [result.key] : []);
+      if (!Array.isArray(providerKeysData)) providerKeysData = [];
       for (const nk of newKeys) {
         const idx = providerKeysData.findIndex(function (k) { return k.id === nk.id; });
         if (idx !== -1) {
@@ -2425,7 +2570,7 @@
       document.getElementById('keyPoolLabel').value = '';
       renderKeysList(providerId);
       updateProviderTableRow(providerId);
-      const activeCount = providerKeysData.filter(function (k) { return k.provider_id === providerId && k.is_active; }).length;
+      const activeCount = (Array.isArray(providerKeysData) ? providerKeysData : []).filter(function (k) { return k.provider_id === providerId && k.is_active; }).length;
       alert('Success: ' + newKeys.length + ' API key(s) encrypted and added to rotation pool! (Total active in pool: ' + activeCount + '). Previous keys remain intact.');
     } else {
       const err = await res.json();
@@ -2441,6 +2586,7 @@
     });
     if (res.ok) {
       const result = await res.json();
+      if (!Array.isArray(providerKeysData)) providerKeysData = [];
       const idx = providerKeysData.findIndex(function (k) { return k.id === keyId; });
       if (idx !== -1) providerKeysData[idx] = result.key;
       renderKeysList(providerId);
@@ -2458,7 +2604,7 @@
       body: JSON.stringify({ id: keyId }),
     });
     if (res.ok) {
-      providerKeysData = providerKeysData.filter(function (k) { return k.id !== keyId; });
+      providerKeysData = (Array.isArray(providerKeysData) ? providerKeysData : []).filter(function (k) { return k.id !== keyId; });
       renderKeysList(providerId);
       updateProviderTableRow(providerId);
       alert('API Key deleted.');
@@ -3058,6 +3204,8 @@
   window.toggleQuickKeyVisibility = toggleQuickKeyVisibility;
   window.toggleQuickAdvanced = toggleQuickAdvanced;
   window.onQuickProviderChange = onQuickProviderChange;
+  window.onModelSelectChange = onModelSelectChange;
+  window.onCustomModelInput = onCustomModelInput;
   window.submitNewProvider = submitNewProvider;
   window.openPageDetailsWindow = openPageDetailsWindow;
   window.closePageDetailsModal = closePageDetailsModal;

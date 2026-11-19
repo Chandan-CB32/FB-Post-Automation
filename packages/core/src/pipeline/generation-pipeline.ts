@@ -38,6 +38,44 @@ import {
   runContentIntegrityCheck,
   IntegrityCheckResult,
 } from "../validation/content-integrity.js";
+
+/**
+ * Automatically resolves a provider's model to a verified 100% free-tier model if
+ * the user chose 'auto', left it blank, or if the model name is 'default'.
+ * Allows manual custom model names when provided.
+ */
+export function resolveEffectiveModel(
+  provider: { kind?: string; adapter_kind?: string; name?: string; model_name?: string },
+  type: 'text' | 'image' = 'text'
+): string {
+  const raw = (provider.model_name || '').trim();
+  if (raw && raw.toLowerCase() !== 'auto' && raw.toLowerCase() !== 'default') {
+    return raw;
+  }
+  const kind = (provider.kind || provider.adapter_kind || '').toLowerCase();
+  const name = (provider.name || '').toLowerCase();
+
+  if (type === 'image') {
+    if (kind === 'pollinations' || name.includes('pollinations')) return 'flux';
+    if (kind === 'cloudflare_workers_ai' || name.includes('cloudflare')) return '@cf/black-forest-labs/flux-1-schnell';
+    if (kind === 'gemini_native' || name.includes('gemini')) return 'gemini-2.5-flash-image';
+    if (name.includes('zenmux')) return 'google/gemini-2.5-flash-image-free';
+    if (name.includes('together')) return 'black-forest-labs/FLUX.1-schnell';
+    return 'flux';
+  }
+
+  // Text generation:
+  if (kind === 'gemini_native' || kind === 'gemini' || name.includes('gemini')) return 'gemini-2.5-flash';
+  if (name.includes('groq')) return 'meta-llama/llama-3.3-70b-versatile';
+  if (name.includes('openrouter')) return 'nvidia/nemotron-3-nano-30b-a3b:free';
+  if (name.includes('nvidia')) return 'meta/llama-3.3-70b-instruct';
+  if (kind === 'cloudflare_workers_ai' || name.includes('cloudflare')) return '@cf/meta/llama-3.1-8b-instruct';
+  if (name.includes('zenmux')) return 'google/gemini-2.5-flash-free';
+  if (name.includes('deepseek')) return 'deepseek-chat';
+  if (name.includes('together')) return 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo';
+  if (name.includes('ollama')) return 'llama3.2';
+  return 'gemini-2.5-flash';
+}
 import {
   buildConcreteImagePrompt,
   buildTopicImagePrompt,
@@ -1123,12 +1161,13 @@ FORMAT INSTRUCTIONS:
             candidate.adapter_kind ||
             ""
           ).toLowerCase();
+          const effectiveTextModel = resolveEffectiveModel(candidate, "text");
           if (kind === "gemini_native" || kind === "gemini") {
             const adapter = new GeminiNativeAdapter();
             const res = await adapter.generateText({
               prompt: rawEffectivePrompt,
               apiKey: candidate.apiKey,
-              model: candidate.model_name || "gemini-2.5-flash",
+              model: effectiveTextModel,
               baseUrl: candidate.base_url,
               temperature: 0.7,
               timeoutMs: 20000,
@@ -1137,7 +1176,7 @@ FORMAT INSTRUCTIONS:
               draft = res.text.trim();
               provName = candidate.name;
               modelName =
-                res.modelUsed || candidate.model_name || "gemini-2.5-flash";
+                res.modelUsed || effectiveTextModel;
               successfulTextProviderId = candidate.id;
               successfulTextProviderName = candidate.name;
               successfulTextModel = modelName;
@@ -1158,7 +1197,7 @@ FORMAT INSTRUCTIONS:
             const res = await adapter.generateText({
               prompt: rawEffectivePrompt,
               apiKey: candidate.apiKey,
-              model: candidate.model_name || "@cf/meta/llama-3.1-8b-instruct",
+              model: effectiveTextModel,
               baseUrl: candidate.base_url,
               extraBody: { accountId },
               timeoutMs: 20000,
@@ -1168,8 +1207,7 @@ FORMAT INSTRUCTIONS:
               provName = candidate.name;
               modelName =
                 res.modelUsed ||
-                candidate.model_name ||
-                "@cf/meta/llama-3.1-8b-instruct";
+                effectiveTextModel;
               successfulTextProviderId = candidate.id;
               successfulTextProviderName = candidate.name;
               successfulTextModel = modelName;
@@ -1181,7 +1219,7 @@ FORMAT INSTRUCTIONS:
             const res = await adapter.generateText({
               prompt: rawEffectivePrompt,
               apiKey: candidate.apiKey,
-              model: candidate.model_name || "openai/gpt-oss-20b",
+              model: effectiveTextModel,
               baseUrl: candidate.base_url,
               temperature: 0.7,
               maxTokens: 800,
@@ -1191,7 +1229,7 @@ FORMAT INSTRUCTIONS:
               draft = res.text.trim();
               provName = candidate.name;
               modelName =
-                res.modelUsed || candidate.model_name || "openai/gpt-oss-20b";
+                res.modelUsed || effectiveTextModel;
               successfulTextProviderId = candidate.id;
               successfulTextProviderName = candidate.name;
               successfulTextModel = modelName;
@@ -1721,6 +1759,7 @@ FORMAT INSTRUCTIONS:
       ""
     ).toLowerCase();
     const cName = candidate.name || "image-provider";
+    const effectiveImgModel = resolveEffectiveModel(candidate, "image");
 
     // 1. Gemini Native Image Provider (gemini_native strictly)
     if (cKind === "gemini_native") {
@@ -1731,7 +1770,7 @@ FORMAT INSTRUCTIONS:
           const imgRes = await geminiAdapter.generateImage({
             prompt: visualPrompt,
             negativePrompt,
-            model: candidate.model_name || "gemini-2.5-flash-image",
+            model: effectiveImgModel,
             apiKey: geminiKey,
             width: 1080,
             height: 1350,
@@ -1743,7 +1782,7 @@ FORMAT INSTRUCTIONS:
             rawImageBuffer = imgRes.imageBuffer;
             successfulImageProvider = candidate.name;
             successfulImageModel =
-              candidate.model_name || "gemini-2.5-flash-image";
+              imgRes.modelUsed || effectiveImgModel;
             usedImageProviderId = candidate.id;
             console.log(
               `[Image Generation] Successfully generated image via Priority #${candidate.priority} (${candidate.name})`,
@@ -1772,8 +1811,7 @@ FORMAT INSTRUCTIONS:
         if (cfToken && cfAccountId && !isTestEnv()) {
           const imgRes = await cfAdapter.generateImage({
             prompt: visualPrompt.slice(0, 500),
-            model:
-              candidate.model_name || "@cf/black-forest-labs/flux-1-schnell",
+            model: effectiveImgModel,
             apiKey: cfToken,
             width: 1080,
             height: 1080,
@@ -1786,7 +1824,7 @@ FORMAT INSTRUCTIONS:
             rawImageBuffer = imgRes.imageBuffer;
             successfulImageProvider = candidate.name;
             successfulImageModel =
-              candidate.model_name || "@cf/black-forest-labs/flux-1-schnell";
+              imgRes.modelUsed || effectiveImgModel;
             usedImageProviderId = candidate.id;
             console.log(
               `[Image Generation] Successfully generated image via Priority #${candidate.priority} (${candidate.name})`,
@@ -1810,14 +1848,14 @@ FORMAT INSTRUCTIONS:
       try {
         const oaiAdapter = new OpenAICompatibleImageAdapter({
           baseUrl: candidate.base_url || undefined,
-          defaultModel: candidate.model_name,
+          defaultModel: effectiveImgModel,
         });
         const oaiKey = candidate.apiKey;
         if (oaiKey && !isTestEnv()) {
           const imgRes = await oaiAdapter.generateImage({
             prompt: visualPrompt,
             negativePrompt,
-            model: candidate.model_name,
+            model: effectiveImgModel,
             apiKey: oaiKey,
             baseUrl: candidate.base_url || undefined,
             width: 1080,
@@ -1830,7 +1868,7 @@ FORMAT INSTRUCTIONS:
             rawImageBuffer = imgRes.imageBuffer;
             successfulImageProvider = candidate.name;
             successfulImageModel =
-              candidate.model_name || imgRes.modelUsed || "image";
+              imgRes.modelUsed || effectiveImgModel;
             usedImageProviderId = candidate.id;
             console.log(
               `[Image Generation] Successfully generated image via Priority #${candidate.priority} (${candidate.name})`,
@@ -1848,7 +1886,7 @@ FORMAT INSTRUCTIONS:
     // 4. Pollinations AI (pollinations strictly)
     else if (cKind === "pollinations") {
       try {
-        const modelName = candidate.model_name || "flux";
+        const modelName = effectiveImgModel;
         const apiKey = candidate.apiKey;
         const isSecretKey = apiKey && apiKey.startsWith("sk_");
         let polliUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 1000))}?width=1080&height=1350&model=${modelName}&nologo=true`;

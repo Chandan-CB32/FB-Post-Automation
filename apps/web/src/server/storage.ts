@@ -2669,6 +2669,7 @@ export class SystemStore {
       return false;
     }
     this.invalidateCache('providers');
+    this.invalidateCache('provider_keys');
     return true;
   }
 

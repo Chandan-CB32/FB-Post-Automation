@@ -50,6 +50,7 @@ import {
   countWords,
   trimToWordLimit as coreTrimToWordLimit,
   runGenerationPipeline,
+  resolveEffectiveModel,
   generateCompositePreviewSvg,
   generateLiveSchedulePreview,
   evaluatePageChecklist,
@@ -4089,7 +4090,10 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           let errorMessage = '';
           let thumbnailUrl: string | undefined;
           const isImageTest = parsed.kind === 'image' || parsed.testType === 'image' || provider.adapter_kind === 'pollinations';
-          const targetModel = parsed.model || provider.model_name;
+          const rawTargetModel = parsed.model || provider.model_name;
+          const targetModel = (rawTargetModel && rawTargetModel !== 'auto' && rawTargetModel !== 'default')
+            ? rawTargetModel
+            : resolveEffectiveModel(provider, isImageTest ? 'image' : 'text');
 
           try {
             if (isImageTest && provider.adapter_kind === 'gemini_native') {
@@ -5760,25 +5764,84 @@ async function generateDashboardHtml(
         </div>
       </div>
 
-      <div class="card" style="margin-bottom: 24px;">
-        <h3 style="margin-bottom: 14px; font-size: 16px;">Provider Daily Demand & Quotas</h3>
-        ${providers.length > 0
-          ? `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-              ${providers.map((p) => {
+      <!-- OVERVIEW: PROVIDER DAILY DEMAND & QUOTAS SPLIT INTO TEXT & IMAGE -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; margin-bottom: 24px;">
+        <!-- Text Generation Providers & Quotas -->
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid var(--card-border); padding-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 18px;">📝</span>
+              <h3 style="font-size: 15px; margin: 0; font-weight: 700; color: #f8fafc;">Text Generation API Quotas</h3>
+            </div>
+            <span class="badge" style="background: #1e3a8a; color: #93c5fd; font-size: 11px;">
+              ${providers.filter((p) => getProviderChain(p) === 'text').length} Provider(s)
+            </span>
+          </div>
+          ${(() => {
+            const textProvs = providers.filter((p) => getProviderChain(p) === 'text').sort((a, b) => a.priority - b.priority);
+            if (textProvs.length === 0) {
+              return `<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 13px;">No text generation providers configured yet. <a href="/providers" style="color: #60a5fa; text-decoration: underline;">Add Text Provider</a></div>`;
+            }
+            return `<div style="display: flex; flex-direction: column; gap: 14px;">
+              ${textProvs.map((p) => {
                 const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+                const pKeys = (providerKeys || []).filter((k) => k.provider_id === p.id && k.is_active);
                 return `<div>
-                  <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                    <span>${p.name}</span>
-                    <strong>${p.used_today || 0} / ${p.daily_limit.toLocaleString()} reqs (${pct}%)</strong>
+                  <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 4px;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                      <span style="font-weight: 600; color: #f3f4f6;">${escapeHtml(p.name)}</span>
+                      <span class="badge" style="background: #1e293b; color: #94a3b8; font-size: 10px; padding: 1px 5px;">#${p.priority} Priority</span>
+                      ${pKeys.length > 0 ? `<span class="badge" style="background: #064e3b; color: #34d399; font-size: 10px; padding: 1px 5px;">● ${pKeys.length} active key(s)</span>` : `<span class="badge" style="background: #7f1d1d; color: #f87171; font-size: 10px; padding: 1px 5px;">No active key</span>`}
+                    </div>
+                    <strong style="color: ${pct > 85 ? '#ef4444' : '#93c5fd'}; font-size: 12px;">${p.used_today || 0} / ${(p.daily_limit || 1).toLocaleString()} reqs (${pct}%)</strong>
                   </div>
-                  <div style="height: 8px; background: #374151; border-radius: 4px; overflow: hidden; margin-top: 6px;">
+                  <div style="height: 7px; background: #374151; border-radius: 4px; overflow: hidden;">
                     <div style="height: 100%; width: ${pct}%; background: ${pct > 85 ? '#ef4444' : '#3b82f6'};"></div>
                   </div>
                 </div>`;
               }).join('')}
-            </div>`
-          : `<div style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 13px;">No AI providers configured yet. Add providers in the <strong>Providers & Keys</strong> tab to track live quota usage.</div>`
-        }
+            </div>`;
+          })()}
+        </div>
+
+        <!-- Image Generation Providers & Quotas -->
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid var(--card-border); padding-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 18px;">🎨</span>
+              <h3 style="font-size: 15px; margin: 0; font-weight: 700; color: #f8fafc;">Image Generation API Quotas</h3>
+            </div>
+            <span class="badge" style="background: #064e3b; color: #34d399; font-size: 11px;">
+              ${providers.filter((p) => getProviderChain(p) === 'image').length} Provider(s)
+            </span>
+          </div>
+          ${(() => {
+            const imgProvs = providers.filter((p) => getProviderChain(p) === 'image').sort((a, b) => a.priority - b.priority);
+            if (imgProvs.length === 0) {
+              return `<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 13px;">No image generation providers configured yet. <a href="/providers" style="color: #34d399; text-decoration: underline;">Add Image Provider</a></div>`;
+            }
+            return `<div style="display: flex; flex-direction: column; gap: 14px;">
+              ${imgProvs.map((p) => {
+                const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+                const pKeys = (providerKeys || []).filter((k) => k.provider_id === p.id && k.is_active);
+                const isKeyless = (p.adapter_kind || '').toLowerCase() === 'pollinations';
+                return `<div>
+                  <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 4px;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                      <span style="font-weight: 600; color: #f3f4f6;">${escapeHtml(p.name)}</span>
+                      <span class="badge" style="background: #1e293b; color: #94a3b8; font-size: 10px; padding: 1px 5px;">#${p.priority} Priority</span>
+                      ${isKeyless ? `<span class="badge" style="background: #064e3b; color: #34d399; font-size: 10px; padding: 1px 5px;">Keyless Free</span>` : (pKeys.length > 0 ? `<span class="badge" style="background: #064e3b; color: #34d399; font-size: 10px; padding: 1px 5px;">● ${pKeys.length} active key(s)</span>` : `<span class="badge" style="background: #7f1d1d; color: #f87171; font-size: 10px; padding: 1px 5px;">No active key</span>`)}
+                    </div>
+                    <strong style="color: ${pct > 85 ? '#ef4444' : '#34d399'}; font-size: 12px;">${p.used_today || 0} / ${(p.daily_limit || 1).toLocaleString()} reqs (${pct}%)</strong>
+                  </div>
+                  <div style="height: 7px; background: #374151; border-radius: 4px; overflow: hidden;">
+                    <div style="height: 100%; width: ${pct}%; background: ${pct > 85 ? '#ef4444' : '#10b981'};"></div>
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>`;
+          })()}
+        </div>
       </div>
     </div>
 
@@ -7732,8 +7795,18 @@ async function generateDashboardHtml(
                 <input type="text" id="newProviderAdapter" name="newProviderAdapter" class="form-control" value="gemini_native" style="font-size: 12px;" readonly>
               </div>
               <div class="form-group">
-                <label for="newProviderModel" style="font-size: 12px;">Default Model</label>
-                <input type="text" id="newProviderModel" name="newProviderModel" class="form-control" value="gemini-2.5-flash" autocomplete="off" style="font-size: 12px;">
+                <label for="newProviderModelSelect" style="font-size: 12px; display: flex; justify-content: space-between;">
+                  <span>Model Selection</span>
+                  <span style="color: #34d399; font-size: 11px;">Free Models</span>
+                </label>
+                <select id="newProviderModelSelect" class="form-control" onchange="onModelSelectChange('new')" style="font-size: 12px;">
+                  <option value="auto">✨ Auto (Automatic Free-Tier Model Selection)</option>
+                  <option value="__custom__">➕ Custom Model Name (Enter Manually...)</option>
+                </select>
+                <div id="newProviderCustomModelWrapper" style="display: none; margin-top: 6px;">
+                  <input type="text" id="newProviderCustomModel" class="form-control" placeholder="Type or paste custom free model name" autocomplete="off" style="font-size: 12px; font-family: monospace;" oninput="onCustomModelInput('new')">
+                </div>
+                <input type="hidden" id="newProviderModel" name="newProviderModel" value="gemini-2.5-flash">
               </div>
             </div>
             <div class="form-group" style="margin-bottom: 10px;">
@@ -8460,15 +8533,23 @@ async function generateDashboardHtml(
 
         <div class="form-group">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <label for="editProviderModel" style="margin: 0;">Model Name</label>
+            <label for="editProviderModelSelect" style="margin: 0; font-size: 13px; font-weight: 600;">Model Selection</label>
             <button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 2px 8px; color: #34d399; border-color: rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.1); cursor: pointer;" onclick="setEditModelToAuto()">
-              ✨ Set to Auto (Free-Tier Model)
+              ✨ Auto (Free-Tier Model)
             </button>
           </div>
-          <input type="text" id="editProviderModel" name="editProviderModel" class="form-control" autocomplete="off" placeholder="auto (Automatic Free-Tier Model Selection)">
-          <small style="color: #94a3b8; font-size: 11px; display: block; margin-top: 4px;">
-            💡 Set to <code>auto</code> (or leave empty) to automatically pick the verified 100% free-tier model (e.g. FLUX.1 Schnell for Cloudflare, Gemini Flash for ZenMux).
-          </small>
+          <select id="editProviderModelSelect" class="form-control" onchange="onModelSelectChange('edit')" style="font-size: 13px; margin-bottom: 6px;">
+            <option value="auto">✨ Auto (Automatic Free-Tier Model Selection)</option>
+            <option value="__custom__">➕ Custom Model Name (Enter Manually...)</option>
+          </select>
+          <div id="editProviderCustomModelWrapper" style="display: none; margin-top: 6px;">
+            <label for="editProviderCustomModel" style="font-size: 11px; color: #93c5fd; display: block; margin-bottom: 4px;">Enter Custom Free Model Name from Provider:</label>
+            <input type="text" id="editProviderCustomModel" class="form-control" placeholder="Type or paste custom free model name" autocomplete="off" style="font-size: 12px; font-family: monospace;" oninput="onCustomModelInput('edit')">
+            <small style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 3px;">
+              💡 You can copy any free model name from the provider's official catalog and paste it here.
+            </small>
+          </div>
+          <input type="hidden" id="editProviderModel" name="editProviderModel" value="auto">
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
