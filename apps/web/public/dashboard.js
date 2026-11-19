@@ -5816,6 +5816,7 @@
       // Populate active library Drive settings
       if (data.libraries && data.libraries.length > 0) {
         window.currentActiveLibraryId = data.libraries[0].id;
+        window.currentLibraryId = data.libraries[0].id;
         const lib = data.libraries[0];
         const driveInput = document.getElementById('libDriveFolderInput');
         if (driveInput) driveInput.value = lib.drive_folder_id || '';
@@ -6147,13 +6148,13 @@
 
   async function saveDriveFolderConfigAction() {
     const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    const libraryId = window.currentActiveLibraryId;
+    const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
     const folderInput = document.getElementById('libDriveFolderInput');
     const folderVal = folderInput ? folderInput.value.trim() : '';
     const afterPub = document.getElementById('libAfterPublishAction') ? document.getElementById('libAfterPublishAction').value : 'move_to_posted';
 
-    if (!pageId || !libraryId || !folderVal) {
-      alert('Please select a page, upload a sheet first, and enter a Drive folder ID or URL.');
+    if (!pageId || !folderVal) {
+      alert('Please select a page and enter a Google Drive folder ID or URL.');
       return;
     }
 
@@ -6170,6 +6171,10 @@
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        if (data.library && data.library.id) {
+          window.currentActiveLibraryId = data.library.id;
+          window.currentLibraryId = data.library.id;
+        }
         showToast('Saved Google Drive folder configuration!', 'success');
         loadContentLibraryForPage(pageId);
       } else {
@@ -6183,11 +6188,11 @@
 
   async function syncDriveImagesAction() {
     const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    const libraryId = window.currentActiveLibraryId;
+    const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
     const statusEl = document.getElementById('libDriveSyncStatus');
 
-    if (!pageId || !libraryId) {
-      alert('Please select a page with an active library first.');
+    if (!pageId) {
+      alert('Please select a Facebook page first.');
       return;
     }
 

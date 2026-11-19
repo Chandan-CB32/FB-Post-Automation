@@ -3385,12 +3385,32 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       req.on('data', (c) => (body += c));
       req.on('end', async () => {
         try {
-          const { libraryId, driveFolderId, afterPublishAction } = JSON.parse(body || '{}');
-          if (!libraryId || !driveFolderId) {
-            return sendJson({ error: 'libraryId and driveFolderId are required.' }, 400);
+          const { pageId, libraryId, driveFolderId, afterPublishAction } = JSON.parse(body || '{}');
+          if (!driveFolderId) {
+            return sendJson({ error: 'driveFolderId is required.' }, 400);
           }
           const cleanFolderId = extractDriveFolderId(driveFolderId);
-          const updated = await store.updateLibrary(libraryId, {
+          let targetLibraryId = libraryId;
+          if (!targetLibraryId && pageId) {
+            const libs = await store.getLibraries(pageId);
+            if (libs && libs.length > 0) {
+              targetLibraryId = libs[0].id;
+            } else {
+              const newLib = await store.createLibrary({
+                page_id: pageId,
+                name: 'Main Content Library',
+                source_type: 'excel',
+                image_source: 'drive',
+                drive_folder_id: cleanFolderId,
+                after_publish_action: afterPublishAction || 'move_to_posted',
+              });
+              return sendJson({ success: true, library: newLib });
+            }
+          }
+          if (!targetLibraryId) {
+            return sendJson({ error: 'libraryId or pageId is required.' }, 400);
+          }
+          const updated = await store.updateLibrary(targetLibraryId, {
             image_source: 'drive',
             drive_folder_id: cleanFolderId,
             after_publish_action: afterPublishAction || 'move_to_posted',
@@ -3410,8 +3430,18 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       req.on('end', async () => {
         try {
           const { pageId, libraryId } = JSON.parse(body || '{}');
-          if (!pageId || !libraryId) {
-            return sendJson({ error: 'pageId and libraryId required' }, 400);
+          if (!pageId) {
+            return sendJson({ error: 'pageId is required' }, 400);
+          }
+          let targetLibraryId = libraryId;
+          if (!targetLibraryId) {
+            const libs = await store.getLibraries(pageId);
+            if (libs && libs.length > 0) {
+              targetLibraryId = libs[0].id;
+            }
+          }
+          if (!targetLibraryId) {
+            return sendJson({ error: 'No active library found for this page. Please enter a Drive folder and click Save first.' }, 400);
           }
           const creds = await store.getGoogleDriveServiceAccount(true);
           if (!creds) {

@@ -483,19 +483,26 @@ export function extractAndCleanPostCaption(
 
     const isInstructionEcho =
       lower.includes("avoid sensational") ||
-      lower.includes("clickbait language") ||
-      lower.includes("verified sources and grounded facts") ||
-      lower.includes("no banned openings") ||
+      lower.includes("clickbait") ||
+      lower.includes("verified sources") ||
+      lower.includes("banned openings") ||
       lower.includes("plain text rule") ||
       lower.includes("facebook display compliance") ||
       lower.includes("required structure") ||
       lower.includes("editorial rules") ||
       lower.includes("mandatory plain text") ||
       lower.includes("strictly enforced") ||
+      lower.includes("strict output instructions") ||
+      lower.includes("format instructions") ||
+      lower.includes("output format") ||
       lower.includes("assignment block") ||
       lower.includes("assigned category:") ||
       lower.includes("hashtag composition rule") ||
-      /^image:\s*ai-generated\s*illustration\.?/i.test(line);
+      lower.includes("primary writer instructions") ||
+      lower.includes("additional style & framing") ||
+      lower.includes("banned filler phrases") ||
+      /^(?:image|illustration):\s*ai[- ]generated/i.test(line) ||
+      /ai[- ]generated\s*illustration/i.test(line);
 
     const isTopicEcho =
       !foundBodyStart &&
@@ -507,20 +514,29 @@ export function extractAndCleanPostCaption(
     const isMetaDangling =
       /^[*#_\s-]*headline[*#_\s:]*/i.test(line) ||
       /^[*#_\s-]*image_brief[*#_\s:]*/i.test(line) ||
-      /^[-*•_\s]*[*#_]*(?:subject|visual detail|visualdetail|detail|setting)[*#_]*\s*:/i.test(line);
+      /^[-*•_\s]*[*#_]*(?:subject|visual detail|visualdetail|detail|setting)[*#_]*\s*:/i.test(line) ||
+      /^[*#_\s-]*caption[*#_\s:]*$/i.test(line);
+
+    if (isInstructionEcho || isMetaDangling) {
+      continue;
+    }
 
     if (!foundBodyStart) {
-      if (isInstructionEcho || isTopicEcho || isMetaDangling || line === "" || /^[*#_\s-]{1,5}$/.test(line)) {
+      if (isTopicEcho || line === "" || /^[*#_\s-]{1,5}$/.test(line)) {
         continue;
       }
       foundBodyStart = true;
-    } else if (isInstructionEcho || isMetaDangling) {
-      continue;
     }
 
     cleanedLines.push(lines[i]);
   }
   draft = cleanedLines.join("\n").trim();
+
+  // Strip any AI illustration disclaimer line anywhere in draft
+  draft = draft
+    .replace(/(?:^|\n)\s*(?:[-*•]\s*)?Image:\s*AI[- ]generated[^\n]*(?:\n|$)/gi, "\n\n")
+    .replace(/(?:^|\n)\s*(?:[-*•]\s*)?Illustration:\s*AI[- ]generated[^\n]*(?:\n|$)/gi, "\n\n")
+    .trim();
 
   // 6. STRICT FACEBOOK PLAIN TEXT: Strip ALL markdown bold/italic asterisks from caption body
   draft = draft
@@ -1020,69 +1036,35 @@ export async function runGenerationPipeline(
     url: typeof f === "object" && f.sourceUrl ? f.sourceUrl : "https://science.nasa.gov/",
   }));
 
-  const assignmentBlock = `ASSIGNMENT BLOCK:
-ASSIGNED CATEGORY: ${topicCategory}
-TOPIC: ${topicTitle}
-${options.libraryItem?.contentIdea ? `CONTENT IDEA: ${options.libraryItem.contentIdea}\n` : ""}${options.libraryItem?.imageIdea ? `IMAGE IDEA: ${options.libraryItem.imageIdea}\n` : ""}${options.libraryItem?.hiddenClue ? `HIDDEN CLUE / TWIST: ${options.libraryItem.hiddenClue}\n` : ""}${options.libraryVisionFacts && options.libraryVisionFacts.length > 0 ? `IMAGE VISIBLE FACTS: ${options.libraryVisionFacts.join("; ")}\n` : ""}VERIFIED FACTS WITH SOURCES:
-${factItemsWithUrls.map((f) => `- ${f.text} (Source: ${f.url})`).join("\n")}
+  const assignmentBlock = `TOPIC & CONTENT DETAILS:
+Assigned Category: ${topicCategory}
+Topic: ${topicTitle}
+${options.libraryItem?.contentIdea ? `CONTENT IDEA: ${options.libraryItem.contentIdea}\n` : ""}${options.libraryItem?.imageIdea ? `IMAGE IDEA: ${options.libraryItem.imageIdea}\n` : ""}${options.libraryItem?.hiddenClue ? `HIDDEN CLUE / TWIST: ${options.libraryItem.hiddenClue}\n` : ""}${options.libraryVisionFacts && options.libraryVisionFacts.length > 0 ? `IMAGE VISIBLE FACTS: ${options.libraryVisionFacts.join("; ")}\n` : ""}Facts / Background:
+${factItemsWithUrls.map((f) => `- ${f.text}`).join("\n")}
 
-RECENT POSTS (DO NOT REPEAT SUBJECTS OR ANGLES):
-${last40Titles.length > 0 ? last40Titles.map((t, idx) => `${idx + 1}. ${t}`).join("\n") : "- None"}
-
-BANNED OPENINGS (NEVER START CAPTION WITH ANY OF THESE WORDS):
-${combinedBannedOpenings.map((b) => `"${b}"`).join(", ")}
-
-BANNED FILLER PHRASES (STRICTLY PROHIBITED ANYWHERE IN CAPTION):
-${BANNED_FILLER_PHRASES.map((b) => `"${b}"`).join(", ")}
-
-REQUIRED STRUCTURE:
-HEADLINE: <All-caps punchy 10-15 word headline stating the complete discovery with **KEY WORDS** highlighted, filling the image panel horizontally across 3-4 lines>
+OUTPUT FORMAT REQUIRED:
+HEADLINE: <Complete, meaningful 10-15 word headline in ALL CAPS with **KEY WORDS** highlighted>
 IMAGE_BRIEF:
-Subject: <Concrete physical subject, e.g. An enormous blue whale swimming in sunlit ocean>
-Visual Detail: <One true physical scientific detail, e.g. Barnacles on mottled textured grey skin>
-Setting: <Physical realistic environment, e.g. Open clear Pacific Ocean with downwelling light rays>
+Subject: <Concrete physical subject>
+Visual Detail: <Specific visual texture or detail>
+Setting: <Physical environment>
 CAPTION:
-<Paragraph 1: Compelling direct hook without clickbait, banned openings, or asterisks>
+<Post caption text here without markdown bold, followed by 3-5 relevant hashtags on the final line>
 
-<Paragraph 2: Detailed findings directly grounded in the verified facts above>
+FORMAT INSTRUCTIONS:
+- Start directly with HEADLINE:
+- Output only the requested blocks without conversational commentary, preambles, or rule restatements.
+- Plain text only for Facebook.`;
 
-<Paragraph 3: Broader implications and forward perspective>
-
-<Open-ended engaging question for readers>
-
-#broad #category #topic1 #topic2 #community
-
-MANDATORY PLAIN TEXT RULE (FACEBOOK DISPLAY COMPLIANCE):
-- NEVER use markdown bold or asterisks (NO "**" or "*") anywhere in the CAPTION. Facebook does NOT support markdown bold and displays raw "**" asterisks as ugly symbols. Write clean plain English text.
-- Do NOT output "HEADLINE:" or "IMAGE_BRIEF:" inside the CAPTION block. The CAPTION block must ONLY contain the actual post text.
-
-STRICT OUTPUT INSTRUCTIONS:
-- You must start your response IMMEDIATELY with "HEADLINE:".
-- Do NOT output any conversational preamble, intro text, summary, or restatement of rules.
-- Do NOT write "**Caption**" or duplicate the topic title before the caption.
-- Do NOT add "Image: AI-generated illustration." to the caption.
-
-HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad niche, 1 category, 2 topic-specific, 1 community.`;
-
-  const structureRulesPrompt = `MANDATORY EDITORIAL & STRUCTURE RULES (STRICT COMPLIANCE REQUIRED):
-- Total Word Count: MUST BE strictly between ${minWords} and ${maxWords} words (Target: ${targetWords} words).
-- Paragraph Structure: Maximum of ${maxSentencesPerParagraph} sentences per paragraph. NEVER write wall-of-text paragraphs. Always separate each paragraph with a blank line (double newline).
-- Hook: Begin with an attention-grabbing first sentence.
-- Conclusion: Conclude with an open-ended engagement question asking readers for their thoughts.
-- Hashtags: End with 3 to 5 relevant hashtags on their own final line.
-- Policies: Zero links or URLs. Minimal emojis (1-2 maximum).`;
-
-  const rawEffectivePrompt = (page.custom_caption_prompt && page.custom_caption_prompt_mode === "replace")
+  const rawEffectivePrompt = page.custom_caption_prompt && page.custom_caption_prompt.trim()
     ? [
-        customPromptSection,
+        page.custom_caption_prompt.trim(),
         assignmentBlock,
-      ].filter(Boolean).join("\n\n")
+      ].join("\n\n")
     : [
         basePrompt,
-        customPromptSection,
         assignmentBlock,
-        structureRulesPrompt,
-      ].filter(Boolean).join("\n\n");
+      ].join("\n\n");
   const effectivePrompt = maskSecretsInPrompt(rawEffectivePrompt);
 
   // Active text providers failover selection sorted by priority ascending (1 = Primary, 2 = Secondary...)
@@ -1297,7 +1279,8 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad niche, 1
 
     // Strip any unwanted illustration disclaimer line from the caption
     draft = draft
-      .replace(/(?:^|\n)\s*(?:[-*•]\s*)?Image:\s*AI-generated\s*illustration\.?\s*(?:\n|$)/gi, "\n\n")
+      .replace(/(?:^|\n)\s*(?:[-*•]\s*)?Image:\s*AI[- ]generated[^\n]*(?:\n|$)/gi, "\n\n")
+      .replace(/(?:^|\n)\s*(?:[-*•]\s*)?Illustration:\s*AI[- ]generated[^\n]*(?:\n|$)/gi, "\n\n")
       .trim();
 
     // Ensure exactly 5 valid hashtags conforming to composition rule (1 broad, 1 category, 2 topic, 1 community)
@@ -1328,8 +1311,8 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad niche, 1
 
     const hlValidation = validateHeadline(headline, {
       minWords: 8,
-      maxWords: 15,
-      hardMaxWords: 18,
+      maxWords: 16,
+      hardMaxWords: 20,
       verifiedFacts: verifiedFactStrings,
     });
     if (!hlValidation.valid && hlValidation.suggestedShortenedHeadline) {
@@ -2019,9 +2002,9 @@ HASHTAG COMPOSITION RULE: Exactly 5 hashtags on the final line: 1 broad niche, 1
     panelHeightMode:
       (page.overrides?.["image.panelHeightMode"] as any) || "auto",
     sidePaddingRatio:
-      (page.overrides?.["image.headlinePanel.sidePaddingRatio"] as number) ?? 0.025,
+      (page.overrides?.["image.headlinePanel.sidePaddingRatio"] as number) ?? 0.018,
     topBottomPaddingRatio:
-      (page.overrides?.["image.headlinePanel.topBottomPaddingRatio"] as number) ?? 0.03,
+      (page.overrides?.["image.headlinePanel.topBottomPaddingRatio"] as number) ?? 0.02,
     minFontSize:
       (page.overrides?.["image.headlinePanel.minFontSize"] as number) || 48,
     maxFontSize:

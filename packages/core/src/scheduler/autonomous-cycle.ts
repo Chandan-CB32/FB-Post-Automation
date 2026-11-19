@@ -460,8 +460,11 @@ export async function runAutonomousCycle(
           const pageWithOverrides = {
             ...page,
             ...(page.overrides || {}),
-            custom_niche: page.overrides?.custom_niche || null,
-            custom_caption_prompt: page.overrides?.custom_caption_prompt || null,
+            custom_niche: page.custom_niche || page.overrides?.custom_niche || null,
+            custom_caption_prompt: page.custom_caption_prompt || page.overrides?.custom_caption_prompt || null,
+            custom_caption_prompt_mode: page.custom_caption_prompt_mode || page.overrides?.custom_caption_prompt_mode || 'replace',
+            custom_image_prompt: page.custom_image_prompt || page.overrides?.custom_image_prompt || null,
+            custom_image_prompt_mode: page.custom_image_prompt_mode || page.overrides?.custom_image_prompt_mode || 'replace',
             publishing_mode: page.publishing_mode || 'auto',
             content_source_mode: contentSourceMode,
           };

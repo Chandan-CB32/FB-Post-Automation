@@ -16,14 +16,14 @@ export interface FormattedLine {
 export interface HeadlineLayoutOptions {
   canvasWidth?: number;
   canvasHeight?: number;
-  sidePaddingRatio?: number; // default 0.07 (7%)
-  topBottomPaddingRatio?: number; // default 0.06 (6%)
+  sidePaddingRatio?: number; // default 0.02 (2% tight border ~21px)
+  topBottomPaddingRatio?: number; // default 0.025 (2.5%)
   panelHeightMode?: 'auto' | 'fixed_30' | 'fixed_36' | 'fixed_42';
   fixedPanelRatio?: number;
   fontFamily?: SupportedFontFamily;
   minFontSize?: number; // default 76
   maxFontSize?: number; // default 124
-  targetFillRatio?: number; // default 0.78 (78% of available width)
+  targetFillRatio?: number; // default 0.85 (85% of available width)
   lineHeightRatio?: number; // default 1.10
 }
 
@@ -222,14 +222,14 @@ export function layoutHeadline(
 ): HeadlineLayoutResult {
   const canvasWidth = options.canvasWidth ?? 1080;
   const canvasHeight = options.canvasHeight ?? 1350;
-  const sideMarginRatio = options.sidePaddingRatio ?? 0.07; // 7%
-  const topBottomPaddingRatio = options.topBottomPaddingRatio ?? 0.06; // 6%
-  const availableWidth = canvasWidth * (1 - sideMarginRatio * 2); // ~928.8px
+  const sideMarginRatio = options.sidePaddingRatio ?? 0.02; // 2% (~21px tight border)
+  const topBottomPaddingRatio = options.topBottomPaddingRatio ?? 0.025; // 2.5%
+  const availableWidth = canvasWidth * (1 - sideMarginRatio * 2); // ~1036.8px available
   const fontFamily = options.fontFamily ?? 'Roboto';
   const minFontSize = options.minFontSize ?? 72;
   const maxFontSize = options.maxFontSize ?? 124;
   const lineHeightRatio = options.lineHeightRatio ?? 1.10;
-  const targetFillRatio = options.targetFillRatio ?? 0.78; // 78% of available width
+  const targetFillRatio = options.targetFillRatio ?? 0.85; // 85% of available width
 
   const tokens = tokenizeSegments(segments);
 

@@ -168,7 +168,8 @@ export function checkContentConsistency(
  */
 export function checkFactGrounding(
   caption: string,
-  facts: Array<{ text: string; sourceUrl?: string } | string>
+  facts: Array<{ text: string; sourceUrl?: string } | string>,
+  niche?: string
 ): IntegrityViolation[] {
   const violations: IntegrityViolation[] = [];
   const capLower = (caption || '').toLowerCase();
@@ -177,7 +178,14 @@ export function checkFactGrounding(
   const factItems = (facts || []).map((f) => (typeof f === 'string' ? { text: f, sourceUrl: '' } : f));
   const hasValidSourceUrls = factItems.some((f) => f.sourceUrl && f.sourceUrl.startsWith('http'));
 
-  if (!hasValidSourceUrls && factItems.length === 0) {
+  const isStrictScientificNiche = Boolean(
+    niche &&
+    (niche.toLowerCase().includes('science_space') ||
+      niche.toLowerCase().includes('scientific_paper') ||
+      niche.toLowerCase().includes('peer_reviewed'))
+  );
+
+  if (isStrictScientificNiche && !hasValidSourceUrls && factItems.length === 0) {
     violations.push({
       code: 'UNGROUNDED_CLAIM',
       message: 'Fact-grounding failure: No verified scientific source URLs found for this topic. System must skip topic instead of writing from ungrounded memory.',
@@ -337,7 +345,7 @@ export function runContentIntegrityCheck(input: IntegrityCheckInput): IntegrityC
   // Run all checkers
   violations.push(...checkScientificSpelling(headline, caption));
   violations.push(...checkContentConsistency(headline, caption, facts));
-  violations.push(...checkFactGrounding(caption, facts));
+  violations.push(...checkFactGrounding(caption, facts, input.niche));
   violations.push(...checkHashtags(caption, configuredHashtagsCount));
   violations.push(...checkFluffAndOverstatement(headline, caption));
 

@@ -558,8 +558,8 @@ export function validateHeadline(
   } = {}
 ): HeadlineValidationResult {
   const minWords = options.minWords ?? 8;
-  const maxWords = options.maxWords ?? 15;
-  const hardMaxWords = options.hardMaxWords ?? 17;
+  const maxWords = options.maxWords ?? 14;
+  const hardMaxWords = options.hardMaxWords ?? 16;
 
   const plain = (rawHeadline || '').replace(/\*\*/g, '').trim();
   const words = plain.split(/\s+/).filter(Boolean);

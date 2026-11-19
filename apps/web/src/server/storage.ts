@@ -1556,6 +1556,10 @@ export class SystemStore {
       }
       delete safeTestRunReport.rawImageBuffer;
       delete safeTestRunReport.compositeJpegBuffer;
+      delete (safeTestRunReport as any).libraryImageBuffer;
+      delete (safeTestRunReport as any).renderedCard;
+      delete (safeTestRunReport as any).svg;
+      delete (safeTestRunReport as any).svgXml;
     }
 
     if (updates.checklist_status !== undefined) updatePayload.checklist_status = updates.checklist_status;
