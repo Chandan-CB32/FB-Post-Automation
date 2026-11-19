@@ -1273,18 +1273,48 @@ export class SystemStore {
                 updates.profile_id = pRowByName.id;
                 profileExists = true;
               } else {
-                profileExists = true;
+                try {
+                  const dbPayload: Record<string, any> = {
+                    id: seed.id,
+                    name: seed.name,
+                    description: seed.description || '',
+                    type: seed.type || 'factual',
+                    language: seed.language || 'en',
+                    audience: seed.audience || 'General audience',
+                    master_prompt: seed.masterPrompt || '',
+                    templates: seed.templates || {},
+                    caption_settings: seed.captionSettings || {},
+                    hashtag_settings: seed.hashtagSettings || {},
+                    disclosure_settings: (seed as any).disclosureSettings || {},
+                    image_settings: seed.imageSettings || {},
+                    topic_settings: seed.topicSettings || {},
+                    research_source_ids: (seed as any).researchSourceIds || [],
+                    custom_variables: seed.customVariables || {},
+                    version: 1,
+                  };
+                  await this.getClient().from('content_profiles').insert(dbPayload);
+                  updates.profile_id = seed.id;
+                  profileExists = true;
+                } catch {
+                  updates.profile_id = seed.id;
+                  profileExists = true;
+                }
               }
             }
           }
         }
         if (!profileExists) {
-          const err = new Error('Selected profile no longer exists. Please choose a valid profile or switch to Custom niche.');
-          (err as any).field = 'profile_id';
-          (err as any).statusCode = 400;
-          (err as any).missingId = updates.profile_id;
-          (err as any).table = 'content_profiles';
-          throw err;
+          if (options?.force || updates.custom_niche || updates.custom_niche_text) {
+            console.warn(`[SystemStore] Profile ${updates.profile_id} not found. Gracefully resetting profile_id to null.`);
+            updates.profile_id = null;
+          } else {
+            const err = new Error('Selected profile no longer exists. Please choose a valid profile or switch to Custom niche.');
+            (err as any).field = 'profile_id';
+            (err as any).statusCode = 400;
+            (err as any).missingId = updates.profile_id;
+            (err as any).table = 'content_profiles';
+            throw err;
+          }
         }
       }
     }
@@ -1718,6 +1748,7 @@ export class SystemStore {
 
     const { data, error } = await this.getClient().from('content_profiles').select('*').order('created_at', { ascending: false });
     if (error || !data || data.length === 0) {
+      this.importStarterProfiles().catch((err) => console.warn('[SystemStore] Auto-seeding profiles in background:', err.message));
       const starters = getAllNicheProfiles();
       const list = starters.map((p) => ({
         id: p.id,

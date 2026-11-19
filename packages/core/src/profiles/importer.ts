@@ -11,6 +11,7 @@ import { ContentProfile } from '../validation/schemas.js';
 import { GLOBAL_DEFAULTS } from '../settings-resolver/resolver.js';
 
 export interface ImportOptions {
+  id?: string;
   name: string;
   niche: string;
   type?: ContentProfileType;
@@ -171,7 +172,7 @@ export function importMasterPrompt(
   };
 
   return {
-    id: crypto.randomUUID(),
+    id: options.id || crypto.randomUUID(),
     name: options.name,
     description: `Master prompt profile for ${options.name} (${options.niche})`,
     type: options.type || 'factual',

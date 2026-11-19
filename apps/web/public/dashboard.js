@@ -4007,6 +4007,7 @@
           if (confirmed === 'I UNDERSTAND THE RISKS') {
             payload.safety_override = 'I UNDERSTAND THE RISKS';
             payload.override_confirmation = 'I UNDERSTAND THE RISKS';
+            payload.force = true;
             var retryRes = await fetch('/api/pages/update-settings', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

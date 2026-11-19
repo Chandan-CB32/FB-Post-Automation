@@ -271,6 +271,7 @@ export function getSeedProfiles(promptsDir?: string): ContentProfile[] {
 
   const promptFiles = [
     {
+      id: '2f272f3f-d554-49f6-b66c-31b8d821d0e5',
       file: 'historical_photos_master_prompt.md',
       name: 'Historical Photos',
       niche: 'historical_photos',
@@ -278,6 +279,7 @@ export function getSeedProfiles(promptsDir?: string): ContentProfile[] {
       fallback: HISTORICAL_PHOTOS_MASTER_PROMPT_PROMPT,
     },
     {
+      id: '29b3dea6-e0b8-4113-bb91-ed8c0bef5d18',
       file: 'real_life_photography_master_prompt.md',
       name: 'Real-Life Photography',
       niche: 'real_life_photography',
@@ -285,6 +287,7 @@ export function getSeedProfiles(promptsDir?: string): ContentProfile[] {
       fallback: REAL_LIFE_PHOTOGRAPHY_MASTER_PROMPT_PROMPT,
     },
     {
+      id: '8b9fd8ac-3d24-4df3-8793-a523f0c1512d',
       file: 'science_space_master_prompt.md',
       name: 'Science & Space',
       niche: 'science_space',
@@ -292,6 +295,7 @@ export function getSeedProfiles(promptsDir?: string): ContentProfile[] {
       fallback: SCIENCE_SPACE_MASTER_PROMPT_PROMPT,
     },
     {
+      id: '3d4f4756-6050-4f64-954c-7d5725b360ec',
       file: 'vintage_cars_master_prompt.md',
       name: 'Vintage Cars',
       niche: 'vintage_cars',
@@ -315,6 +319,7 @@ export function getSeedProfiles(promptsDir?: string): ContentProfile[] {
     }
     if (content) {
       const profile = importMasterPrompt(content, {
+        id: item.id,
         name: item.name,
         niche: item.niche,
         headlinePanel: item.headlinePanel,
