@@ -539,6 +539,29 @@ export function extractAndCleanPostCaption(
       lower.includes("primary writer instructions") ||
       lower.includes("additional style & framing") ||
       lower.includes("banned filler phrases") ||
+      lower.includes("system prompt") ||
+      lower.includes("system instruction") ||
+      lower.includes("prompt instructions") ||
+      lower.includes("target word count") ||
+      lower.startsWith("prompt:") ||
+      lower.startsWith("system:") ||
+      lower.startsWith("note:") ||
+      lower.startsWith("instructions:") ||
+      lower.startsWith("guidelines:") ||
+      lower.startsWith("rules:") ||
+      lower.startsWith("hook:") ||
+      lower.startsWith("body:") ||
+      lower.startsWith("ending:") ||
+      lower.startsWith("question:") ||
+      lower.startsWith("cta:") ||
+      lower.startsWith("call to action:") ||
+      lower.startsWith("hashtags:") ||
+      lower.startsWith("tags:") ||
+      lower.startsWith("content idea:") ||
+      lower.startsWith("image idea:") ||
+      lower.startsWith("hidden clue") ||
+      lower.startsWith("facts / background:") ||
+      lower.startsWith("topic & content details:") ||
       /^(?:image|illustration):\s*ai[- ]generated/i.test(line) ||
       /ai[- ]generated\s*illustration/i.test(line);
 

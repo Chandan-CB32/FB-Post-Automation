@@ -2215,7 +2215,27 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         const allPosts = await store.getPosts();
         const pagePosts = allPosts.filter((p: any) => p.page_id === pageId);
 
-        const pageNiche = (page as any).niche || page.overrides?.niche || (page as any).content_profile?.niche || 'science';
+        let pageNiche = (page as any).niche || page.overrides?.niche;
+        if (!pageNiche && page.profile_id) {
+          const profiles = await store.getContentProfiles();
+          const prof = profiles.find((pr: any) => pr.id === page.profile_id);
+          if (prof) {
+            const nameLower = (prof.name || '').toLowerCase();
+            if (nameLower.includes('horror')) pageNiche = 'horror_story';
+            else if (nameLower.includes('crime')) pageNiche = 'crime_story';
+            else if (nameLower.includes('car')) pageNiche = 'vintage_cars';
+            else if (nameLower.includes('photo')) pageNiche = 'photography';
+            else if (nameLower.includes('space') || nameLower.includes('science')) pageNiche = 'science';
+            else if (nameLower.includes('history')) pageNiche = 'history';
+            else if (nameLower.includes('tech') || nameLower.includes('ai')) pageNiche = 'technology';
+            else if (nameLower.includes('mind') || nameLower.includes('stoic')) pageNiche = 'motivation_mindset';
+            else if (nameLower.includes('finance') || nameLower.includes('money')) pageNiche = 'finance_crypto';
+            else if (nameLower.includes('wild') || nameLower.includes('nature')) pageNiche = 'nature_wildlife';
+            else pageNiche = (prof as any).customVariables?.niche || (prof as any).niche || nameLower.replace(/[^a-z0-9]+/g, '_');
+          }
+        }
+        if (!pageNiche) pageNiche = (page as any).content_profile?.niche || 'science';
+
         const config = {
           niche: pageNiche,
           categories: (page as any).categories || page.overrides?.categories,
@@ -3040,6 +3060,10 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               total_rows: parseResult.validRows.length,
               imported_rows: parseResult.validRows.length,
             });
+            // Clean up any lingering duplicate libraries for this page
+            for (let i = 1; i < existingLibs.length; i++) {
+              await store.deleteLibrary(existingLibs[i].id, pageId);
+            }
           } else {
             libRecord = await store.createLibrary({
               page_id: pageId,
@@ -3050,6 +3074,9 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               imported_rows: parseResult.validRows.length,
             });
           }
+
+          // Clean overwrite: delete previous library items for this page so only current sheet is preserved
+          await store.deleteLibraryItems(libRecord.id, pageId);
 
           const itemsToSave = parseResult.validRows.map((r) => ({
             library_id: libRecord.id,
@@ -3092,6 +3119,32 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           });
         } catch (err: any) {
           return sendJson({ error: err?.message || 'Error processing sheet' }, 500);
+        }
+      });
+      return;
+    }
+
+    // 6.8b API: Clear / Delete Spreadsheet from Content Library
+    if (url.pathname === '/api/library/clear-sheet' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const { pageId, libraryId } = JSON.parse(body || '{}');
+          if (!pageId) return sendJson({ error: 'pageId is required' }, 400);
+
+          await store.deleteLibraryItems(libraryId, pageId);
+          if (libraryId) {
+            await store.updateLibrary(libraryId, {
+              original_filename: null,
+              total_rows: 0,
+              imported_rows: 0,
+              matched_rows: 0,
+            });
+          }
+          return sendJson({ success: true, message: 'Spreadsheet items deleted successfully from Supabase.' });
+        } catch (err: any) {
+          return sendJson({ error: err?.message || 'Failed to clear sheet' }, 500);
         }
       });
       return;
@@ -6442,7 +6495,10 @@ async function generateDashboardHtml(
 
           <!-- Right Column: Image Prompts & Headline Panel -->
           <div>
-            <div class="form-group">
+            <!-- Mode-aware banner for Excel Library Mode -->
+            <div id="studioImagePromptNotice" style="display: none; margin-bottom: 14px;"></div>
+
+            <div id="studioImagePromptGroup" class="form-group">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                 <label style="margin: 0;">Page Custom Image Prompt & Visual Bible</label>
                 <select id="editImageMode" style="background: #1f2937; color: white; border: 1px solid #374151; padding: 2px 8px; border-radius: 4px; font-size: 12px;">
@@ -7041,9 +7097,14 @@ async function generateDashboardHtml(
             <h4 style="font-size: 14px; margin: 0 0 8px 0; color: #93c5fd;">📄 Import Spreadsheet (.xlsx / .csv)</h4>
             <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Upload schedule with topics, facts, and image filenames.</p>
             <input type="file" id="libSheetFileInput" accept=".xlsx,.csv" style="display: none;" onchange="handleSheetFileSelected(this.files)">
-            <button type="button" class="btn btn-secondary" style="width: 100%; padding: 8px; font-weight: 600; font-size: 12px;" onclick="document.getElementById('libSheetFileInput').click()">
-              📂 Choose Spreadsheet File
-            </button>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="btn btn-secondary" style="flex: 1; padding: 8px; font-weight: 600; font-size: 12px;" onclick="document.getElementById('libSheetFileInput').click()">
+                📂 Choose Spreadsheet File
+              </button>
+              <button type="button" class="btn btn-danger" id="libClearSheetBtn" style="padding: 8px 12px; font-weight: 600; font-size: 12px;" onclick="clearCurrentSheetAction()" title="Delete current spreadsheet items from Supabase">
+                🗑️ Clear
+              </button>
+            </div>
             <div id="libSheetUploadStatus" style="font-size: 11px; margin-top: 8px; color: var(--text-muted);"></div>
           </div>
 

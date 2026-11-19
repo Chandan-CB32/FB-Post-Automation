@@ -1309,6 +1309,29 @@
 
     validateStudioWordLimits();
     validateStudioFirstComment();
+
+    // Mode-Aware Studio Display: For excel_library mode, hide AI Image Prompt & Visual Bible
+    const contentSourceMode = page.content_source_mode || (page.overrides && page.overrides.content_source_mode) || 'full_ai';
+    const imgPromptGroup = document.getElementById('studioImagePromptGroup');
+    const imgPromptNotice = document.getElementById('studioImagePromptNotice');
+    if (contentSourceMode === 'excel_library') {
+      if (imgPromptGroup) imgPromptGroup.style.display = 'none';
+      if (imgPromptNotice) {
+        imgPromptNotice.style.display = 'block';
+        imgPromptNotice.innerHTML = '<div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px;">' +
+          '<div style="display: flex; align-items: center; gap: 8px; font-weight: 600; color: #38bdf8; font-size: 13px;">' +
+            '<span>📁</span> Excel + Google Drive Image Mode Active' +
+          '</div>' +
+          '<p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8; line-height: 1.5;">' +
+            'Images for <strong>' + escapeHtml(page.name) + '</strong> are retrieved directly from your matched Google Drive folder or uploaded photos in Content Library. AI image prompt generation and visual styling are disabled for this page.' +
+          '</p>' +
+        '</div>';
+      }
+    } else {
+      if (imgPromptGroup) imgPromptGroup.style.display = 'block';
+      if (imgPromptNotice) imgPromptNotice.style.display = 'none';
+    }
+
     if (typeof updateStudioCategoryPills === 'function') {
       updateStudioCategoryPills(page);
     }
@@ -3033,6 +3056,58 @@
         { id: 'wild_conservation', name: 'Extinction Rescues & Rewilding', defaultWeight: 4, maxPerDay: 2, description: 'Apex predator reintroduction, captive breeding rescues, and ecosystem restoration.' },
       ],
     },
+    horror_story: {
+      name: 'Horror Story & Dark Folklore',
+      description: 'Original suspenseful horror stories, paranormal encounters, urban legends, haunted locations, and psychological dread.',
+      dominantCategory: 'Paranormal Encounters',
+      categories: [
+        { id: 'paranormal_encounters', name: 'Paranormal Encounters', defaultWeight: 22, maxPerDay: 2, description: 'Unexplained entities, supernatural occurrences, and eerie personal accounts.' },
+        { id: 'haunted_locations', name: 'Haunted Locations & Abandoned Places', defaultWeight: 20, maxPerDay: 2, description: 'Cursed structures, asylum ruins, deep woods mysteries, and eerie geography.' },
+        { id: 'urban_legends', name: 'Urban Legends & Cryptids', defaultWeight: 18, maxPerDay: 2, description: 'Modern mythologies, night-shift folklore, vanishing towns, and shadowy creatures.' },
+        { id: 'psychological_dread', name: 'Psychological Dread & Isolation', defaultWeight: 16, maxPerDay: 2, description: 'Slow-burn paranoia, lost in wilderness, cabin fever, and claustrophobic nightmares.' },
+        { id: 'dark_folklore', name: 'Dark Folklore & Ancient Curses', defaultWeight: 14, maxPerDay: 2, description: 'Archaic rituals, forest spirits, cursed heirlooms, and ancestral taboos.' },
+        { id: 'unsettling_twists', name: 'Unsettling Mysteries & Twists', defaultWeight: 10, maxPerDay: 2, description: 'Disturbing unanswered questions, glitch in reality, and sudden shocking reveals.' },
+      ],
+    },
+    crime_story: {
+      name: 'True Crime & Detective Mysteries',
+      description: 'Cold cases, forensic breakthroughs, heist strategies, psychological profiling, and courtroom drama.',
+      dominantCategory: 'Unsolved Cold Cases',
+      categories: [
+        { id: 'cold_cases', name: 'Unsolved Cold Cases', defaultWeight: 24, maxPerDay: 2, description: 'Mysterious disappearances, decades-old puzzles, and enigmatic clues.' },
+        { id: 'forensic_breakthroughs', name: 'Forensic Breakthroughs & DNA', defaultWeight: 20, maxPerDay: 2, description: 'Genetic genealogy, ballistics, trace evidence, and scientific breakthroughs.' },
+        { id: 'master_heists', name: 'Master Heists & Escapes', defaultWeight: 18, maxPerDay: 2, description: 'Diamond vaults, museum thefts, prison breaks, and elaborate deceits.' },
+        { id: 'criminal_psychology', name: 'Criminal Profiling & Psychology', defaultWeight: 16, maxPerDay: 2, description: 'Behavioral analysis units, motives, psychological signatures, and interrogation tactics.' },
+        { id: 'undercover_operations', name: 'Undercover Operations & Stings', defaultWeight: 12, maxPerDay: 2, description: 'Infiltration missions, sting operations, espionage, and organized syndicates.' },
+        { id: 'courtroom_dramas', name: 'Historic Trials & Verdicts', defaultWeight: 10, maxPerDay: 2, description: 'Pivotal testimonies, legal strategies, exonerations, and historic verdicts.' },
+      ],
+    },
+    vintage_cars: {
+      name: 'Vintage Cars & Automotive Engineering',
+      description: 'Classic automotive history, iconic muscle cars, legendary racing eras, and engineering marvels.',
+      dominantCategory: 'Iconic Classic Cars & Supercars',
+      categories: [
+        { id: 'classic_supercars', name: 'Iconic Classic Cars & Supercars', defaultWeight: 22, maxPerDay: 2, description: 'Ferrari 250 GTO, Jaguar E-Type, Aston Martin DB5, and timeless designs.' },
+        { id: 'muscle_car_era', name: 'Golden Era Muscle Cars', defaultWeight: 20, maxPerDay: 2, description: 'Charger 426 Hemi, Mustang Boss 429, Chevelle SS, and Detroit horsepower wars.' },
+        { id: 'historic_motorsport', name: 'Historic Motorsport & Le Mans', defaultWeight: 18, maxPerDay: 2, description: 'Ford vs Ferrari 1966, Group B rallying, Monaco GP classics, and endurance legends.' },
+        { id: 'engine_architecture', name: 'Engine Architecture & Innovation', defaultWeight: 16, maxPerDay: 2, description: 'Naturally aspirated V12s, rotary engines, twin-turbo pioneers, and manual transmissions.' },
+        { id: 'barn_finds_restoration', name: 'Barn Finds & Master Restorations', defaultWeight: 14, maxPerDay: 2, description: 'Unearthed garage legends, coachbuilding craft, and meticulous frame-off restorations.' },
+        { id: 'automotive_designers', name: 'Visionary Automotive Designers', defaultWeight: 10, maxPerDay: 2, description: 'Pininfarina, Giorgetto Giugiaro, Carroll Shelby, and aerodynamic breakthroughs.' },
+      ],
+    },
+    photography: {
+      name: 'Real-Life Photography & Visual Arts',
+      description: 'Street photography, National Geographic expedition visuals, macro nature, and architectural light.',
+      dominantCategory: 'Street & Human Candid Photography',
+      categories: [
+        { id: 'street_candid', name: 'Street & Human Candid Photography', defaultWeight: 24, maxPerDay: 2, description: 'Decisive moments, urban geometry, facial expressions, and candid slice-of-life.' },
+        { id: 'landscape_wilderness', name: 'Landscape & Wilderness Horizons', defaultWeight: 20, maxPerDay: 2, description: 'Golden hour vistas, glacial reflections, mountain drama, and dramatic weather skies.' },
+        { id: 'macro_nature_optics', name: 'Macro World & Optical Details', defaultWeight: 18, maxPerDay: 2, description: 'Insect eyes, water drop refraction, crystalline structures, and intricate textures.' },
+        { id: 'monochrome_contrast', name: 'Monochrome & Chiaroscuro Contrast', defaultWeight: 16, maxPerDay: 2, description: 'High contrast black and white, deep shadows, silhouetted forms, and film grain.' },
+        { id: 'architectural_geometry', name: 'Architectural Geometry & Light', defaultWeight: 12, maxPerDay: 2, description: 'Leading lines, brutalist angles, glass reflections, and vanishing perspective.' },
+        { id: 'night_astrophotography', name: 'Night Skies & Long Exposure', defaultWeight: 10, maxPerDay: 2, description: 'Milky Way cores, light trails, aurora borealis, and deep twilight long exposures.' },
+      ],
+    },
     custom: {
       name: 'Custom Defined Niche',
       description: 'Fully custom niche and category definitions tailored to your unique audience.',
@@ -3054,7 +3129,25 @@
     var pillsContainer = document.getElementById('studioCategoryPills');
     if (!pillsContainer) return;
 
-    var nicheKey = (page && (page.niche || (page.content_profile && page.content_profile.niche))) || 'science';
+    var nicheKey = (page && (page.niche || (page.content_profile && page.content_profile.niche))) || '';
+    if (!nicheKey && page && page.profile_id) {
+      var prof = (typeof profilesData !== 'undefined' && Array.isArray(profilesData) ? profilesData : []).find(function(p) { return p.id === page.profile_id; });
+      if (prof) {
+        var pName = (prof.name || '').toLowerCase();
+        if (pName.includes('horror')) nicheKey = 'horror_story';
+        else if (pName.includes('crime')) nicheKey = 'crime_story';
+        else if (pName.includes('car')) nicheKey = 'vintage_cars';
+        else if (pName.includes('photo')) nicheKey = 'photography';
+        else if (pName.includes('space') || pName.includes('science')) nicheKey = 'science';
+        else if (pName.includes('history')) nicheKey = 'history';
+        else if (pName.includes('tech') || pName.includes('ai')) nicheKey = 'technology';
+        else if (pName.includes('mind') || pName.includes('stoic')) nicheKey = 'motivation_mindset';
+        else if (pName.includes('finance') || pName.includes('wealth')) nicheKey = 'finance_crypto';
+        else if (pName.includes('wild') || pName.includes('nature')) nicheKey = 'nature_wildlife';
+        else nicheKey = prof.niche || pName.replace(/[^a-z0-9]+/g, '_');
+      }
+    }
+    if (!nicheKey) nicheKey = 'science';
     var preset = NICHE_PRESETS_CLIENT[nicheKey] || NICHE_PRESETS_CLIENT.science;
     if (nicheBadge) {
       nicheBadge.textContent = preset ? preset.name : (page && page.name ? page.name : 'Niche');
@@ -3208,9 +3301,35 @@
     var badge = document.getElementById('cwmPageBadge');
     if (badge) badge.textContent = page.name;
 
-    var nicheKey = (page.niche || (page.content_profile && page.content_profile.niche)) || 'science';
+    var nicheKey = (page.niche || (page.content_profile && page.content_profile.niche)) || '';
+    if (!nicheKey && page.profile_id) {
+      var prof = (typeof profilesData !== 'undefined' && Array.isArray(profilesData) ? profilesData : []).find(function(p) { return p.id === page.profile_id; });
+      if (prof) {
+        var pName = (prof.name || '').toLowerCase();
+        if (pName.includes('horror')) nicheKey = 'horror_story';
+        else if (pName.includes('crime')) nicheKey = 'crime_story';
+        else if (pName.includes('car')) nicheKey = 'vintage_cars';
+        else if (pName.includes('photo')) nicheKey = 'photography';
+        else if (pName.includes('space') || pName.includes('science')) nicheKey = 'science';
+        else if (pName.includes('history')) nicheKey = 'history';
+        else if (pName.includes('tech') || pName.includes('ai')) nicheKey = 'technology';
+        else if (pName.includes('mind') || pName.includes('stoic')) nicheKey = 'motivation_mindset';
+        else if (pName.includes('finance') || pName.includes('wealth')) nicheKey = 'finance_crypto';
+        else if (pName.includes('wild') || pName.includes('nature')) nicheKey = 'nature_wildlife';
+        else nicheKey = prof.niche || pName.replace(/[^a-z0-9]+/g, '_');
+      }
+    }
+    if (!nicheKey) nicheKey = 'science';
     var selectElem = document.getElementById('cwmNicheSelect');
-    if (selectElem) selectElem.value = NICHE_PRESETS_CLIENT[nicheKey] ? nicheKey : 'science';
+    if (selectElem) {
+      if (!selectElem.querySelector('option[value="' + nicheKey + '"]') && NICHE_PRESETS_CLIENT[nicheKey]) {
+        var opt = document.createElement('option');
+        opt.value = nicheKey;
+        opt.textContent = NICHE_PRESETS_CLIENT[nicheKey].name;
+        selectElem.appendChild(opt);
+      }
+      selectElem.value = NICHE_PRESETS_CLIENT[nicheKey] ? nicheKey : 'science';
+    }
 
     var dominantCapInput = document.getElementById('cwmMaxDailyDominant');
     if (dominantCapInput) {
@@ -6579,6 +6698,35 @@
     }
   }
   window.saveDriveFolderConfigAction = saveDriveFolderConfigAction;
+
+  async function clearCurrentSheetAction() {
+    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+    const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
+    if (!pageId) {
+      alert('Please select a Facebook page first.');
+      return;
+    }
+    if (!confirm('Are you sure you want to completely delete all spreadsheet rows from Supabase for this page? This cannot be undone.')) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/library/clear-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: pageId, libraryId: libraryId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('Spreadsheet rows deleted successfully from Supabase.', 'success');
+        await loadContentLibraryForPage(pageId);
+      } else {
+        alert('Failed to delete sheet: ' + (data.error || 'Server error'));
+      }
+    } catch (err) {
+      alert('Error deleting sheet: ' + err.message);
+    }
+  }
+  window.clearCurrentSheetAction = clearCurrentSheetAction;
 
   async function syncDriveImagesAction() {
     const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);

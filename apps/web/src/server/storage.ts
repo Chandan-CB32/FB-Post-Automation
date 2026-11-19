@@ -3901,23 +3901,78 @@ export class SystemStore {
 
     let query: any = this.getClient()
       .from('library_items')
-      .select('*, library_assets(*)')
+      .select('*, matched_asset:library_assets!library_items_matched_asset_id_fkey(*)')
       .eq('page_id', pageId);
 
     if (options.libraryId) query = query.eq('library_id', options.libraryId);
     if (options.status) query = query.eq('status', options.status);
     query = query.order('row_index', { ascending: true });
 
-    const { data, error } = await query;
+    let { data, error } = await query;
     if (error) {
-      console.warn('[SystemStore] getLibraryItems error:', error.message);
+      console.warn('[SystemStore] getLibraryItems disambiguated query error, trying plain select:', error.message);
+      let plainQuery = this.getClient()
+        .from('library_items')
+        .select('*')
+        .eq('page_id', pageId);
+      if (options.libraryId) plainQuery = plainQuery.eq('library_id', options.libraryId);
+      if (options.status) plainQuery = plainQuery.eq('status', options.status);
+      plainQuery = plainQuery.order('row_index', { ascending: true });
+      const plainRes = await plainQuery;
+      data = plainRes.data;
+      error = plainRes.error;
+    }
+
+    if (error) {
+      console.warn('[SystemStore] getLibraryItems fallback to memory:', error.message);
       return Array.from(this.memoryLibraryItems.values()).filter((item) => {
         if (item.page_id !== pageId) return false;
         if (options.libraryId && item.library_id !== options.libraryId) return false;
         return true;
       });
     }
-    return data || [];
+
+    return (data || []).map((row: any) => ({
+      ...row,
+      library_assets: row.matched_asset ? [row.matched_asset] : (row.library_assets || []),
+    }));
+  }
+
+  public async deleteLibraryItems(libraryId?: string, pageId?: string): Promise<boolean> {
+    for (const [id, item] of this.memoryLibraryItems.entries()) {
+      if ((libraryId && item.library_id === libraryId) || (pageId && item.page_id === pageId)) {
+        this.memoryLibraryItems.delete(id);
+      }
+    }
+    if (!isTestEnv() || this.client) {
+      try {
+        let q = this.getClient().from('library_items').delete();
+        if (libraryId) q = q.eq('library_id', libraryId);
+        if (pageId) q = q.eq('page_id', pageId);
+        await q;
+        return true;
+      } catch (err: any) {
+        console.warn('[SystemStore] deleteLibraryItems error:', err.message);
+      }
+    }
+    return true;
+  }
+
+  public async deleteLibrary(libraryId: string, pageId?: string): Promise<boolean> {
+    if (libraryId) this.memoryLibraries.delete(libraryId);
+    await this.deleteLibraryItems(libraryId, pageId);
+    if (!isTestEnv() || this.client) {
+      try {
+        let q = this.getClient().from('content_libraries').delete();
+        if (libraryId) q = q.eq('id', libraryId);
+        if (pageId) q = q.eq('page_id', pageId);
+        await q;
+        return true;
+      } catch (err: any) {
+        console.warn('[SystemStore] deleteLibrary error:', err.message);
+      }
+    }
+    return true;
   }
 
   public async saveLibraryItems(items: any[]): Promise<any[]> {

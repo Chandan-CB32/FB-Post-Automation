@@ -174,6 +174,18 @@ export function checkFactGrounding(
   const violations: IntegrityViolation[] = [];
   const capLower = (caption || '').toLowerCase();
 
+  // Fiction, Horror, and Creative stories do not require factual scientific grounding
+  if (
+    niche &&
+    (niche.toLowerCase().includes('horror') ||
+      niche.toLowerCase().includes('fiction') ||
+      niche.toLowerCase().includes('story') ||
+      niche.toLowerCase().includes('myth') ||
+      niche.toLowerCase().includes('legend'))
+  ) {
+    return violations;
+  }
+
   // Convert facts to text list and check source URLs
   const factItems = (facts || []).map((f) => (typeof f === 'string' ? { text: f, sourceUrl: '' } : f));
   const hasValidSourceUrls = factItems.some((f) => f.sourceUrl && f.sourceUrl.startsWith('http'));
