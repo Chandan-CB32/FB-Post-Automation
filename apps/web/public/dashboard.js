@@ -6338,6 +6338,8 @@
   async function syncDriveImagesAction() {
     const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
     const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
+    const folderInput = document.getElementById('libDriveFolderInput');
+    const folderVal = folderInput ? folderInput.value.trim() : '';
     const statusEl = document.getElementById('libDriveSyncStatus');
 
     if (!pageId) {
@@ -6351,13 +6353,21 @@
       const res = await fetch('/api/library/sync-drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: pageId, libraryId: libraryId }),
+        body: JSON.stringify({ pageId: pageId, libraryId: libraryId, driveFolderId: folderVal }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        if (data.library && data.library.id) {
+          window.currentActiveLibraryId = data.library.id;
+          window.currentLibraryId = data.library.id;
+        }
         if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ ' + escapeHtml(data.message) + '</span>';
         showToast(data.message, 'success');
-        loadContentLibraryForPage(pageId);
+        await loadContentLibraryForPage(pageId);
+        // Automatically attempt auto-matching if rows exist
+        if (typeof runAutoMatchAction === 'function') {
+          setTimeout(function() { runAutoMatchAction(false); }, 300);
+        }
       } else {
         if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Sync failed') + '</span>';
         alert('Drive sync failed: ' + (data.error || 'Unknown error'));

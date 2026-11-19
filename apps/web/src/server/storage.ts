@@ -3816,7 +3816,8 @@ export class SystemStore {
   }
 
   public async createLibrary(data: any): Promise<any> {
-    const id = data.id || `lib-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+    const id = data.id && isUuid(data.id) ? data.id : crypto.randomUUID();
     const record = {
       id,
       page_id: data.page_id,
@@ -3827,6 +3828,11 @@ export class SystemStore {
       imported_rows: data.imported_rows || 0,
       matched_rows: data.matched_rows || 0,
       published_rows: data.published_rows || 0,
+      image_source: data.image_source || 'upload',
+      drive_folder_id: data.drive_folder_id || null,
+      posted_folder_id: data.posted_folder_id || null,
+      after_publish_action: data.after_publish_action || 'move_to_posted',
+      last_synced_at: data.last_synced_at || null,
       exhausted: false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -3883,9 +3889,10 @@ export class SystemStore {
   }
 
   public async saveLibraryItems(items: any[]): Promise<any[]> {
+    const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
     const saved: any[] = [];
     for (const item of items) {
-      const id = item.id || `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const id = item.id && isUuid(item.id) ? item.id : crypto.randomUUID();
       const rec = {
         ...item,
         id,
@@ -3964,9 +3971,10 @@ export class SystemStore {
   }
 
   public async saveLibraryAssets(assets: any[]): Promise<any[]> {
+    const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
     const saved: any[] = [];
     for (const a of assets) {
-      const id = a.id || `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const id = a.id && isUuid(a.id) ? a.id : crypto.randomUUID();
       const rec = {
         ...a,
         id,

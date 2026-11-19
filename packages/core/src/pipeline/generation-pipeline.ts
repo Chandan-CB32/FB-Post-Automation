@@ -709,6 +709,12 @@ export async function runGenerationPipeline(
       options.libraryItem.sourceLinks && options.libraryItem.sourceLinks.length > 0
         ? options.libraryItem.sourceLinks
         : ["https://verified-sources.org/"];
+  } else if (options.libraryItem) {
+    researchFacts = [{
+      text: options.libraryItem.contentIdea,
+      sourceUrl: "https://content-library.internal/",
+    }];
+    sourceUrls = ["https://content-library.internal/"];
   }
 
   // Diverse curated factual pool across distinct scientific domains

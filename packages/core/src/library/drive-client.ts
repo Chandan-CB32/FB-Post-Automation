@@ -130,12 +130,14 @@ export class GoogleDriveClient {
       iat: now,
     };
 
-    const base64UrlEncode = (str: string) =>
-      Buffer.from(str)
+    const base64UrlEncode = (input: string | Buffer) => {
+      const buf = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8');
+      return buf
         .toString('base64')
         .replace(/=/g, '')
         .replace(/\+/g, '-')
         .replace(/\//g, '_');
+    };
 
     const encodedHeader = base64UrlEncode(JSON.stringify(header));
     const encodedClaim = base64UrlEncode(JSON.stringify(claim));
@@ -145,7 +147,7 @@ export class GoogleDriveClient {
     signer.update(unsignedToken);
     signer.end();
     const signature = signer.sign(this.credentials.private_key);
-    const encodedSignature = base64UrlEncode(signature.toString('binary'));
+    const encodedSignature = base64UrlEncode(signature);
 
     return `${unsignedToken}.${encodedSignature}`;
   }

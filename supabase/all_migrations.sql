@@ -1,67 +1,9 @@
 -- ============================================================================
 -- Supabase Consolidated Migrations
--- Autonomous Multi-Page Facebook Content System (FB Auto 247)
+-- Autonomous Multi-Page Facebook Content System
 -- ============================================================================
 
--- Standalone Postgres Role Preamble (Safe on Supabase and standalone Postgres)
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
-        CREATE ROLE authenticated;
-    END IF;
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
-        CREATE ROLE anon;
-    END IF;
-END
-$$;
-
--- Ensure storage schema & tables exist if running on vanilla Postgres
-DO $$
-BEGIN
-    CREATE SCHEMA IF NOT EXISTS storage;
-
-    CREATE TABLE IF NOT EXISTS storage.buckets (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        owner UUID,
-        created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
-        updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
-        public BOOLEAN DEFAULT false,
-        avif_autodetection BOOLEAN DEFAULT false,
-        file_size_limit BIGINT,
-        allowed_mime_types TEXT[]
-    );
-
-    CREATE TABLE IF NOT EXISTS storage.objects (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        bucket_id TEXT REFERENCES storage.buckets(id),
-        name TEXT,
-        owner UUID,
-        created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
-        updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
-        last_accessed_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
-        metadata JSONB DEFAULT '{}'::jsonb,
-        path_tokens TEXT[] GENERATED ALWAYS AS (string_to_array(name, '/')) STORED
-    );
-EXCEPTION WHEN OTHERS THEN
-    -- In Supabase, the storage schema and tables are pre-managed by Supabase Storage Admin
-    NULL;
-END
-$$;
-
--- Enable pgcrypto for UUID generation (optional in PG 13+ as gen_random_uuid() is built-in)
-DO $$
-BEGIN
-    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-EXCEPTION WHEN OTHERS THEN
-    NULL;
-END
-$$;
-
-
--- ============================================================================
--- Migration: 20261102000000_init_schema.sql
--- ============================================================================
+-- >>> Migration: 20261102000000_init_schema.sql <<<
 
 -- ============================================================================
 -- Supabase Migration: 20261102000000_init_schema.sql
@@ -498,11 +440,7 @@ BEGIN
 END
 $$;
 
-
-
--- ============================================================================
--- Migration: 20261104000000_facebook_accounts_and_enhancements.sql
--- ============================================================================
+-- >>> Migration: 20261104000000_facebook_accounts_and_enhancements.sql <<<
 
 -- ============================================================================
 -- Supabase Migration: 20261104000000_facebook_accounts_and_enhancements.sql
@@ -615,11 +553,7 @@ ALTER TABLE public.facebook_accounts ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS owner_all_access ON public.facebook_accounts;
 CREATE POLICY owner_all_access ON public.facebook_accounts FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
-
-
--- ============================================================================
--- Migration: 20261107000000_automatic_page_discovery.sql
--- ============================================================================
+-- >>> Migration: 20261107000000_automatic_page_discovery.sql <<<
 
 -- ============================================================================
 -- Supabase Migration: 20261107000000_automatic_page_discovery.sql
@@ -712,11 +646,7 @@ $$;
 CREATE INDEX IF NOT EXISTS idx_pages_fb_account_id ON public.pages(fb_account_id);
 CREATE INDEX IF NOT EXISTS idx_pages_token_status ON public.pages(token_status);
 
-
-
--- ============================================================================
--- Migration: 20261108000000_page_scheduling_and_niche_detection.sql
--- ============================================================================
+-- >>> Migration: 20261108000000_page_scheduling_and_niche_detection.sql <<<
 
 -- ============================================================================
 -- Supabase Migration: 20261108000000_page_scheduling_and_niche_detection.sql
@@ -782,11 +712,7 @@ SET
     schedule = '{"postsPerDay": 0, "mode": "fixed", "postingTimes": [], "timezone": "Asia/Kolkata", "daysOfWeek": [1,2,3,4,5,6,7], "jitterMinutes": 10, "minGapMinutes": 60, "leadTimeHours": 24}'::jsonb
 WHERE active = true OR schedule->>'postsPerDay' = '3' OR schedule->>'postsPerDay' IS NULL;
 
-
-
--- ============================================================================
--- Migration: 20261109000000_production_persistence_and_governance.sql
--- ============================================================================
+-- >>> Migration: 20261109000000_production_persistence_and_governance.sql <<<
 
 -- ============================================================================
 -- Supabase Migration: 20261109000000_production_persistence_and_governance.sql
@@ -871,11 +797,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_page_status_sched ON public.posts (page_id,
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON public.audit_log (timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_provider_keys_active ON public.provider_keys (provider_id, is_active);
 
-
-
--- ============================================================================
--- Migration: 20261110000000_schema_alignment_and_versioning.sql
--- ============================================================================
+-- >>> Migration: 20261110000000_schema_alignment_and_versioning.sql <<<
 
 -- ============================================================================
 -- Migration: 20261110000000_schema_alignment_and_versioning.sql
@@ -1078,5 +1000,718 @@ ALTER TABLE public.pages
 ADD CONSTRAINT pages_profile_id_fkey 
 FOREIGN KEY (profile_id) REFERENCES public.content_profiles(id) ON DELETE SET NULL;
 
+-- >>> Migration: 20261112000000_headline_emphasis_settings.sql <<<
 
+-- Migration: 20261112000000_headline_emphasis_settings.sql
+-- Idempotent schema additions for headline emphasis, font selection, and viral card panel styling.
 
+DO $$
+BEGIN
+  -- 1. Add headline_segments to posts table if missing
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'posts' AND column_name = 'headline_segments'
+  ) THEN
+    ALTER TABLE public.posts ADD COLUMN headline_segments JSONB DEFAULT '[]'::jsonb;
+  END IF;
+
+  -- 2. Add image styling columns to pages table if missing
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'image_headline_panel_enabled'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN image_headline_panel_enabled BOOLEAN DEFAULT true;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'image_font_family'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN image_font_family TEXT DEFAULT 'Roboto Condensed';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'image_panel_color'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN image_panel_color TEXT DEFAULT '#000000';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'image_panel_height_mode'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN image_panel_height_mode TEXT DEFAULT 'auto';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'image_min_font_size'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN image_min_font_size INTEGER DEFAULT 76;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'image_highlight_enabled'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN image_highlight_enabled BOOLEAN DEFAULT true;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'image_highlight_colors'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN image_highlight_colors JSONB DEFAULT '["#FFD21F", "#22D3EE"]'::jsonb;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'image_highlight_match_niche'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN image_highlight_match_niche BOOLEAN DEFAULT true;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'image_vision_verification_enabled'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN image_vision_verification_enabled BOOLEAN DEFAULT false;
+  END IF;
+
+END $$;
+
+-- >>> Migration: 20261115_content_variety_engine.sql <<<
+
+-- ============================================================================
+-- CONTENT VARIETY ENGINE & CATEGORY DISTRIBUTION MIGRATION (Idempotent)
+-- ============================================================================
+
+-- 1. Ensure pages table has category distribution and variety configuration columns
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'category_weights'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN category_weights JSONB DEFAULT '{
+      "Space & Astronomy": 20,
+      "Animals & Ocean Life": 14,
+      "Earth & Extreme Phenomena": 11,
+      "Physics & Chemistry": 11,
+      "Human Body & Brain": 10,
+      "Plants/Fungi & Nature": 8,
+      "Ancient Life & Evolution": 8,
+      "Technology & AI": 7,
+      "Microscopic World": 6,
+      "Scientists & Big Ideas": 5
+    }'::jsonb;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'max_daily_space'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN max_daily_space INTEGER DEFAULT 1;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'max_daily_per_category'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN max_daily_per_category INTEGER DEFAULT 2;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'pages' AND column_name = 'vision_check_enabled'
+  ) THEN
+    ALTER TABLE public.pages ADD COLUMN vision_check_enabled BOOLEAN DEFAULT true;
+  END IF;
+END $$;
+
+-- 2. Add category and image_brief columns to posts if missing
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'posts' AND column_name = 'category'
+  ) THEN
+    ALTER TABLE public.posts ADD COLUMN category TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'posts' AND column_name = 'image_brief'
+  ) THEN
+    ALTER TABLE public.posts ADD COLUMN image_brief JSONB;
+  END IF;
+END $$;
+
+-- 3. Add category index to posts for fast 50-post deficit calculation
+CREATE INDEX IF NOT EXISTS idx_posts_page_category_created 
+ON public.posts(page_id, category, created_at DESC);
+
+-- 4. Research sources registry table
+CREATE TABLE IF NOT EXISTS public.research_sources (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  url TEXT NOT NULL,
+  feed_type TEXT NOT NULL DEFAULT 'rss',
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  terms TEXT,
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
+);
+
+-- Seed initial reputable research sources (idempotent upsert)
+INSERT INTO public.research_sources (id, name, category, url, feed_type, enabled, terms, description)
+VALUES
+  ('nasa_breaking', 'NASA Breaking News', 'Space & Astronomy', 'https://www.nasa.gov/news-release/feed/', 'rss', true, 'Public domain US government work.', 'Mission updates, planetary science, James Webb observations.'),
+  ('esa_space_science', 'ESA Space Science', 'Space & Astronomy', 'https://www.esa.int/rssfeed/Our_Activities/Space_Science', 'rss', true, 'Open editorial attribution.', 'European Space Agency astrophysics, solar system, and cosmology.'),
+  ('sciencedaily_animals', 'ScienceDaily Plants & Animals', 'Animals & Ocean Life', 'https://www.sciencedaily.com/rss/plants_animals.xml', 'rss', true, 'Free RSS feed for news aggregation.', 'Peer-reviewed zoology, marine biology, and evolutionary adaptations.'),
+  ('noaa_ocean_news', 'NOAA News Releases', 'Animals & Ocean Life', 'https://www.noaa.gov/news-releases/rss', 'rss', true, 'Public domain US government agency.', 'Oceanic exploration, marine ecosystems, and fisheries science.'),
+  ('physorg_earth', 'Phys.org Earth Sciences', 'Earth & Extreme Phenomena', 'https://phys.org/rss-feed/earth-news/', 'rss', true, 'Free public RSS for editorial syndication.', 'Geology, seismology, volcanology, deep mantle discoveries.'),
+  ('usgs_hazards', 'USGS Natural Hazards', 'Earth & Extreme Phenomena', 'https://www.usgs.gov/news/rss', 'rss', true, 'Public domain US Geological Survey.', 'Plate tectonics, volcanic eruptions, and planetary geology.'),
+  ('physorg_physics', 'Phys.org Physics News', 'Physics & Chemistry', 'https://phys.org/rss-feed/physics-news/', 'rss', true, 'Free public RSS feed.', 'Quantum optics, superconductivity, particle physics, and thermodynamics.'),
+  ('quanta_physics', 'Quanta Magazine Physics', 'Physics & Chemistry', 'https://api.quantamagazine.org/feed', 'rss', true, 'Non-profit foundation science journalism.', 'Deep investigative science reporting on theoretical physics.'),
+  ('nih_news_releases', 'NIH News Releases', 'Human Body & Brain', 'https://www.nih.gov/news-events/news-releases/rss', 'rss', true, 'Public domain National Institutes of Health.', 'Neuroscience, immunology, cellular genetics, and human physiology.'),
+  ('sciencedaily_mind', 'ScienceDaily Mind & Brain', 'Human Body & Brain', 'https://www.sciencedaily.com/rss/mind_brain.xml', 'rss', true, 'Free public RSS feed.', 'Cognitive architecture, brain mapping, perception, and neurotransmitters.'),
+  ('physorg_biology', 'Phys.org Biology & Nature', 'Plants/Fungi & Nature', 'https://phys.org/rss-feed/biology-news/', 'rss', true, 'Free public RSS feed.', 'Mycology, mycorrhizal networks, plant bio-signaling, and botany.'),
+  ('eurekalert_biology', 'EurekAlert Biology News', 'Plants/Fungi & Nature', 'https://www.eurekalert.org/rss/biology.xml', 'rss', true, 'AAAS press release platform; open media distribution.', 'Botanical defense mechanisms, fungal symbiosis, and forest ecosystems.'),
+  ('sciencedaily_fossils', 'ScienceDaily Fossils & Ruins', 'Ancient Life & Evolution', 'https://www.sciencedaily.com/rss/fossils_ruins.xml', 'rss', true, 'Free public RSS feed.', 'Paleontology, fossil discoveries, Cambrian explosion, and hominid evolution.'),
+  ('sciencedaily_ai', 'ScienceDaily AI & Computing', 'Technology & AI', 'https://www.sciencedaily.com/rss/computers_math/artificial_intelligence.xml', 'rss', true, 'Free public RSS feed.', 'Brain-computer interfaces, quantum computing, and bio-inspired robotics.'),
+  ('physorg_nano', 'Phys.org Nanotechnology & Cells', 'Microscopic World', 'https://phys.org/rss-feed/nanotechnology-news/', 'rss', true, 'Free public RSS feed.', 'Molecular machinery, tardigrade cryptobiosis, diatoms, and phages.'),
+  ('nature_news', 'Nature News', 'Scientists & Big Ideas', 'https://www.nature.com/nature.rss', 'rss', true, 'Free RSS headlines with standard attribution.', 'Milestone experimental breakthroughs, history of science, and Nobel laureates.')
+ON CONFLICT (id) DO UPDATE SET
+  category = EXCLUDED.category,
+  url = EXCLUDED.url,
+  terms = EXCLUDED.terms,
+  description = EXCLUDED.description,
+  updated_at = timezone('utc', now());
+
+-- >>> Migration: 20261118_content_library.sql <<<
+
+-- ============================================================================
+-- Supabase Migration: 20261118_content_library.sql
+-- Excel + Image Library Content Mode (Multi-Page Facebook Automation)
+-- ============================================================================
+
+-- 1. Add content_source_mode to pages and content_profiles
+ALTER TABLE public.pages
+ADD COLUMN IF NOT EXISTS content_source_mode TEXT NOT NULL DEFAULT 'full_ai'
+CHECK (content_source_mode IN ('full_ai', 'excel_library', 'hybrid'));
+
+ALTER TABLE public.content_profiles
+ADD COLUMN IF NOT EXISTS content_source_mode TEXT NOT NULL DEFAULT 'full_ai'
+CHECK (content_source_mode IN ('full_ai', 'excel_library', 'hybrid'));
+
+CREATE INDEX IF NOT EXISTS idx_pages_content_source_mode ON public.pages(content_source_mode);
+
+-- 2. Content Libraries Table
+CREATE TABLE IF NOT EXISTS public.content_libraries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    page_id UUID NOT NULL REFERENCES public.pages(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'excel' CHECK (source_type IN ('excel', 'csv', 'sheets')),
+    original_filename TEXT,
+    total_rows INTEGER NOT NULL DEFAULT 0,
+    imported_rows INTEGER NOT NULL DEFAULT 0,
+    matched_rows INTEGER NOT NULL DEFAULT 0,
+    published_rows INTEGER NOT NULL DEFAULT 0,
+    exhausted BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX IF NOT EXISTS idx_content_libraries_page ON public.content_libraries(page_id);
+
+-- 3. Library Assets Table (Uploaded Images)
+CREATE TABLE IF NOT EXISTS public.library_assets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    page_id UUID NOT NULL REFERENCES public.pages(id) ON DELETE CASCADE,
+    library_id UUID REFERENCES public.content_libraries(id) ON DELETE SET NULL,
+    filename TEXT NOT NULL,
+    storage_path TEXT NOT NULL UNIQUE,
+    sha256 TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    bytes BIGINT NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    aspect_ratio TEXT CHECK (aspect_ratio IN ('4:5', '1:1', '16:9', 'other')),
+    status TEXT NOT NULL DEFAULT 'unmatched' CHECK (status IN ('unmatched', 'matched', 'used', 'image_deleted', 'archived')),
+    matched_item_id UUID,
+    caption_hint TEXT,
+    vision_labels JSONB NOT NULL DEFAULT '[]'::jsonb,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_library_assets_page_status ON public.library_assets(page_id, status);
+CREATE INDEX IF NOT EXISTS idx_library_assets_sha256 ON public.library_assets(sha256);
+
+-- 4. Library Items Table (Spreadsheet Rows)
+CREATE TABLE IF NOT EXISTS public.library_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    library_id UUID NOT NULL REFERENCES public.content_libraries(id) ON DELETE CASCADE,
+    page_id UUID NOT NULL REFERENCES public.pages(id) ON DELETE CASCADE,
+    row_index INTEGER NOT NULL,
+    external_id TEXT,
+    planned_slot TIMESTAMPTZ,
+    category TEXT,
+    content_idea TEXT NOT NULL,
+    image_idea TEXT,
+    image_prompt TEXT,
+    image_filename_hint TEXT,
+    teaser_seed TEXT,
+    hidden_clue TEXT,
+    key_facts JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_links JSONB NOT NULL DEFAULT '[]'::jsonb,
+    custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+    matched_asset_id UUID REFERENCES public.library_assets(id) ON DELETE SET NULL,
+    match_method TEXT CHECK (match_method IN ('exact', 'ignore_ext', 'normalized', 'manual', 'vision', 'order')),
+    match_confidence NUMERIC CHECK (match_confidence BETWEEN 0 AND 1),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
+        'pending', 'matched', 'drafted', 'qa_passed', 'scheduled', 'publishing', 'published', 'failed', 'needs_review', 'skipped'
+    )),
+    post_id UUID REFERENCES public.posts(id) ON DELETE SET NULL,
+    vision_verification JSONB NOT NULL DEFAULT '{}'::jsonb,
+    rejection_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+CREATE INDEX IF NOT EXISTS idx_library_items_page_status ON public.library_items(page_id, status);
+CREATE INDEX IF NOT EXISTS idx_library_items_lib_row ON public.library_items(library_id, row_index);
+CREATE INDEX IF NOT EXISTS idx_library_items_slot ON public.library_items(planned_slot);
+CREATE INDEX IF NOT EXISTS idx_library_items_post ON public.library_items(post_id);
+
+-- 5. Circular FK for library_assets -> library_items
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_library_assets_matched_item'
+    ) THEN
+        ALTER TABLE public.library_assets
+        ADD CONSTRAINT fk_library_assets_matched_item
+        FOREIGN KEY (matched_item_id) REFERENCES public.library_items(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+-- 6. Row Level Security
+ALTER TABLE public.content_libraries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.library_assets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.library_items ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE
+    t text;
+    tables text[] := ARRAY['content_libraries', 'library_assets', 'library_items'];
+BEGIN
+    FOREACH t IN ARRAY tables LOOP
+        EXECUTE format('DROP POLICY IF EXISTS owner_all_access ON public.%I', t);
+        EXECUTE format('CREATE POLICY owner_all_access ON public.%I FOR ALL TO authenticated USING (true) WITH CHECK (true)', t);
+    END LOOP;
+END $$;
+
+-- 7. Private Storage Bucket for Library Images
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('library-images', 'library-images', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- >>> Migration: 20261118_content_library_drive.sql <<<
+
+-- ============================================================================
+-- Supabase Migration: 20261118_content_library_drive.sql
+-- Google Drive Source Support for Excel + Image Library Mode
+-- ============================================================================
+
+-- 1. Extend library_assets for Google Drive and external file sources
+ALTER TABLE public.library_assets
+ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'upload'
+CHECK (source IN ('upload', 'drive'));
+
+ALTER TABLE public.library_assets
+ADD COLUMN IF NOT EXISTS drive_file_id TEXT,
+ADD COLUMN IF NOT EXISTS drive_md5 TEXT,
+ADD COLUMN IF NOT EXISTS drive_modified_at TIMESTAMPTZ;
+
+-- Make storage_path nullable (Drive files do not use Supabase bucket storage)
+ALTER TABLE public.library_assets
+ALTER COLUMN storage_path DROP NOT NULL;
+
+-- Update status constraint on library_assets to include 'archived' and 'missing'
+ALTER TABLE public.library_assets
+DROP CONSTRAINT IF EXISTS library_assets_status_check;
+
+ALTER TABLE public.library_assets
+ADD CONSTRAINT library_assets_status_check
+CHECK (status IN ('unmatched', 'matched', 'used', 'image_deleted', 'archived', 'missing'));
+
+-- Unique constraint on (library_id, drive_file_id)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_library_assets_lib_drive_file
+ON public.library_assets(library_id, drive_file_id)
+WHERE drive_file_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_library_assets_source
+ON public.library_assets(source);
+
+CREATE INDEX IF NOT EXISTS idx_library_assets_drive_md5
+ON public.library_assets(drive_md5);
+
+-- 2. Extend content_libraries for Google Drive configurations
+ALTER TABLE public.content_libraries
+ADD COLUMN IF NOT EXISTS image_source TEXT NOT NULL DEFAULT 'upload'
+CHECK (image_source IN ('drive', 'upload'));
+
+ALTER TABLE public.content_libraries
+ADD COLUMN IF NOT EXISTS drive_folder_id TEXT,
+ADD COLUMN IF NOT EXISTS posted_folder_id TEXT,
+ADD COLUMN IF NOT EXISTS after_publish_action TEXT NOT NULL DEFAULT 'move_to_posted'
+CHECK (after_publish_action IN ('move_to_posted', 'trash', 'leave')),
+ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_content_libraries_image_source
+ON public.content_libraries(image_source);
+
+-- >>> Migration: auto_free_tier_providers.sql <<<
+
+-- ============================================================================
+-- Migration: Auto Free-Tier Image & Text Providers with 100 RPD for Cloudflare
+-- Idempotent SQL script for Supabase SQL Editor.
+-- Sets all image & text providers to Automatic Free-Tier model selection ('auto')
+-- and updates Cloudflare Workers AI to 100 requests/day (10,000 neurons allowance).
+-- ============================================================================
+
+-- 1. Cloudflare Workers AI: Set to Auto (FLUX.1 Schnell) and 100 reqs/day
+UPDATE public.providers
+SET
+  model_name = 'auto',
+  rpd_limit = 100,
+  config = jsonb_set(
+    jsonb_set(
+      COALESCE(config, '{}'::jsonb),
+      '{default_image_model}',
+      '"@cf/black-forest-labs/flux-1-schnell"'::jsonb
+    ),
+    '{neurons_per_day_limit}',
+    '10000'::jsonb
+  )
+WHERE kind = 'cloudflare_workers_ai'
+   OR name ILIKE '%cloudflare%';
+
+-- 2. ZenMux: Set to Auto (Gemini Image Free)
+UPDATE public.providers
+SET
+  model_name = 'auto',
+  config = jsonb_set(
+    COALESCE(config, '{}'::jsonb),
+    '{default_image_model}',
+    '"google/gemini-2.5-flash-image-free"'::jsonb
+  )
+WHERE name ILIKE '%zenmux%';
+
+-- 3. OpenRouter: Set to Auto (Riverflow Fast Free)
+UPDATE public.providers
+SET
+  model_name = 'auto',
+  config = jsonb_set(
+    COALESCE(config, '{}'::jsonb),
+    '{default_image_model}',
+    '"sourceful/riverflow-v2.5-fast:free"'::jsonb
+  )
+WHERE name ILIKE '%openrouter%';
+
+-- 4. Pollinations AI: Set to Auto (Flux 100% Free)
+UPDATE public.providers
+SET
+  model_name = 'auto',
+  config = jsonb_set(
+    COALESCE(config, '{}'::jsonb),
+    '{default_image_model}',
+    '"flux"'::jsonb
+  )
+WHERE kind = 'pollinations'
+   OR name ILIKE '%pollinations%';
+
+-- 5. NVIDIA NIM: Set to Auto (SD 3.5 Large)
+UPDATE public.providers
+SET
+  model_name = 'auto',
+  config = jsonb_set(
+    COALESCE(config, '{}'::jsonb),
+    '{default_image_model}',
+    '"stabilityai/stable-diffusion-3.5-large"'::jsonb
+  )
+WHERE name ILIKE '%nvidia%';
+
+-- >>> Migration: image_priority_chain.sql <<<
+
+-- ============================================================================
+-- Migration: Strict Priority Image Generation Fallback Chain (#1 to #8)
+-- Idempotent SQL script for Supabase SQL Editor.
+-- Preserves existing text providers, existing keys, and page schedules.
+-- ============================================================================
+
+-- 1. Upsert the 8 Image Providers in Strict Priority Order (#1 to #8)
+
+-- #1 ZenMux: Gemini image model free variant (google/gemini-2.5-flash-image-free)
+INSERT INTO public.providers (
+  id, name, kind, base_url, model_name, config, rpm_limit, rpd_limit, priority, active
+) VALUES (
+  '22222222-2222-2222-2222-222222222201',
+  'ZenMux (Gemini Image Free)',
+  'openai_compatible_images',
+  'https://zenmux.ai/api/v1',
+  'google/gemini-2.5-flash-image-free',
+  '{"status": "needs_key", "health_status": "needs_key", "chain_type": "image", "default_image_model": "google/gemini-2.5-flash-image-free", "endpoint_type": "standard_images", "license": "Google Terms of Service", "commercial": true}'::jsonb,
+  30, 1000, 1, false
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  kind = EXCLUDED.kind,
+  base_url = EXCLUDED.base_url,
+  model_name = EXCLUDED.model_name,
+  config = EXCLUDED.config,
+  priority = 1;
+
+-- #2 Vercel AI Gateway: FLUX.2 klein 4B (bfl/flux-2-klein-4b)
+INSERT INTO public.providers (
+  id, name, kind, base_url, model_name, config, rpm_limit, rpd_limit, priority, active
+) VALUES (
+  '22222222-2222-2222-2222-222222222202',
+  'Vercel AI Gateway (FLUX.2 klein 4B)',
+  'openai_compatible_images',
+  'https://gateway.ai.vercel.com/v1',
+  'bfl/flux-2-klein-4b',
+  '{"status": "needs_key", "health_status": "needs_key", "chain_type": "image", "default_image_model": "bfl/flux-2-klein-4b", "endpoint_type": "standard_images", "license": "Apache 2.0", "commercial": true, "monthly_credit_usd": 5.0}'::jsonb,
+  30, 1000, 2, false
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  kind = EXCLUDED.kind,
+  base_url = EXCLUDED.base_url,
+  model_name = EXCLUDED.model_name,
+  config = EXCLUDED.config,
+  priority = 2;
+
+-- #3 NVIDIA NIM: Stable Diffusion 3.5 Large / Qwen-Image
+INSERT INTO public.providers (
+  id, name, kind, base_url, model_name, config, rpm_limit, rpd_limit, priority, active
+) VALUES (
+  '22222222-2222-2222-2222-222222222203',
+  'NVIDIA NIM (SD 3.5 Large)',
+  'openai_compatible_images',
+  'https://integrate.api.nvidia.com/v1',
+  'stabilityai/stable-diffusion-3.5-large',
+  '{"status": "active", "health_status": "healthy", "chain_type": "image", "default_image_model": "stabilityai/stable-diffusion-3.5-large", "alternate_model": "qwen/qwen-image", "endpoint_type": "nvidia_nim", "license": "Stability AI Community License", "commercial": true}'::jsonb,
+  60, 1000, 3, true
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  kind = EXCLUDED.kind,
+  base_url = EXCLUDED.base_url,
+  model_name = EXCLUDED.model_name,
+  config = EXCLUDED.config,
+  priority = 3;
+
+-- Link existing NVIDIA key to NVIDIA NIM Image provider
+INSERT INTO public.provider_keys (id, provider_id, key_encrypted, key_masked, label, status)
+SELECT
+  '5a670858-6d71-40d0-a136-d68ccf7f9983'::uuid,
+  '22222222-2222-2222-2222-222222222203'::uuid,
+  k.key_encrypted,
+  k.key_masked,
+  'NVIDIA NIM Image Key',
+  'active'
+FROM public.provider_keys k
+WHERE k.provider_id = '676cb9d7-7459-4c06-8feb-d1f639ad756f'
+ON CONFLICT (id) DO NOTHING;
+
+-- #4 Cloudflare Workers AI: FLUX.1 Schnell (4 steps, ~100-200 neurons/img -> 50-100+ imgs/day free tier)
+INSERT INTO public.providers (
+  id, name, kind, base_url, model_name, config, rpm_limit, rpd_limit, priority, active
+) VALUES (
+  '22222222-2222-2222-2222-222222222204',
+  'Cloudflare Workers AI (FLUX.1 Schnell)',
+  'cloudflare_workers_ai',
+  'https://api.cloudflare.com/client/v4',
+  '@cf/black-forest-labs/flux-1-schnell',
+  '{"status": "active", "health_status": "healthy", "chain_type": "image", "default_image_model": "@cf/black-forest-labs/flux-1-schnell", "account_id": "8a49b9104077d7d64bf20ffc9249b891", "daily_neurons": 10000, "steps": 4, "license": "Apache 2.0", "commercial": true}'::jsonb,
+  60, 100, 4, true
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  kind = EXCLUDED.kind,
+  base_url = EXCLUDED.base_url,
+  model_name = EXCLUDED.model_name,
+  config = EXCLUDED.config,
+  rpd_limit = 100,
+  priority = 4;
+
+-- Link existing Cloudflare key
+INSERT INTO public.provider_keys (id, provider_id, key_encrypted, key_masked, label, status)
+SELECT
+  '747137a3-b960-47cf-8e00-894630f70784'::uuid,
+  '22222222-2222-2222-2222-222222222204'::uuid,
+  k.key_encrypted,
+  k.key_masked,
+  'Cloudflare Shared Image Key',
+  'active'
+FROM public.provider_keys k
+WHERE k.provider_id = '11111111-1111-1111-1111-111111111104'
+ON CONFLICT (id) DO NOTHING;
+
+-- #5 OpenRouter: sourceful/riverflow-v2.5-fast:free (chat modalities)
+INSERT INTO public.providers (
+  id, name, kind, base_url, model_name, config, rpm_limit, rpd_limit, priority, active
+) VALUES (
+  '22222222-2222-2222-2222-222222222205',
+  'OpenRouter (Riverflow v2.5 Fast Free)',
+  'openai_compatible_images',
+  'https://openrouter.ai/api/v1',
+  'sourceful/riverflow-v2.5-fast:free',
+  '{"status": "active", "health_status": "healthy", "chain_type": "image", "default_image_model": "sourceful/riverflow-v2.5-fast:free", "endpoint_type": "openrouter_chat_modalities", "license": "OpenRouter Free Terms", "commercial": true}'::jsonb,
+  20, 200, 5, true
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  kind = EXCLUDED.kind,
+  base_url = EXCLUDED.base_url,
+  model_name = EXCLUDED.model_name,
+  config = EXCLUDED.config,
+  priority = 5;
+
+-- Link existing OpenRouter key
+INSERT INTO public.provider_keys (id, provider_id, key_encrypted, key_masked, label, status)
+SELECT
+  '96ad2f7f-3121-4d1c-a09f-38a14e989985'::uuid,
+  '22222222-2222-2222-2222-222222222205'::uuid,
+  k.key_encrypted,
+  k.key_masked,
+  'OpenRouter Shared Image Key',
+  'active'
+FROM public.provider_keys k
+WHERE k.provider_id = '11111111-1111-1111-1111-111111111102'
+ON CONFLICT (id) DO NOTHING;
+
+-- #6 Alibaba Cloud Model Studio: Wanx Turbo / Qwen-Image (90-day free pool)
+INSERT INTO public.providers (
+  id, name, kind, base_url, model_name, config, rpm_limit, rpd_limit, priority, active
+) VALUES (
+  '22222222-2222-2222-2222-222222222206',
+  'Alibaba Cloud Model Studio (Wanx Turbo)',
+  'openai_compatible_images',
+  'https://dashscope.aliyuncs.com/api/v1',
+  'wanx2.1-t2i-turbo',
+  '{"status": "needs_key", "health_status": "needs_key", "chain_type": "image", "default_image_model": "wanx2.1-t2i-turbo", "endpoint_type": "alibaba_dashscope_async", "license": "Alibaba Cloud Model Studio Terms", "commercial": true, "free_quota_images": 500}'::jsonb,
+  30, 500, 6, false
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  kind = EXCLUDED.kind,
+  base_url = EXCLUDED.base_url,
+  model_name = EXCLUDED.model_name,
+  config = EXCLUDED.config,
+  priority = 6;
+
+-- #7 Pollinations AI: Keyed gen endpoint with watermark rejection
+UPDATE public.providers
+SET
+  name = 'Pollinations AI (Keyed Flux)',
+  priority = 7,
+  config = jsonb_set(
+    COALESCE(config, '{}'::jsonb),
+    '{reject_watermarks}', 'true'::jsonb
+  )
+WHERE id = '11111111-1111-1111-1111-111111111105';
+
+-- #8 Cloudflare Workers AI: FLUX.1 schnell (LAST Fallback inside 1500 neuron reserve)
+INSERT INTO public.providers (
+  id, name, kind, base_url, model_name, config, rpm_limit, rpd_limit, priority, active
+) VALUES (
+  '22222222-2222-2222-2222-222222222208',
+  'Cloudflare Workers AI (FLUX.1 Schnell Fallback)',
+  'cloudflare_workers_ai',
+  'https://api.cloudflare.com/client/v4',
+  '@cf/black-forest-labs/flux-1-schnell',
+  '{"status": "active", "health_status": "healthy", "chain_type": "image", "default_image_model": "@cf/black-forest-labs/flux-1-schnell", "num_steps": 4, "is_last_fallback": true, "reserve_neurons": 1500, "license": "Apache 2.0", "commercial": true}'::jsonb,
+  60, 1000, 8, true
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  kind = EXCLUDED.kind,
+  base_url = EXCLUDED.base_url,
+  model_name = EXCLUDED.model_name,
+  config = EXCLUDED.config,
+  priority = 8;
+
+-- Link existing Cloudflare key to Schnell fallback
+INSERT INTO public.provider_keys (id, provider_id, key_encrypted, key_masked, label, status)
+SELECT
+  '747137a3-b960-47cf-8e00-894630f70788'::uuid,
+  '22222222-2222-2222-2222-222222222208'::uuid,
+  k.key_encrypted,
+  k.key_masked,
+  'Cloudflare Schnell Fallback Key',
+  'active'
+FROM public.provider_keys k
+WHERE k.provider_id = '11111111-1111-1111-1111-111111111104'
+ON CONFLICT (id) DO NOTHING;
+
+-- 2. Upsert Global Image Chain in public.provider_chains
+INSERT INTO public.provider_chains (
+  id, name, stage, strategy, provider_ids
+) VALUES (
+  '33333333-3333-3333-3333-333333333301',
+  'Strict Priority Image Chain (#1 to #8)',
+  'image',
+  'priority',
+  '["22222222-2222-2222-2222-222222222201", "22222222-2222-2222-2222-222222222202", "22222222-2222-2222-2222-222222222203", "22222222-2222-2222-2222-222222222204", "22222222-2222-2222-2222-222222222205", "22222222-2222-2222-2222-222222222206", "11111111-1111-1111-1111-111111111105", "22222222-2222-2222-2222-222222222208"]'::jsonb
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  strategy = 'priority',
+  provider_ids = EXCLUDED.provider_ids;
+
+-- ----------------------------------------------------------------------------
+-- 16. Storage Bucket: post-images (Private)
+-- ----------------------------------------------------------------------------
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+    'post-images',
+    'post-images',
+    false,
+    10485760, -- 10MB
+    ARRAY['image/jpeg', 'image/png', 'image/webp']
+)
+ON CONFLICT (id) DO UPDATE
+SET public = false,
+    file_size_limit = 10485760,
+    allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp'];
+
+-- Storage RLS Policy for post-images
+DO $$
+BEGIN
+    DROP POLICY IF EXISTS "Authenticated users full access to post-images" ON storage.objects;
+    CREATE POLICY "Authenticated users full access to post-images"
+    ON storage.objects
+    FOR ALL
+    TO authenticated
+    USING (bucket_id = 'post-images')
+    WITH CHECK (bucket_id = 'post-images');
+END
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 17. Verification Helper: check_table_rls_status
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.check_table_rls_status()
+RETURNS TABLE (table_name text, rls_enabled boolean)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+  SELECT tablename::text, rowsecurity::boolean
+  FROM pg_tables
+  WHERE schemaname = 'public';
+$$;

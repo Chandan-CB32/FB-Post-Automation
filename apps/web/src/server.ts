@@ -3023,14 +3023,26 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             );
           }
 
-          const libRecord = await store.createLibrary({
-            page_id: pageId,
-            name: name || filename || 'Spreadsheet Import',
-            source_type: (filename || '').endsWith('.csv') ? 'csv' : 'excel',
-            original_filename: filename || 'sheet.xlsx',
-            total_rows: parseResult.validRows.length,
-            imported_rows: parseResult.validRows.length,
-          });
+          const existingLibs = await store.getLibraries(pageId);
+          let libRecord: any;
+          if (existingLibs && existingLibs.length > 0) {
+            libRecord = await store.updateLibrary(existingLibs[0].id, {
+              name: name || filename || existingLibs[0].name || 'Spreadsheet Import',
+              source_type: (filename || '').endsWith('.csv') ? 'csv' : 'excel',
+              original_filename: filename || 'sheet.xlsx',
+              total_rows: parseResult.validRows.length,
+              imported_rows: parseResult.validRows.length,
+            });
+          } else {
+            libRecord = await store.createLibrary({
+              page_id: pageId,
+              name: name || filename || 'Spreadsheet Import',
+              source_type: (filename || '').endsWith('.csv') ? 'csv' : 'excel',
+              original_filename: filename || 'sheet.xlsx',
+              total_rows: parseResult.validRows.length,
+              imported_rows: parseResult.validRows.length,
+            });
+          }
 
           const itemsToSave = parseResult.validRows.map((r) => ({
             library_id: libRecord.id,
@@ -3430,30 +3442,53 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       req.on('data', (c) => (body += c));
       req.on('end', async () => {
         try {
-          const { pageId, libraryId } = JSON.parse(body || '{}');
+          const { pageId, libraryId, driveFolderId } = JSON.parse(body || '{}');
           if (!pageId) {
             return sendJson({ error: 'pageId is required' }, 400);
           }
+          const cleanFolderId = driveFolderId ? extractDriveFolderId(driveFolderId) : null;
           let targetLibraryId = libraryId;
-          if (!targetLibraryId) {
-            const libs = await store.getLibraries(pageId);
-            if (libs && libs.length > 0) {
-              targetLibraryId = libs[0].id;
+          const libraries = await store.getLibraries(pageId);
+          let library: any = null;
+
+          if (targetLibraryId) {
+            library = libraries.find((l) => l.id === targetLibraryId);
+          }
+
+          if (!library && libraries && libraries.length > 0) {
+            library = libraries[0];
+            targetLibraryId = library.id;
+          }
+
+          if (!library) {
+            if (!cleanFolderId) {
+              return sendJson({ error: 'No active library found for this page. Please enter a Drive folder ID first.' }, 400);
             }
+            library = await store.createLibrary({
+              page_id: pageId,
+              name: 'Main Content Library',
+              source_type: 'excel',
+              image_source: 'drive',
+              drive_folder_id: cleanFolderId,
+              after_publish_action: 'move_to_posted',
+            });
+            targetLibraryId = library.id;
+          } else if (cleanFolderId && library.drive_folder_id !== cleanFolderId) {
+            library = await store.updateLibrary(library.id, {
+              drive_folder_id: cleanFolderId,
+              image_source: 'drive',
+            });
           }
-          if (!targetLibraryId) {
-            return sendJson({ error: 'No active library found for this page. Please enter a Drive folder and click Save first.' }, 400);
+
+          if (!library || !library.drive_folder_id) {
+            return sendJson({ error: 'Library does not have a configured drive_folder_id.' }, 400);
           }
+
           const creds = await store.getGoogleDriveServiceAccount(true);
           if (!creds) {
             return sendJson({
               error: 'Google Drive service account not configured. Please add it in Settings.',
             }, 400);
-          }
-          const libraries = await store.getLibraries(pageId);
-          const library = libraries.find((l) => l.id === libraryId);
-          if (!library || !library.drive_folder_id) {
-            return sendJson({ error: 'Library does not have a configured drive_folder_id.' }, 400);
           }
 
           const driveClient = new GoogleDriveClient({
@@ -3462,10 +3497,11 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             postedFolderId: library.posted_folder_id || undefined,
           });
 
-          const syncStats = await store.syncDriveLibrary(pageId, libraryId, driveClient);
+          const syncStats = await store.syncDriveLibrary(pageId, targetLibraryId, driveClient);
           return sendJson({
             success: true,
             syncStats,
+            library,
             message: `Synced ${syncStats.total} files (${syncStats.added} new, ${syncStats.updated} updated, ${syncStats.missing} missing).`,
           });
         } catch (err: any) {
@@ -3662,7 +3698,65 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           });
 
           let queueItem: any = null;
-          if (!parsed.userTopic) {
+          let libraryImageBuffer: Buffer | undefined;
+          let libraryItemObj: any = null;
+
+          if (page.content_source_mode === 'excel_library' || (page as any).overrides?.content_source_mode === 'excel_library') {
+            const items = await store.getLibraryItems(page.id);
+            const matchedItems = items.filter((it: any) => (it.status === 'matched' || it.matched_asset_id) && it.status !== 'skipped');
+            if (matchedItems.length === 0) {
+              return sendJson({
+                error: 'Excel + Image Library mode requires at least one matched row with an image. Please import a spreadsheet and sync photos from Drive first.',
+                checklist: evaluatePageChecklist(page),
+              }, 400);
+            }
+            const item = matchedItems[0];
+            libraryItemObj = {
+              id: item.id,
+              contentIdea: item.content_idea,
+              category: item.category,
+              imageIdea: item.image_idea,
+              imagePrompt: item.image_prompt,
+              teaserSeed: item.teaser_seed,
+              hiddenClue: item.hidden_clue,
+              keyFacts: Array.isArray(item.key_facts) ? item.key_facts : [],
+              sourceLinks: Array.isArray(item.source_links) ? item.source_links : [],
+            };
+
+            const assetId = item.matched_asset_id;
+            const assets = await store.getLibraryAssets(page.id);
+            const asset = assets.find((a: any) => a.id === assetId) || item.library_assets;
+
+            if (asset) {
+              if (asset.source === 'drive' && asset.drive_file_id) {
+                const creds = await store.getGoogleDriveServiceAccount(true);
+                if (creds) {
+                  const libs = await store.getLibraries(page.id);
+                  const lib = libs.find((l: any) => l.id === item.library_id) || libs[0];
+                  const driveClient = new GoogleDriveClient({
+                    credentials: creds,
+                    libraryFolderId: lib?.drive_folder_id || 'root',
+                  });
+                  try {
+                    libraryImageBuffer = await driveClient.downloadFileBuffer(asset.drive_file_id);
+                  } catch (dlErr: any) {
+                    console.warn('[TestRun] Failed to download Drive asset:', dlErr.message);
+                  }
+                }
+              } else if (asset.storage_path) {
+                libraryImageBuffer = await store.downloadLibraryStorageAsset(asset.storage_path) || undefined;
+              }
+            }
+
+            if (!libraryImageBuffer) {
+              return sendJson({
+                error: `Could not download image file "${asset?.filename || 'asset'}" for matched row "${item.content_idea}". Please verify the photo exists in Google Drive.`,
+                checklist: evaluatePageChecklist(page),
+              }, 400);
+            }
+          }
+
+          if (!parsed.userTopic && !libraryItemObj) {
             try {
               const sb = getSupabaseClient()!;
               const { data: qRows } = await sb
@@ -3687,25 +3781,32 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             page,
             profile,
             activeProviders: activeProvidersWithKeys,
-            userTopic: parsed.userTopic || queueItem?.title,
+            userTopic: libraryItemObj ? libraryItemObj.contentIdea : (parsed.userTopic || queueItem?.title),
             queueItem,
+            libraryItem: libraryItemObj,
+            libraryImageBuffer,
             isTestRun: true,
           });
 
-          // Sanitize test_run_report for database persistence: exclude large base64 data URIs
+          // Sanitize test_run_report for database persistence: lightweight and fast
+          const compactStages = (pipelineResult.stages || []).map((s: any) => ({
+            stage: s.stage,
+            name: s.name,
+            status: s.status,
+            durationMs: s.durationMs,
+            error: s.error,
+          }));
+
           const sanitizedReport = {
-            ...pipelineResult,
-            compositeImageUrl:
-              typeof pipelineResult.compositeImageUrl === 'string' && pipelineResult.compositeImageUrl.length > 5000
-                ? '[composite_jpeg_rendered]'
-                : pipelineResult.compositeImageUrl,
-            thumbnailUrl:
-              typeof pipelineResult.thumbnailUrl === 'string' && pipelineResult.thumbnailUrl.length > 5000
-                ? '[thumbnail_rendered]'
-                : pipelineResult.thumbnailUrl,
+            success: pipelineResult.success,
+            testedAt: pipelineResult.testedAt,
+            pageName: pipelineResult.pageName,
+            caption: pipelineResult.caption,
+            headline: pipelineResult.headlinePanel?.headlineText || '',
+            qa_score: pipelineResult.qaScore,
+            stages: compactStages,
+            error: pipelineResult.error,
           };
-          delete (sanitizedReport as any).rawImageBuffer;
-          delete (sanitizedReport as any).compositeJpegBuffer;
 
           const checklist = evaluatePageChecklist({
             ...page,
