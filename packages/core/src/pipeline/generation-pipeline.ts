@@ -49,8 +49,17 @@ export function resolveEffectiveModel(
   type: 'text' | 'image' = 'text'
 ): string {
   const raw = (provider.model_name || '').trim();
+  const isTextModelName = (m: string) => /llama|gpt|qwen|deepseek|mistral|gemma|instruct|chat/i.test(m);
+  const isImageModelName = (m: string) => /flux|diffusion|sd|image|dall-e|midjourney/i.test(m);
+
   if (raw && raw.toLowerCase() !== 'auto' && raw.toLowerCase() !== 'default') {
-    return raw;
+    if (type === 'image' && isTextModelName(raw) && !isImageModelName(raw)) {
+      // Misconfigured text model on image candidate, fall through to resolve image default
+    } else if (type === 'text' && isImageModelName(raw) && !isTextModelName(raw)) {
+      // Misconfigured image model on text candidate, fall through to resolve text default
+    } else {
+      return raw;
+    }
   }
   const kind = (provider.kind || provider.adapter_kind || '').toLowerCase();
   const name = (provider.name || '').toLowerCase();
@@ -61,6 +70,7 @@ export function resolveEffectiveModel(
     if (kind === 'gemini_native' || name.includes('gemini')) return 'gemini-2.5-flash-image';
     if (name.includes('zenmux')) return 'google/gemini-2.5-flash-image-free';
     if (name.includes('together')) return 'black-forest-labs/FLUX.1-schnell';
+    if (name.includes('nvidia')) return 'stabilityai/stable-diffusion-3.5-large';
     return 'flux';
   }
 
@@ -76,6 +86,7 @@ export function resolveEffectiveModel(
   if (name.includes('ollama')) return 'llama3.2';
   return 'gemini-2.5-flash';
 }
+export const resolveFreeModelForProvider = resolveEffectiveModel;
 import {
   buildConcreteImagePrompt,
   buildTopicImagePrompt,
@@ -1118,6 +1129,11 @@ Setting: <Physical environment>
 CAPTION:
 <Post caption text here without markdown bold, followed by 3-5 relevant hashtags on the final line>
 
+LENGTH & STRUCTURE REQUIREMENTS:
+- CAPTION LENGTH: Write between ${minWords} and ${maxWords} words (Target: approximately ${targetWords} words). Do not write fewer than ${minWords} words.
+- PARAGRAPHS: Each paragraph must have at most ${maxSentencesPerParagraph} sentences. Use line breaks between short paragraphs for clean readability.
+- TONE & VOICE: Engaging, immersive, and natural for Facebook feed.
+
 FORMAT INSTRUCTIONS:
 - Start directly with HEADLINE:
 - Output only the requested blocks without conversational commentary, preambles, or rule restatements.
@@ -1176,6 +1192,11 @@ FORMAT INSTRUCTIONS:
 
     // In production / live execution, try active text providers with priority failover
     if (!isTestEnv() && textCandidates.length > 0) {
+      const promptForAttempt =
+        attempt === 1 || bestViolations.length === 0
+          ? rawEffectivePrompt
+          : `${rawEffectivePrompt}\n\nREVISION REQUIRED (Attempt ${attempt}): The previous draft was ${countWords(bestDraft)} words and failed validation with: ${bestViolations.slice(0, 3).join("; ")}. Please write between ${minWords} and ${maxWords} words (target ~${targetWords} words).`;
+
       // Rotate starting index by attempt if retrying for higher QA score
       const candidateList = [
         ...textCandidates.slice((attempt - 1) % textCandidates.length),
@@ -1194,7 +1215,7 @@ FORMAT INSTRUCTIONS:
           if (kind === "gemini_native" || kind === "gemini") {
             const adapter = new GeminiNativeAdapter();
             const res = await adapter.generateText({
-              prompt: rawEffectivePrompt,
+              prompt: promptForAttempt,
               apiKey: candidate.apiKey,
               model: effectiveTextModel,
               baseUrl: candidate.base_url,
@@ -1224,7 +1245,7 @@ FORMAT INSTRUCTIONS:
             }
             const adapter = new CloudflareWorkersAIAdapter();
             const res = await adapter.generateText({
-              prompt: rawEffectivePrompt,
+              prompt: promptForAttempt,
               apiKey: candidate.apiKey,
               model: effectiveTextModel,
               baseUrl: candidate.base_url,
@@ -1246,7 +1267,7 @@ FORMAT INSTRUCTIONS:
             // OpenAIChatAdapter: Groq, OpenRouter, NVIDIA NIM, Hugging Face
             const adapter = new OpenAIChatAdapter();
             const res = await adapter.generateText({
-              prompt: rawEffectivePrompt,
+              prompt: promptForAttempt,
               apiKey: candidate.apiKey,
               model: effectiveTextModel,
               baseUrl: candidate.base_url,

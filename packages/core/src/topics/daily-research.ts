@@ -4,6 +4,7 @@ import { OpenAIChatAdapter } from '../adapters/openai-chat.js';
 import { CloudflareWorkersAIAdapter } from '../adapters/cloudflare.js';
 import { PollinationsImageAdapter } from '../adapters/pollinations.js';
 import { computeTopicSimilarity, normalizeTopic } from './dedup.js';
+import { resolveEffectiveModel } from '../pipeline/generation-pipeline.js';
 
 export interface ResearchedTopicItem {
   title: string;
@@ -231,7 +232,8 @@ Return a STRICT JSON array containing exactly ${neededCount} objects with no add
 
   for (const prov of textCandidates) {
     if (!prov.apiKey) continue;
-    console.log(`[Daily Research] Attempting text candidate: '${prov.name}', model: '${prov.model_name}'`);
+    const effectiveModel = resolveEffectiveModel(prov, 'text');
+    console.log(`[Daily Research] Attempting text candidate: '${prov.name}', model: '${effectiveModel}'`);
     try {
       const kind = (prov.kind || prov.adapter_kind || '').toLowerCase();
       if (kind === 'gemini_native' || kind === 'gemini') {
@@ -239,7 +241,7 @@ Return a STRICT JSON array containing exactly ${neededCount} objects with no add
         const res = await adapter.generateText({
           prompt: researchPrompt,
           apiKey: prov.apiKey,
-          model: prov.model_name || 'gemini-2.5-flash',
+          model: effectiveModel,
           baseUrl: prov.base_url,
           temperature: 0.7,
           maxTokens: 3000,
@@ -255,7 +257,7 @@ Return a STRICT JSON array containing exactly ${neededCount} objects with no add
         const res = await adapter.generateText({
           prompt: researchPrompt,
           apiKey: prov.apiKey,
-          model: prov.model_name || '@cf/meta/llama-3.1-8b-instruct',
+          model: effectiveModel,
           baseUrl: prov.base_url,
           extraBody: { accountId: prov.config?.account_id || process.env.CLOUDFLARE_ACCOUNT_ID },
           maxTokens: 3000,
@@ -269,15 +271,10 @@ Return a STRICT JSON array containing exactly ${neededCount} objects with no add
       } else {
         // OpenAI-compatible: Groq, OpenRouter, NVIDIA NIM
         const adapter = new OpenAIChatAdapter();
-        // Use proven working model for Groq if misconfigured
-        let model = prov.model_name || 'openai/gpt-oss-20b';
-        if (prov.name?.toLowerCase().includes('groq') && (model.includes('llama-3.3-70b-versatile') || !model)) {
-          model = 'openai/gpt-oss-20b';
-        }
         const res = await adapter.generateText({
           prompt: researchPrompt,
           apiKey: prov.apiKey,
-          model,
+          model: effectiveModel,
           baseUrl: prov.base_url,
           temperature: 0.7,
           maxTokens: 4000,
@@ -511,12 +508,13 @@ Return a STRICT JSON object with no additional commentary:
     if (!prov.apiKey) continue;
     try {
       const kind = (prov.kind || prov.adapter_kind || '').toLowerCase();
+      const effectiveModel = resolveEffectiveModel(prov, 'text');
       if (kind === 'gemini_native' || kind === 'gemini') {
         const adapter = new GeminiNativeAdapter();
         const res = await adapter.generateText({
           prompt: singlePrompt,
           apiKey: prov.apiKey,
-          model: prov.model_name || 'gemini-2.5-flash',
+          model: effectiveModel,
           baseUrl: prov.base_url,
           temperature: 0.7,
           maxTokens: 2500,
@@ -531,7 +529,7 @@ Return a STRICT JSON object with no additional commentary:
         const res = await adapter.generateText({
           prompt: singlePrompt,
           apiKey: prov.apiKey,
-          model: prov.model_name || '@cf/meta/llama-3.1-8b-instruct',
+          model: effectiveModel,
           baseUrl: prov.base_url,
           extraBody: { accountId: prov.config?.account_id || process.env.CLOUDFLARE_ACCOUNT_ID },
           maxTokens: 2500,
@@ -543,14 +541,10 @@ Return a STRICT JSON object with no additional commentary:
         }
       } else {
         const adapter = new OpenAIChatAdapter();
-        let model = prov.model_name || 'openai/gpt-oss-20b';
-        if (prov.name?.toLowerCase().includes('groq') && (model.includes('llama-3.3-70b-versatile') || !model)) {
-          model = 'openai/gpt-oss-20b';
-        }
         const res = await adapter.generateText({
           prompt: singlePrompt,
           apiKey: prov.apiKey,
-          model,
+          model: effectiveModel,
           baseUrl: prov.base_url,
           temperature: 0.7,
           maxTokens: 3000,

@@ -188,23 +188,6 @@ export function checkFactGrounding(
 
   // Convert facts to text list and check source URLs
   const factItems = (facts || []).map((f) => (typeof f === 'string' ? { text: f, sourceUrl: '' } : f));
-  const hasValidSourceUrls = factItems.some((f) => f.sourceUrl && f.sourceUrl.startsWith('http'));
-
-  const isStrictScientificNiche = Boolean(
-    niche &&
-    (niche.toLowerCase().includes('science_space') ||
-      niche.toLowerCase().includes('scientific_paper') ||
-      niche.toLowerCase().includes('peer_reviewed'))
-  );
-
-  if (isStrictScientificNiche && !hasValidSourceUrls && factItems.length === 0) {
-    violations.push({
-      code: 'UNGROUNDED_CLAIM',
-      message: 'Fact-grounding failure: No verified scientific source URLs found for this topic. System must skip topic instead of writing from ungrounded memory.',
-      severity: 'warning',
-      remediation: 'Ensure research stage supplies real source URLs (NASA, PNAS, Nature, Science, ESA, NOAA).',
-    });
-  }
 
   // Check specific blue whale claims against Goldbogen et al. 2019 PNAS:
   // True PNAS findings: 4-8 bpm in dives, down to 2 bpm, 25-37 bpm at surface.

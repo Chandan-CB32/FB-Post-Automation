@@ -1304,7 +1304,7 @@ export class SystemStore {
           }
         }
         if (!profileExists) {
-          if (options?.force || updates.custom_niche || updates.custom_niche_text) {
+          if (options?.force || updates.custom_niche || updates.custom_niche_text || updates.content_source_mode === 'excel_library') {
             console.warn(`[SystemStore] Profile ${updates.profile_id} not found. Gracefully resetting profile_id to null.`);
             updates.profile_id = null;
           } else {

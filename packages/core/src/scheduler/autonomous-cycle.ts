@@ -4,7 +4,7 @@ import { FacebookPublisher, PhotoInput, computePostContentHash } from '../facebo
 import { ContentProfile } from '../validation/schemas.js';
 import { reconcileScheduledPosts, ReconciliationSummary } from './reconciler.js';
 import { calculateNextSlots, PageScheduleConfig } from './slot-planner.js';
-import { runGenerationPipeline } from '../pipeline/generation-pipeline.js';
+import { runGenerationPipeline, resolveEffectiveModel } from '../pipeline/generation-pipeline.js';
 import { rasterizeHeadlineCardToJpeg } from '../pipeline/headline-renderer.js';
 import { decrypt } from '../crypto/encryption.js';
 import { runDailyContentResearch } from '../topics/daily-research.js';
@@ -242,7 +242,7 @@ export async function runAutonomousCycle(
                 id: p.id,
                 name: p.name,
                 kind: p.kind || p.adapter_kind,
-                model_name: p.model_name,
+                model_name: resolveEffectiveModel(p, 'text'),
                 priority: p.priority || 1,
                 base_url: p.base_url,
                 config: p.config,
@@ -373,7 +373,7 @@ export async function runAutonomousCycle(
             try {
               let { data: libItems } = await supabase
                 .from('library_items')
-                .select('*, library_assets(*)')
+                .select('*')
                 .eq('page_id', page.id)
                 .in('status', ['matched', 'qa_passed', 'scheduled', 'pending'])
                 .order('row_index', { ascending: true })

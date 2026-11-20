@@ -39,8 +39,13 @@ export class OpenAIChatAdapter implements TextProviderAdapter {
       if (!headers['X-Title']) headers['X-Title'] = 'FB Post Automation';
     }
 
+    let effectiveModel = options.model;
+    if (baseUrl.includes('groq.com') && typeof effectiveModel === 'string' && effectiveModel.startsWith('meta-llama/')) {
+      effectiveModel = effectiveModel.replace(/^meta-llama\//, '');
+    }
+
     const requestBody: Record<string, unknown> = {
-      model: options.model,
+      model: effectiveModel,
       messages,
       ...(options.temperature !== undefined && { temperature: options.temperature }),
       ...(options.maxTokens !== undefined && { max_tokens: options.maxTokens }),
