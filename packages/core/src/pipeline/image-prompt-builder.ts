@@ -102,13 +102,24 @@ export function extractConcreteSubject(
     return 'realistic scientific visualization of Jupiter as seen by the Juno spacecraft, showing swirling polar cyclones and deep atmospheric bands with accurate NASA telemetry';
   }
 
-  // Fallback: extract specific scientific noun phrases
+  // Fallback: extract specific noun phrases
   const cleanedHeadline = headline
     .replace(/\*\*/g, '')
     .replace(/\b(PUMPS|REVEALED|CONFIRMS|DISCOVERS|DECODES|HARBOR|WITH|EVERY|REAL|TIME|MODERN|NEW)\b/gi, '')
     .trim();
 
-  return `a scientifically accurate, photorealistic representation of ${cleanedHeadline || topic}`;
+  const isHorrorOrFiction =
+    combined.includes('horror') ||
+    combined.includes('ghost') ||
+    combined.includes('creepy') ||
+    combined.includes('fiction') ||
+    combined.includes('haunted');
+
+  if (isHorrorOrFiction) {
+    return `Atmospheric, cinematic visual depicting ${cleanedHeadline || topic}`;
+  }
+
+  return `High-detail, photorealistic visual representation of ${cleanedHeadline || topic}`;
 }
 
 /**

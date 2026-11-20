@@ -1278,9 +1278,9 @@
     document.getElementById('editFirstCommentPrompt').value = page.first_comment_prompt || '';
 
     const overrides = page.overrides || {};
-    document.getElementById('editMinWords').value = overrides['caption.min'] || 120;
-    document.getElementById('editTargetWords').value = overrides['caption.target'] || 180;
-    document.getElementById('editMaxWords').value = overrides['caption.max'] || 250;
+    document.getElementById('editMinWords').value = page.min_words || overrides['caption.min'] || 120;
+    document.getElementById('editTargetWords').value = page.target_words || overrides['caption.target'] || 180;
+    document.getElementById('editMaxWords').value = page.max_words || overrides['caption.max'] || 250;
     document.getElementById('editAspectRatio').value = overrides['image.aspectRatio'] || '4:5';
     document.getElementById('editPanelEnabled').checked = overrides['image.headlinePanel.enabled'] !== false;
     document.getElementById('editPanelHeight').value = overrides['image.headlinePanel.heightPercent'] || 36;
@@ -1556,6 +1556,9 @@
       const payload = {
         id: pageId,
         pageId: pageId,
+        min_words: parseInt(document.getElementById('editMinWords').value, 10),
+        target_words: parseInt(document.getElementById('editTargetWords').value, 10),
+        max_words: parseInt(document.getElementById('editMaxWords').value, 10),
         profile_id: rawProfileId === '__custom__' || rawProfileId === 'custom' ? null : rawProfileId,
         custom_niche: custom_niche_name,
         custom_niche_name: custom_niche_name,

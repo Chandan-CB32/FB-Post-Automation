@@ -1921,9 +1921,13 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (data.max_sentences_per_paragraph !== undefined) {
         updates.max_sentences_per_paragraph = Math.max(1, Math.min(10, Number(data.max_sentences_per_paragraph) || 3));
       }
-      if (data.min_words !== undefined) updates.min_words = Math.max(20, Number(data.min_words) || 120);
-      if (data.target_words !== undefined) updates.target_words = Math.max(30, Number(data.target_words) || 180);
-      if (data.max_words !== undefined) updates.max_words = Math.max(40, Number(data.max_words) || 250);
+      const resolvedMin = data.min_words !== undefined ? data.min_words : (data.overrides?.['caption.min'] !== undefined ? data.overrides['caption.min'] : data.minWords);
+      const resolvedTarget = data.target_words !== undefined ? data.target_words : (data.overrides?.['caption.target'] !== undefined ? data.overrides['caption.target'] : data.targetWords);
+      const resolvedMax = data.max_words !== undefined ? data.max_words : (data.overrides?.['caption.max'] !== undefined ? data.overrides['caption.max'] : data.maxWords);
+
+      if (resolvedMin !== undefined) updates.min_words = Math.max(20, Number(resolvedMin) || 120);
+      if (resolvedTarget !== undefined) updates.target_words = Math.max(30, Number(resolvedTarget) || 180);
+      if (resolvedMax !== undefined) updates.max_words = Math.max(40, Number(resolvedMax) || 250);
 
       if (data.schedule) {
         const scheduleVal = validatePageSchedule(data.schedule);

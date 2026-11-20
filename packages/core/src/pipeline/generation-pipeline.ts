@@ -660,6 +660,12 @@ export async function runGenerationPipeline(
   const isFactual =
     profile?.type === "factual" || profile?.type === "true_story" || isScience;
 
+  const isExcelLibrary =
+    Boolean(options.libraryItem) ||
+    Boolean(options.libraryImageBuffer) ||
+    (page as any).content_source_mode === "excel_library" ||
+    (page.overrides as any)?.content_source_mode === "excel_library";
+
   const captionSettings = profile?.captionSettings || {
     unit: "words" as const,
     min: 50,
@@ -679,20 +685,28 @@ export async function runGenerationPipeline(
     formatSourceLine: false,
   };
 
-  const rawMin = Number(page.min_words) || captionSettings.min;
-  const rawTarget = Number(page.target_words) || captionSettings.target;
-  const rawMax = Number(page.max_words) || captionSettings.max;
+  const rawMin =
+    Number(page.min_words) ||
+    Number(page.overrides?.["caption.min"]) ||
+    Number((page.overrides as any)?.min_words) ||
+    captionSettings.min ||
+    50;
+  const rawTarget =
+    Number(page.target_words) ||
+    Number(page.overrides?.["caption.target"]) ||
+    Number((page.overrides as any)?.target_words) ||
+    captionSettings.target ||
+    180;
+  const rawMax =
+    Number(page.max_words) ||
+    Number(page.overrides?.["caption.max"]) ||
+    Number((page.overrides as any)?.max_words) ||
+    captionSettings.max ||
+    250;
 
-  // In standard social feed posts, cap default word limits unless explicitly set on page
-  const minWords = page.min_words
-    ? Number(page.min_words)
-    : (rawMin > 250 ? 50 : rawMin) || 50;
-  const targetWords = page.target_words
-    ? Number(page.target_words)
-    : (rawTarget > 350 ? 120 : rawTarget) || 120;
-  const maxWords = page.max_words
-    ? Number(page.max_words)
-    : (rawMax > 450 ? 220 : rawMax) || 220;
+  const minWords = Math.max(20, rawMin);
+  const targetWords = Math.max(minWords, rawTarget);
+  const maxWords = Math.max(targetWords, rawMax);
   const maxSentencesPerParagraph =
     Number(page.max_sentences_per_paragraph) ||
     captionSettings.maxSentencesPerParagraph ||
@@ -1758,7 +1772,11 @@ FORMAT INSTRUCTIONS:
 
   let visualPrompt = concreteVisualResult.prompt;
   const negativePrompt = concreteVisualResult.negativePrompt;
-  keyScene = bestImageBrief.subject || concreteVisualResult.prompt;
+  if (isExcelLibrary && (options.libraryItem || options.libraryImageBuffer)) {
+    keyScene = options.libraryItem?.imageIdea || options.libraryItem?.contentIdea || topicTitle || "Matched Library Image";
+  } else {
+    keyScene = bestImageBrief.subject || concreteVisualResult.prompt;
+  }
 
   stages.push({
     stage: "image_prompt",
@@ -2108,6 +2126,7 @@ FORMAT INSTRUCTIONS:
   // --------------------------------------------------------------------------
   const s7Start = Date.now();
   const headlinePanelEnabled =
+    !isExcelLibrary &&
     page.overrides?.["image.headlinePanel.enabled"] !== false &&
     (page.overrides?.["image.headlinePanel"] as any)?.enabled !== false &&
     (page as any).headline_panel_enabled !== false;

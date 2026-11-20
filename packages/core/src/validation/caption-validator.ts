@@ -110,14 +110,16 @@ export function trimToWordLimit(text: string, maxWords: number): string {
 
   // Helper to split a block into complete sentences ending with [.!?]
   const extractCompleteSentences = (p: string): string[] => {
-    const matches = p.match(/[^.!?]+[.!?]+(?:\s+|$)/g);
+    // Protect common abbreviations and timestamps like a.m., p.m., e.g., i.e.
+    const safeText = p.replace(/\b([ap])\.m\./gi, '$1__M__');
+    const matches = safeText.match(/[^.!?]+[.!?]+(?:\s+|$)/g);
     if (!matches) {
       const cleaned = p.trim();
       return cleaned
         ? [cleaned.endsWith('.') || cleaned.endsWith('!') || cleaned.endsWith('?') ? cleaned : `${cleaned}.`]
         : [];
     }
-    return matches.map((s) => s.trim()).filter(Boolean);
+    return matches.map((s) => s.replace(/([ap])__M__/gi, '$1.m.').trim()).filter(Boolean);
   };
 
   // Identify Hook (first paragraph)
