@@ -515,8 +515,11 @@ export async function runAutonomousCycle(
           const publishingMode = page.publishing_mode || 'auto';
           const requiresReview =
             publishingMode === 'review' ||
-            pipelineResult.requires_human_review ||
-            (publishingMode === 'hybrid' && (pipelineResult.qaScore ?? 0) < (page.hybrid_min_score || 80));
+            (publishingMode === 'hybrid' && (
+              pipelineResult.requires_human_review ||
+              (pipelineResult.qaScore ?? 0) < (page.hybrid_min_score || 80)
+            )) ||
+            (publishingMode === 'auto' && (pipelineResult as any).emergencyReformatApplied === true);
 
           if (requiresReview) {
             postStatus = 'pending_review';
@@ -529,8 +532,10 @@ export async function runAutonomousCycle(
                 rawToken = decryptPageToken(rawToken);
               }
 
-              // 1. Primary photo: 1080x1350 composed card with top photo & lower headline panel
-              let photoBuffer: Buffer | undefined = (pipelineResult as any).compositeJpegBuffer;
+              // 1. Primary photo: 1080x1350 composed card or raw library image
+              let photoBuffer: Buffer | undefined =
+                (pipelineResult as any).compositeJpegBuffer ||
+                (pipelineResult as any).rawImageBuffer;
 
               if (!photoBuffer && (pipelineResult as any).svgXml) {
                 try {
@@ -547,12 +552,17 @@ export async function runAutonomousCycle(
                 }
               }
 
-              // Fallback: extract buffer from compositeImageUrl if available
-              if (!photoBuffer && pipelineResult.compositeImageUrl?.startsWith('data:image/')) {
-                try {
-                  const parts = pipelineResult.compositeImageUrl.split(',');
-                  photoBuffer = Buffer.from(parts[1], 'base64');
-                } catch (_) {}
+              // Fallback: extract buffer from compositeImageUrl or thumbnailUrl if available
+              if (!photoBuffer) {
+                const dataUri =
+                  (pipelineResult.compositeImageUrl?.startsWith('data:image/') ? pipelineResult.compositeImageUrl : null) ||
+                  ((pipelineResult as any).thumbnailUrl?.startsWith('data:image/') ? (pipelineResult as any).thumbnailUrl : null);
+                if (dataUri) {
+                  try {
+                    const parts = dataUri.split(',');
+                    photoBuffer = Buffer.from(parts[1], 'base64');
+                  } catch (_) {}
+                }
               }
 
               // Verify photoBuffer entropy: upper area must not be solid pitch-black

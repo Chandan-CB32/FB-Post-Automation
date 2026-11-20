@@ -199,6 +199,7 @@ export interface GenerationPipelineResult {
   thumbnailUrl: string;
   compositeImageUrl: string;
   compositeJpegBuffer?: Buffer;
+  rawImageBuffer?: Buffer;
   imageBrief?: ImageBriefOutput;
   categoryAssignment?: CategorySelectionResult;
   varietyValidation?: VarietyValidationResult;
@@ -2246,6 +2247,7 @@ FORMAT INSTRUCTIONS:
     thumbnailUrl,
     compositeImageUrl,
     compositeJpegBuffer,
+    rawImageBuffer,
     imageBrief: bestImageBrief,
     varietyValidation: bestVarietyResult || undefined,
     svgXml: renderedCard?.svgXml,

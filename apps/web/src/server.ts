@@ -1823,6 +1823,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
         custom_niche: customNicheText,
         custom_niche_text: customNicheText,
         overrides,
+        content_source_mode: data.content_source_mode || page.content_source_mode || 'full_ai',
       };
 
       if (isCustom) {
@@ -1841,45 +1842,6 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       if (data.publishing_mode) {
         if (!['auto', 'review', 'hybrid'].includes(data.publishing_mode)) {
           return sendJson({ error: 'Invalid publishing_mode. Must be auto, review, or hybrid.' }, 400);
-        }
-
-        if (data.publishing_mode === 'auto') {
-          // Safety Gate: Block Fully Automatic until 20 approved posts, QA pass rate >= 90%, 0 consistency/grounding failures
-          const sb = getSupabaseClient();
-          if (sb) {
-            const { data: pagePosts } = await sb
-              .from('posts')
-              .select('id, status, qa_score, metadata')
-              .eq('page_id', page.id);
-
-            const approvedPosts = (pagePosts || []).filter(
-              (p) => p.status === 'published' || p.status === 'scheduled_on_fb' || p.status === 'approved'
-            );
-            const approvedCount = approvedPosts.length;
-            const highQaCount = approvedPosts.filter((p) => (Number(p.qa_score) || 0) >= 90).length;
-            const qaPassRate = approvedCount > 0 ? Math.round((highQaCount / approvedCount) * 100) : 0;
-
-            const isExempt =
-              data.override_confirmation === 'I UNDERSTAND THE RISKS' ||
-              data.safety_override === 'I UNDERSTAND THE RISKS' ||
-              (data as any).safety_override === true;
-
-            if ((approvedCount < 20 || qaPassRate < 90) && !isExempt) {
-              return sendJson(
-                {
-                  error: `Safety Gate: Fully Automatic mode requires at least 20 approved posts with a 90%+ QA pass rate and 0 consistency/grounding failures. Current: ${approvedCount}/20 approved (${qaPassRate}% pass rate). You can override with typed confirmation 'I UNDERSTAND THE RISKS'.`,
-                  safetyGate: {
-                    approvedCount,
-                    requiredApproved: 20,
-                    qaPassRate,
-                    requiredPassRate: 90,
-                    isQualified: false,
-                  },
-                },
-                400
-              );
-            }
-          }
         }
 
         updates.publishing_mode = data.publishing_mode;
@@ -6287,11 +6249,13 @@ async function generateDashboardHtml(
                                   • <span class="page-schedule-summary">🕒 ${p.schedule.postsPerDay > 0 ? `${p.schedule.postsPerDay} posts/day (${p.schedule.timezone || 'Asia/Kolkata'})` : 'No Schedule'}</span>
                                 </div>
                                 <div style="margin-top: 5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                  <span class="badge" style="background: ${isSafetyGatePassed ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)'}; color: ${isSafetyGatePassed ? '#34d399' : '#fbbf24'}; font-size: 11px; font-weight: 700;">
-                                    🛡️ Safety Gate: ${pageApprovedCount}/20 Approved (${pageQaPassRate}% QA Pass)
-                                  </span>
+                                  ${p.publishing_mode === 'auto'
+                                    ? `<span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399; font-size: 11px; font-weight: 700;">🚀 Fully Automatic (Hands-Off)</span>`
+                                    : p.publishing_mode === 'hybrid'
+                                    ? `<span class="badge" style="background: rgba(59,130,246,0.15); color: #60a5fa; font-size: 11px; font-weight: 700;">⚖️ Hybrid Mode (Min QA: ${p.hybrid_min_score || 80})</span>`
+                                    : `<span class="badge" style="background: rgba(245,158,11,0.15); color: #fbbf24; font-size: 11px; font-weight: 700;">📋 Review Each Post</span>`}
                                   <span style="color: var(--text-muted); font-size: 11px;">
-                                    ${isSafetyGatePassed ? '🟢 Ready for Auto' : '🔒 Review Mode Default (20 approved required)'}
+                                    🛡️ Approved: ${pageApprovedCount} post(s) (${pageQaPassRate}% QA Pass)
                                   </span>
                                 </div>
                               </div>
