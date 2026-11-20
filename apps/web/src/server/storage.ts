@@ -1241,70 +1241,47 @@ export class SystemStore {
               (p) =>
                 p.id === updates.profile_id ||
                 p.name === updates.profile_id ||
+                p.name.toLowerCase() === updates.profile_id?.toLowerCase() ||
                 p.customVariables?.niche === updates.profile_id ||
                 (p as any).niche === updates.profile_id
             );
             if (seed) profileExists = true;
           }
         } else {
-          const { data: pRow } = await this.getClient()
-            .from('content_profiles')
-            .select('id')
-            .eq('id', updates.profile_id)
-            .maybeSingle();
-          if (pRow) {
+          // Check if matches in seed profiles first
+          const seed = getAllNicheProfiles().find(
+            (p) =>
+              p.id === updates.profile_id ||
+              p.name.toLowerCase() === updates.profile_id?.toLowerCase() ||
+              p.name.toLowerCase().includes(updates.profile_id?.toLowerCase() || '') ||
+              (p as any).customVariables?.niche === updates.profile_id
+          );
+          if (seed) {
+            updates.profile_id = seed.id;
             profileExists = true;
           } else {
-            // Check if matches by name or in seed profiles
-            const seed = getAllNicheProfiles().find(
-              (p) =>
-                p.id === updates.profile_id ||
-                p.name.toLowerCase() === updates.profile_id?.toLowerCase() ||
-                p.name.toLowerCase().includes(updates.profile_id?.toLowerCase() || '') ||
-                (p as any).customVariables?.niche === updates.profile_id
-            );
-            if (seed) {
-              const { data: pRowByName } = await this.getClient()
+            try {
+              const { data: pRow } = await this.getClient()
                 .from('content_profiles')
                 .select('id')
-                .ilike('name', `%${seed.name}%`)
+                .eq('id', updates.profile_id)
                 .maybeSingle();
-              if (pRowByName) {
-                updates.profile_id = pRowByName.id;
+              if (pRow) {
                 profileExists = true;
-              } else {
-                try {
-                  const dbPayload: Record<string, any> = {
-                    id: seed.id,
-                    name: seed.name,
-                    description: seed.description || '',
-                    type: seed.type || 'factual',
-                    language: seed.language || 'en',
-                    audience: seed.audience || 'General audience',
-                    master_prompt: seed.masterPrompt || '',
-                    templates: seed.templates || {},
-                    caption_settings: seed.captionSettings || {},
-                    hashtag_settings: seed.hashtagSettings || {},
-                    disclosure_settings: (seed as any).disclosureSettings || {},
-                    image_settings: seed.imageSettings || {},
-                    topic_settings: seed.topicSettings || {},
-                    research_source_ids: (seed as any).researchSourceIds || [],
-                    custom_variables: seed.customVariables || {},
-                    version: 1,
-                  };
-                  await this.getClient().from('content_profiles').insert(dbPayload);
-                  updates.profile_id = seed.id;
-                  profileExists = true;
-                } catch {
-                  updates.profile_id = seed.id;
-                  profileExists = true;
-                }
               }
+            } catch (err: any) {
+              console.warn('[SystemStore] Profile verification DB query failed:', err.message);
             }
           }
         }
+
         if (!profileExists) {
-          if (options?.force || updates.custom_niche || updates.custom_niche_text || updates.content_source_mode === 'excel_library') {
+          if (
+            options?.force ||
+            updates.custom_niche ||
+            updates.custom_niche_text ||
+            updates.content_source_mode === 'excel_library'
+          ) {
             console.warn(`[SystemStore] Profile ${updates.profile_id} not found. Gracefully resetting profile_id to null.`);
             updates.profile_id = null;
           } else {

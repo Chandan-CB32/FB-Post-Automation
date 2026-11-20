@@ -50,6 +50,23 @@ const BORING_GREETINGS = [
   'in today\'s fast-paced world',
 ];
 
+const CONVERSATIONAL_FILLER_PHRASES = [
+  'i will wait for your story',
+  'i will wait for your response',
+  'i will wait for your answer',
+  'please provide the story',
+  'please let me know if you need any clarification',
+  'i will be happy to answer any questions',
+  'best regards,',
+  '[your name]',
+  'looking forward to reading it',
+  'please proceed with the story',
+  'as an ai language model',
+  'as an ai,',
+  'here is the story you requested',
+  'i am excited to read your story',
+];
+
 /**
  * Counts words by splitting on whitespace.
  */
@@ -359,6 +376,19 @@ export function validateCaption(
         currentValue: phrase,
       });
       suggestedFixes.push(`Remove or rephrase forbidden cliche: "${phrase}".`);
+    }
+  }
+
+  // 5b. Conversational Assistant Filler Check
+  for (const filler of CONVERSATIONAL_FILLER_PHRASES) {
+    if (lowerCaption.includes(filler)) {
+      violations.push({
+        rule: 'banned_phrases',
+        message: `Conversational filler detected ("${filler}"). Content must be a finished post, not an assistant dialogue.`,
+        severity: 'error',
+        currentValue: filler,
+      });
+      suggestedFixes.push('Generate the complete story directly without conversational chat phrases.');
     }
   }
 

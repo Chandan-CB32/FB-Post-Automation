@@ -938,7 +938,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     if (url.pathname === '/dashboard.js') {
       res.writeHead(200, {
         'Content-Type': 'application/javascript; charset=utf-8',
-        'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
       });
       res.end(DASHBOARD_CLIENT_SCRIPT);
       return;
@@ -3547,6 +3547,13 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             return sendJson({ error: 'Please enter a Google Drive folder ID or URL before syncing.' }, 400);
           }
 
+          if (library && library.drive_folder_id !== effectiveFolderId) {
+            library = await store.updateLibrary(library.id, {
+              drive_folder_id: effectiveFolderId,
+              image_source: 'drive',
+            });
+          }
+
           const creds = await store.getGoogleDriveServiceAccount(true);
           if (!creds) {
             return sendJson({
@@ -3556,7 +3563,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
 
           const driveClient = new GoogleDriveClient({
             credentials: creds,
-            libraryFolderId: library.drive_folder_id,
+            libraryFolderId: effectiveFolderId,
             postedFolderId: library.posted_folder_id || undefined,
           });
 
@@ -9172,7 +9179,7 @@ async function generateDashboardHtml(
   </nav>
 
   <!-- Real Static Client Script -->
-  <script src="/dashboard.js" defer></script>
+  <script src="/dashboard.js?v=20261120_clean" defer></script>
 </body>
 </html>`;
 }

@@ -851,7 +851,9 @@ export async function runGenerationPipeline(
     },
   ];
 
-  if (
+  if (options.libraryItem) {
+    // Already populated from library item
+  } else if (
     options.queueItem &&
     Array.isArray(options.queueItem.facts) &&
     options.queueItem.facts.length > 0
@@ -1014,10 +1016,13 @@ export async function runGenerationPipeline(
   // STAGE 3: Caption Writing & Prompt Composition
   // --------------------------------------------------------------------------
   let keyScene =
+    options.libraryItem?.imageIdea ||
+    options.libraryItem?.imagePrompt ||
     options.queueItem?.visualSubject ||
     `High-detail visual exploring ${topicTitle || profile?.name || "the scene"}, showcasing key elements with dramatic atmospheric lighting and cinematic framing.`;
   let headline =
     options.libraryItem?.teaserSeed ||
+    options.libraryItem?.contentIdea ||
     options.queueItem?.headline ||
     `${(topicTitle || profile?.name || "DISCOVERY").toUpperCase()}: THE UNSEEN REVELATION`;
 
@@ -1114,10 +1119,26 @@ export async function runGenerationPipeline(
     url: typeof f === "object" && f.sourceUrl ? f.sourceUrl : "https://science.nasa.gov/",
   }));
 
-  const assignmentBlock = `TOPIC & CONTENT DETAILS:
+  const promptDirective = `[CRITICAL DIRECTIVE: WRITE AND OUTPUT THE COMPLETE POST IMMEDIATELY]
+You are the content writer generating this post right now.
+All necessary ideas, topic, and requirements are fully specified below.
+DO NOT output conversational replies, greetings, confirmations, questions, offers to wait, or sign-offs like "Best regards".
+Write and return the complete, finished post directly.`;
+
+  const assignmentBlock = options.libraryItem
+    ? `[ASSIGNED POST DETAILS]
+CONTENT IDEA: ${topicTitle}
+${options.libraryItem?.imageIdea ? `IMAGE IDEA: ${options.libraryItem.imageIdea}\n` : ""}${options.libraryItem?.hiddenClue ? `HIDDEN CLUE / TWIST: ${options.libraryItem.hiddenClue}\n` : ""}${options.libraryVisionFacts && options.libraryVisionFacts.length > 0 ? `IMAGE VISIBLE FACTS: ${options.libraryVisionFacts.join("; ")}\n` : ""}${factItemsWithUrls.length > 0 ? `KEY FACTS:\n${factItemsWithUrls.map((f) => `- ${f.text}`).join("\n")}\n` : ""}
+[LENGTH & FORMAT CONSTRAINTS]
+- Write approximately ${targetWords} words (min: ${minWords}, max: ${maxWords}).
+- Paragraphs: Keep paragraphs short (maximum ${maxSentencesPerParagraph} sentences each) with blank lines between them.
+- Format: Plain text only.
+
+NOW WRITE THE COMPLETE POST BELOW IMMEDIATELY:`
+    : `TOPIC & CONTENT DETAILS:
 Assigned Category: ${topicCategory}
 Topic: ${topicTitle}
-${options.libraryItem?.contentIdea ? `CONTENT IDEA: ${options.libraryItem.contentIdea}\n` : ""}${options.libraryItem?.imageIdea ? `IMAGE IDEA: ${options.libraryItem.imageIdea}\n` : ""}${options.libraryItem?.hiddenClue ? `HIDDEN CLUE / TWIST: ${options.libraryItem.hiddenClue}\n` : ""}${options.libraryVisionFacts && options.libraryVisionFacts.length > 0 ? `IMAGE VISIBLE FACTS: ${options.libraryVisionFacts.join("; ")}\n` : ""}Facts / Background:
+Facts / Background:
 ${factItemsWithUrls.map((f) => `- ${f.text}`).join("\n")}
 
 OUTPUT FORMAT REQUIRED:
@@ -1141,10 +1162,12 @@ FORMAT INSTRUCTIONS:
 
   const rawEffectivePrompt = page.custom_caption_prompt && page.custom_caption_prompt.trim()
     ? [
+        promptDirective,
         page.custom_caption_prompt.trim(),
         assignmentBlock,
       ].join("\n\n")
     : [
+        promptDirective,
         basePrompt,
         assignmentBlock,
       ].join("\n\n");
@@ -1371,19 +1394,29 @@ FORMAT INSTRUCTIONS:
       .replace(/(?:^|\n)\s*(?:[-*•]\s*)?Illustration:\s*AI[- ]generated[^\n]*(?:\n|$)/gi, "\n\n")
       .trim();
 
-    // Ensure exactly 5 valid hashtags conforming to composition rule (1 broad, 1 category, 2 topic, 1 community)
+    // Ensure exactly 5 valid hashtags conforming to composition rule
     const existingTags = extractHashtags(draft);
-    if (existingTags.length !== 5) {
+    if (existingTags.length < 3) {
       const bodyWithoutTags = draft.replace(/#[A-Za-z0-9_]+/g, "").trim();
-      const catNorm = topicCategory.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const nicheTags = [
-        "#science",
-        `#${catNorm.slice(0, 15) || "discovery"}`,
-        `#${(topicTitle.split(/\s+/)[0] || "research").toLowerCase().replace(/[^a-z0-9]/g, "")}`,
-        `#${(topicTitle.split(/\s+/)[1] || "nature").toLowerCase().replace(/[^a-z0-9]/g, "")}`,
-        "#sciencefacts",
-      ];
-      const merged = Array.from(new Set([...existingTags, ...nicheTags])).slice(0, 5);
+      const catNorm = (topicCategory || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const niche = ((page as any).niche || profile?.name || "").toLowerCase();
+      let defaultTags: string[];
+      if (niche.includes("horror") || niche.includes("ghost") || niche.includes("creep")) {
+        defaultTags = ["#HorrorStories", "#GhostStories", "#CreepyTales", "#ScaryStories", "#Spooky"];
+      } else if (niche.includes("crime") || niche.includes("mystery")) {
+        defaultTags = ["#CrimeStories", "#TrueCrime", "#Mystery", "#Investigation", "#Suspense"];
+      } else if (niche.includes("car")) {
+        defaultTags = ["#VintageCars", "#ClassicCars", "#Automotive", "#RetroCars", "#CarLovers"];
+      } else if (niche.includes("photo")) {
+        defaultTags = ["#Photography", "#StreetPhotography", "#VisualArt", "#PhotoOfTheDay", "#Lens"];
+      } else if (niche.includes("science") || niche.includes("space")) {
+        defaultTags = ["#Space", "#Astronomy", "#Science", "#Cosmos", "#Discovery"];
+      } else {
+        defaultTags = [`#${catNorm.slice(0, 15) || "Story"}`, `#${(topicTitle.split(/\s+/)[0] || "Featured").toLowerCase().replace(/[^a-z0-9]/g, "")}`, "#Stories", "#ViralPost", "#MustRead"];
+      }
+      const fixedProfileTags = profile?.hashtagSettings?.fixedHashtags || [];
+      const pool = fixedProfileTags.length > 0 ? fixedProfileTags : defaultTags;
+      const merged = Array.from(new Set([...existingTags, ...pool])).slice(0, 5);
       draft = `${bodyWithoutTags}\n\n${merged.join(" ")}`;
     }
 
@@ -2074,52 +2107,63 @@ FORMAT INSTRUCTIONS:
   // STAGE 7: Headline Panel Composition (1080x1350 Single Unified Raster JPEG)
   // --------------------------------------------------------------------------
   const s7Start = Date.now();
-  const sourceAttribution =
-    sourceUrls.length > 0
-      ? sourceUrls[0].replace("https://", "").split("/")[0]
-      : "Beyond the Known";
-  const renderedCard = renderHeadlineCard(headline, {
-    canvasWidth: 1080,
-    canvasHeight: 1350,
-    fontFamily:
-      (page.overrides?.["image.fontFamily"] as any) ||
-      (page.overrides?.["image.headlinePanel.fontFamily"] as any) ||
-      (page as any).image_font_family ||
-      "Roboto",
-    panelColor: (page.overrides?.["image.panelColor"] as string) || "#000000",
-    panelHeightMode:
-      (page.overrides?.["image.panelHeightMode"] as any) || "auto",
-    sidePaddingRatio:
-      (page.overrides?.["image.headlinePanel.sidePaddingRatio"] as number) ?? 0.018,
-    topBottomPaddingRatio:
-      (page.overrides?.["image.headlinePanel.topBottomPaddingRatio"] as number) ?? 0.02,
-    minFontSize:
-      (page.overrides?.["image.headlinePanel.minFontSize"] as number) || 48,
-    maxFontSize:
-      (page.overrides?.["image.headlinePanel.maxFontSize"] as number) || 64,
-    themeColor: isHorror ? "#e11d48" : "#38bdf8",
-    niche: topicCategory,
-    imageUrl: thumbnailUrl,
-    imageBuffer: rawImageBuffer,
-    matchNiche: true,
-  });
+  const headlinePanelEnabled =
+    page.overrides?.["image.headlinePanel.enabled"] !== false &&
+    (page.overrides?.["image.headlinePanel"] as any)?.enabled !== false &&
+    (page as any).headline_panel_enabled !== false;
 
-  // Rasterize card to a single unified 1080x1350 JPEG
   let compositeJpegBuffer: Buffer | undefined;
-  let compositeImageUrl = renderedCard.svgDataUri;
-  try {
-    compositeJpegBuffer = await rasterizeHeadlineCardToJpeg(renderedCard, 95, {
-      imageBuffer: rawImageBuffer,
+  let compositeImageUrl = thumbnailUrl;
+  let renderedCard: any = null;
+
+  if (headlinePanelEnabled) {
+    renderedCard = renderHeadlineCard(headline, {
+      canvasWidth: 1080,
+      canvasHeight: 1350,
+      fontFamily:
+        (page.overrides?.["image.fontFamily"] as any) ||
+        (page.overrides?.["image.headlinePanel.fontFamily"] as any) ||
+        (page as any).image_font_family ||
+        "Roboto",
+      panelColor: (page.overrides?.["image.panelColor"] as string) || "#000000",
+      panelHeightMode:
+        (page.overrides?.["image.panelHeightMode"] as any) || "auto",
+      sidePaddingRatio:
+        (page.overrides?.["image.headlinePanel.sidePaddingRatio"] as number) ?? 0.018,
+      topBottomPaddingRatio:
+        (page.overrides?.["image.headlinePanel.topBottomPaddingRatio"] as number) ?? 0.02,
+      minFontSize:
+        (page.overrides?.["image.headlinePanel.minFontSize"] as number) || 48,
+      maxFontSize:
+        (page.overrides?.["image.headlinePanel.maxFontSize"] as number) || 64,
+      themeColor: isHorror ? "#e11d48" : "#38bdf8",
+      niche: topicCategory,
       imageUrl: thumbnailUrl,
+      imageBuffer: rawImageBuffer,
+      matchNiche: true,
     });
+
+    compositeImageUrl = renderedCard.svgDataUri;
+    try {
+      compositeJpegBuffer = await rasterizeHeadlineCardToJpeg(renderedCard, 95, {
+        imageBuffer: rawImageBuffer,
+        imageUrl: thumbnailUrl,
+      });
+      if (compositeJpegBuffer && compositeJpegBuffer.byteLength > 500) {
+        compositeImageUrl = `data:image/jpeg;base64,${compositeJpegBuffer.toString("base64")}`;
+      }
+    } catch (rErr) {
+      console.warn(
+        "[GenerationPipeline] Failed to rasterize composed card to JPEG:",
+        rErr,
+      );
+    }
+  } else {
+    // Headline panel is DISABLED: use the raw image buffer directly without overlaying text!
+    compositeJpegBuffer = rawImageBuffer;
     if (compositeJpegBuffer && compositeJpegBuffer.byteLength > 500) {
       compositeImageUrl = `data:image/jpeg;base64,${compositeJpegBuffer.toString("base64")}`;
     }
-  } catch (rErr) {
-    console.warn(
-      "[GenerationPipeline] Failed to rasterize composed card to JPEG:",
-      rErr,
-    );
   }
 
   stages.push({
@@ -2168,16 +2212,16 @@ FORMAT INSTRUCTIONS:
         ? "1080x1080 (1:1 Square)"
         : "1080x1350 (4:5 Portrait)",
     headlinePanel: {
-      enabled: page.overrides?.["image.headlinePanel.enabled"] !== false,
-      headlineText: renderedCard.plainHeadline,
+      enabled: headlinePanelEnabled,
+      headlineText: renderedCard?.plainHeadline || headline,
       backgroundColor:
         (page.overrides?.["image.panelColor"] as string) || "#000000",
-      sourceText: sourceAttribution,
-      segments: renderedCard.segments,
-      fontSize: renderedCard.layout.fontSize,
-      lines: renderedCard.layout.lines.map((l) => l.text),
+      sourceText: page.name || "Daily Dispatch",
+      segments: renderedCard?.segments || [],
+      fontSize: renderedCard?.layout?.fontSize || 48,
+      lines: renderedCard?.layout?.lines ? renderedCard.layout.lines.map((l: any) => l.text) : [],
     },
-    headlineSegments: renderedCard.segments,
+    headlineSegments: renderedCard?.segments || [],
     researchSources: sourceUrls,
     claimVerification: bestClaimResult?.claims || [],
     thumbnailUrl,
@@ -2185,8 +2229,8 @@ FORMAT INSTRUCTIONS:
     compositeJpegBuffer,
     imageBrief: bestImageBrief,
     varietyValidation: bestVarietyResult || undefined,
-    svgXml: renderedCard.svgXml,
-    renderedCard,
+    svgXml: renderedCard?.svgXml,
+    renderedCard: renderedCard || undefined,
     tokensUsed: 1295,
     estimatedCost:
       "$" +

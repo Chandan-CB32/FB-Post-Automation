@@ -254,16 +254,19 @@ export async function runAutonomousCycle(
           console.warn('[Autonomous Worker] Could not load provider keys:', pLoadErr);
         }
 
-        // Run Daily Content Research once per day or when topic queue is below target count
-        try {
-          await runDailyContentResearch({
-            page,
-            supabase,
-            activeProviders: activeProvidersWithKeys,
-            force: false,
-          });
-        } catch (resErr: any) {
-          console.warn(`[Autonomous Worker] Daily research warning for '${page.name}':`, resErr?.message || resErr);
+        // Run Daily Content Research once per day or when topic queue is below target count (FULL AI mode only)
+        const pageMode = page.content_source_mode || page.overrides?.content_source_mode || 'full_ai';
+        if (pageMode !== 'excel_library') {
+          try {
+            await runDailyContentResearch({
+              page,
+              supabase,
+              activeProviders: activeProvidersWithKeys,
+              force: false,
+            });
+          } catch (resErr: any) {
+            console.warn(`[Autonomous Worker] Daily research warning for '${page.name}':`, resErr?.message || resErr);
+          }
         }
 
         // Calculate upcoming slots: scan starting 2 hours in the past to catch any missed unfulfilled slot from today,
@@ -312,31 +315,33 @@ export async function runAutonomousCycle(
             `[Autonomous Worker] Generating post for '${page.name}' for slot ${slot.toISOString()} (T${diffMinutes >= 0 ? '-' : '+'}${Math.abs(Math.round(diffMinutes))}m)...`
           );
 
-          // Pop next pending researched topic from queue
+          // Pop next pending researched topic from queue ONLY if in full_ai mode
           let chosenQueueItem: any = null;
           let queueItemId: string | null = null;
-          try {
-            const { data: qRows } = await supabase
-              .from('topic_queue_items')
-              .select('*')
-              .eq('page_id', page.id)
-              .eq('status', 'pending')
-              .order('sort_order', { ascending: true })
-              .limit(1);
+          if (pageMode !== 'excel_library') {
+            try {
+              const { data: qRows } = await supabase
+                .from('topic_queue_items')
+                .select('*')
+                .eq('page_id', page.id)
+                .eq('status', 'pending')
+                .order('sort_order', { ascending: true })
+                .limit(1);
 
-            if (qRows && qRows.length > 0) {
-              queueItemId = qRows[0].id;
-              try {
-                chosenQueueItem = JSON.parse(qRows[0].text);
-              } catch (_) {
-                chosenQueueItem = {
-                  title: qRows[0].text,
-                  category: qRows[0].category,
-                };
+              if (qRows && qRows.length > 0) {
+                queueItemId = qRows[0].id;
+                try {
+                  chosenQueueItem = JSON.parse(qRows[0].text);
+                } catch (_) {
+                  chosenQueueItem = {
+                    title: qRows[0].text,
+                    category: qRows[0].category,
+                  };
+                }
               }
+            } catch (qErr: any) {
+              console.warn('[Autonomous Worker] Could not fetch next pending topic queue item:', qErr?.message || qErr);
             }
-          } catch (qErr: any) {
-            console.warn('[Autonomous Worker] Could not fetch next pending topic queue item:', qErr?.message || qErr);
           }
 
           // Resolve content profile
@@ -350,11 +355,11 @@ export async function runAutonomousCycle(
             if (pRow) profile = pRow;
           }
 
-          if (!profile) {
+          if (!profile && page.niche) {
             const { data: pRows } = await supabase
               .from('content_profiles')
               .select('*')
-              .ilike('name', '%science%')
+              .ilike('niche', `%${page.niche}%`)
               .limit(1);
             if (pRows && pRows.length > 0) {
               profile = pRows[0];
@@ -475,7 +480,7 @@ export async function runAutonomousCycle(
             profile: profile || undefined,
             activeProviders: activeProvidersWithKeys,
             userTopic: chosenLibraryItem?.content_idea || chosenQueueItem?.title,
-            queueItem: chosenQueueItem,
+            queueItem: chosenLibraryItem ? undefined : chosenQueueItem,
             libraryItem: chosenLibraryItem
               ? {
                   id: chosenLibraryItem.id,
