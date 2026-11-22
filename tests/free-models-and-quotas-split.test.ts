@@ -5,14 +5,14 @@ import { getProviderChain } from '../apps/web/src/server.js';
 describe('Free Models Catalog & Auto Resolution', () => {
   it('automatically resolves "auto" or empty model to verified free models for each provider', () => {
     // Gemini text
-    expect(resolveEffectiveModel({ name: 'Google Gemini', adapter_kind: 'gemini_native', model_name: 'auto' }, 'text')).toBe('gemini-2.5-flash');
-    expect(resolveEffectiveModel({ name: 'Google Gemini', adapter_kind: 'gemini_native', model_name: '' }, 'text')).toBe('gemini-2.5-flash');
+    expect(resolveEffectiveModel({ name: 'Google Gemini', adapter_kind: 'gemini_native', model_name: 'auto' }, 'text')).toBe('gemini-3.5-flash-lite');
+    expect(resolveEffectiveModel({ name: 'Google Gemini', adapter_kind: 'gemini_native', model_name: '' }, 'text')).toBe('gemini-3.5-flash-lite');
 
     // Gemini image
     expect(resolveEffectiveModel({ name: 'Google Gemini', adapter_kind: 'gemini_native', model_name: 'auto' }, 'image')).toBe('gemini-2.5-flash-image');
 
     // Groq
-    expect(resolveEffectiveModel({ name: 'Groq', adapter_kind: 'openai_compatible_chat', model_name: 'auto' }, 'text')).toBe('meta-llama/llama-3.3-70b-versatile');
+    expect(resolveEffectiveModel({ name: 'Groq', adapter_kind: 'openai_compatible_chat', model_name: 'auto' }, 'text')).toBe('openai/gpt-oss-120b');
 
     // OpenRouter
     expect(resolveEffectiveModel({ name: 'OpenRouter', adapter_kind: 'openai_compatible_chat', model_name: 'auto' }, 'text')).toBe('nvidia/nemotron-3-nano-30b-a3b:free');

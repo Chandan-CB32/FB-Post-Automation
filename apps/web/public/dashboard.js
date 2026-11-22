@@ -147,12 +147,12 @@
     if (pushState && window.location.pathname !== routePath) {
       try {
         history.pushState({ tabId: tabId }, '', routePath);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     try {
       sessionStorage.setItem('last_active_tab', routePath);
-    } catch (e) {}
+    } catch (e) { }
 
     if (tabId === 'page-prompts') {
       loadPageIntoStudio();
@@ -399,8 +399,8 @@
       const activeKeys = keys.filter(function (k) { return k.is_active; });
       const keyBadges = keys.length > 0
         ? keys.map(function (k) {
-            return '<span class="badge" style="background: ' + (k.is_active ? '#1e293b' : '#27272a') + '; color: ' + (k.is_active ? '#93c5fd' : '#71717a') + '; font-family: \'JetBrains Mono\', monospace; font-size: 11px; margin: 2px; display: inline-block;">' + escapeHtml(k.masked_key) + '</span>';
-          }).join('')
+          return '<span class="badge" style="background: ' + (k.is_active ? '#1e293b' : '#27272a') + '; color: ' + (k.is_active ? '#93c5fd' : '#71717a') + '; font-family: \'JetBrains Mono\', monospace; font-size: 11px; margin: 2px; display: inline-block;">' + escapeHtml(k.masked_key) + '</span>';
+        }).join('')
         : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
 
       const isCloudflare = (p.adapter_kind || p.kind || '').includes('cloudflare') || (p.name || '').toLowerCase().includes('cloudflare');
@@ -1129,7 +1129,7 @@
       } else if (window.location.search.includes('account=')) {
         history.replaceState(null, '', '/pages');
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // --- Pages Management ---
@@ -1239,7 +1239,7 @@
     loadPageIntoStudio();
     try {
       history.replaceState(null, '', '/prompts?profile=' + encodeURIComponent(pageId));
-    } catch (_) {}
+    } catch (_) { }
   }
 
   function loadPageIntoStudio() {
@@ -1320,12 +1320,12 @@
         imgPromptNotice.style.display = 'block';
         imgPromptNotice.innerHTML = '<div style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px;">' +
           '<div style="display: flex; align-items: center; gap: 8px; font-weight: 600; color: #38bdf8; font-size: 13px;">' +
-            '<span>📁</span> Excel + Google Drive Image Mode Active' +
+          '<span>📁</span> Excel + Google Drive Image Mode Active' +
           '</div>' +
           '<p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8; line-height: 1.5;">' +
-            'Images for <strong>' + escapeHtml(page.name) + '</strong> are retrieved directly from your matched Google Drive folder or uploaded photos in Content Library. AI image prompt generation and visual styling are disabled for this page.' +
+          'Images for <strong>' + escapeHtml(page.name) + '</strong> are retrieved directly from your matched Google Drive folder or uploaded photos in Content Library. AI image prompt generation and visual styling are disabled for this page.' +
           '</p>' +
-        '</div>';
+          '</div>';
       }
     } else {
       if (imgPromptGroup) imgPromptGroup.style.display = 'block';
@@ -1840,10 +1840,10 @@
       { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image (Nano Banana)', type: 'image' },
     ],
     groq: [
-      { id: 'meta-llama/llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile (14,400 RPD Free)', type: 'text' },
-      { id: 'meta-llama/llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant (14,400 RPD Free)', type: 'text' },
+      { id: 'qwen/qwen3.8-27b', name: 'Qwen 3.8 27B (14,400 RPD Free)', type: 'text' },
+      { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B (14,400 RPD Free)', type: 'text' },
+      { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B (14,400 RPD Free)', type: 'text' },
       { id: 'qwen/qwen-2.5-32b-instruct', name: 'Qwen 2.5 32B Instruct (14,400 RPD Free)', type: 'text' },
-      { id: 'gemma2-9b-it', name: 'Gemma 2 9B IT (14,400 RPD Free)', type: 'text' },
     ],
     openrouter: [
       { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'Nemotron 3 Nano 30B (100% Free)', type: 'text' },
@@ -1915,7 +1915,7 @@
       name: 'Groq',
       kind: 'openai_compatible_chat',
       baseUrl: 'https://api.groq.com/openai/v1',
-      defaultModel: 'meta-llama/llama-3.3-70b-versatile',
+      defaultModel: 'qwen/qwen3.8-27b',
       limit: 14400,
       instructions: 'Get a free high-speed API key at https://console.groq.com/keys. 30 RPM / 14,400 RPD free tier.'
     },
@@ -2279,7 +2279,7 @@
     if (kindInput) kindInput.value = kind;
     const baseInput = document.getElementById('newProviderBaseUrl');
     if (baseInput) baseInput.value = baseUrl;
-    
+
     updateModelDropdown('new', presetId, kind, name, model, currentAddingChainType);
 
     const limitInput = document.getElementById('newProviderDailyLimit');
@@ -2293,7 +2293,7 @@
     const name = document.getElementById('newProviderName').value;
     const adapter_kind = document.getElementById('newProviderAdapter').value;
     const base_url = document.getElementById('newProviderBaseUrl').value;
-    
+
     const modelSelect = document.getElementById('newProviderModelSelect');
     const customModelInput = document.getElementById('newProviderCustomModel');
     let model_name = document.getElementById('newProviderModel')?.value || 'auto';
@@ -2559,7 +2559,7 @@
     document.getElementById('editProviderName').value = p.name;
     document.getElementById('editProviderAdapter').value = p.adapter_kind;
     document.getElementById('editProviderBaseUrl').value = p.base_url || '';
-    
+
     const editChainType = isImageProvider(p) ? 'image' : 'text';
     updateModelDropdown('edit', p.preset_id || p.id, p.adapter_kind, p.name, p.model_name, editChainType);
 
@@ -2572,7 +2572,7 @@
     }
 
     document.getElementById('editProviderPriority').value = p.priority;
-    
+
     let displayLimit = p.daily_limit;
     const kind = (p.adapter_kind || '').toLowerCase();
     const name = (p.name || '').toLowerCase();
@@ -2620,7 +2620,7 @@
     const name = document.getElementById('editProviderName').value;
     const adapter_kind = document.getElementById('editProviderAdapter').value;
     const base_url = document.getElementById('editProviderBaseUrl').value;
-    
+
     const modelSelect = document.getElementById('editProviderModelSelect');
     const customModelInput = document.getElementById('editProviderCustomModel');
     let model_name = document.getElementById('editProviderModel')?.value || 'auto';
@@ -2738,7 +2738,7 @@
     if (!p) return;
     try {
       history.replaceState(null, '', '/providers?provider=' + encodeURIComponent(providerId) + '&dialog=keys');
-    } catch (_) {}
+    } catch (_) { }
     document.getElementById('keyPoolProviderId').value = providerId;
     document.getElementById('manageKeysTitle').innerText = '🔑 Keys for ' + p.name;
     document.getElementById('manageKeysSubtitle').innerText = 'Adapter: ' + p.adapter_kind + ' • Model: ' + (p.model_name || 'default');
@@ -2755,7 +2755,7 @@
         if (window.location.search.includes('dialog=keys')) {
           history.replaceState(null, '', '/providers');
         }
-      } catch (_) {}
+      } catch (_) { }
     }
   }
 
@@ -2792,8 +2792,8 @@
     const activeKeys = keys.filter(function (k) { return k.is_active; });
     const keyBadges = keys.length > 0
       ? keys.map(function (k) {
-          return '<span class="badge" style="background: ' + (k.is_active ? '#1e293b' : '#27272a') + '; color: ' + (k.is_active ? '#93c5fd' : '#71717a') + '; font-family: monospace; font-size: 11px; margin: 2px; display: inline-block;">' + escapeHtml(k.masked_key) + '</span>';
-        }).join('')
+        return '<span class="badge" style="background: ' + (k.is_active ? '#1e293b' : '#27272a') + '; color: ' + (k.is_active ? '#93c5fd' : '#71717a') + '; font-family: monospace; font-size: 11px; margin: 2px; display: inline-block;">' + escapeHtml(k.masked_key) + '</span>';
+      }).join('')
       : '<span style="color: var(--text-muted); font-size: 12px; font-style: italic;">No keys added</span>';
 
     const keyCell = row.cells[4];
@@ -3127,14 +3127,14 @@
     },
   };
 
-  function updateStudioCategoryPills() {}
-  function switchAnalyticsPageContentMix() {}
-  function openCategoryWeightsModal() {}
-  function closeCategoryWeightsModal() {}
-  function onCwmNicheChange() {}
-  function syncCwmWeight() {}
-  function resetCwmToDefaults() {}
-  function saveCategoryWeightsModal() {}
+  function updateStudioCategoryPills() { }
+  function switchAnalyticsPageContentMix() { }
+  function openCategoryWeightsModal() { }
+  function closeCategoryWeightsModal() { }
+  function onCwmNicheChange() { }
+  function syncCwmWeight() { }
+  function resetCwmToDefaults() { }
+  function saveCategoryWeightsModal() { }
 
   // --- Attach all functions to window for global invocation ---
   window.NICHE_PRESETS_CLIENT = NICHE_PRESETS_CLIENT;
@@ -3351,9 +3351,9 @@
     toast.style.cssText = 'background: ' + bg + '; color: #ffffff; padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); pointer-events: auto; display: flex; align-items: center; gap: 8px; transition: opacity 0.3s ease; opacity: 1;';
     toast.innerText = message;
     container.appendChild(toast);
-    setTimeout(function() {
+    setTimeout(function () {
       toast.style.opacity = '0';
-      setTimeout(function() {
+      setTimeout(function () {
         if (toast.parentElement) toast.parentElement.removeChild(toast);
       }, 300);
     }, 4500);
@@ -4055,7 +4055,7 @@
           '<td style="padding: 6px 8px; color: #34d399; font-weight: 700;">' + escapeHtml(slot.audienceTime) + ' <small style="color: var(--text-muted); font-weight: normal;">' + audTz + '</small></td>' +
           '<td style="padding: 6px 8px; color: #93c5fd; font-weight: 700;">' + escapeHtml(slot.localTime) + ' <small style="color: var(--text-muted); font-weight: normal;">' + locTz + '</small></td>' +
           '<td style="padding: 6px 8px; text-transform: uppercase; font-size: 10px; color: #a78bfa;">' + escapeHtml(slot.mode || 'fixed') + '</td>' +
-        '</tr>';
+          '</tr>';
       });
       tableBody.innerHTML = html;
     } catch (err) {
@@ -4126,20 +4126,26 @@
 
       if (!res.ok || data.error) {
         if (data.error && data.error.includes('Safety Gate')) {
-          payload.safety_override = 'I UNDERSTAND THE RISKS';
-          payload.override_confirmation = 'I UNDERSTAND THE RISKS';
-          payload.force = true;
-          var retryRes = await fetch('/api/pages/update-settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          var retryData = await retryRes.json();
-          if (retryRes.ok && !retryData.error) {
-            data = retryData;
-            res = retryRes;
+          var confirmed = prompt(data.error + '\n\nTo override this safety requirement, type:\nI UNDERSTAND THE RISKS');
+          if (confirmed === 'I UNDERSTAND THE RISKS') {
+            payload.safety_override = 'I UNDERSTAND THE RISKS';
+            payload.override_confirmation = 'I UNDERSTAND THE RISKS';
+            payload.force = true;
+            var retryRes = await fetch('/api/pages/update-settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            var retryData = await retryRes.json();
+            if (retryRes.ok && !retryData.error) {
+              data = retryData;
+              res = retryRes;
+            } else {
+              showToast('Safety override failed: ' + (retryData.error || 'Denied'), 'error');
+              return;
+            }
           } else {
-            showToast('Failed to save settings: ' + (retryData.error || 'Denied'), 'error');
+            showToast('Switch to Auto cancelled. Keeping safe Review mode.', 'info');
             return;
           }
         } else {
@@ -4156,1294 +4162,1294 @@
         }
       }
 
-      // Update in local pagesData
-      var idx = pagesData.findIndex(function (p) { return p.id === currentSettingsPageId; });
-      if (idx !== -1 && data.page) {
-        pagesData[idx] = data.page;
-        currentExpectedUpdatedAt = data.page.settings_updated_at || data.page.updated_at;
-        currentExpectedVersion = data.page.settings_version || data.page.version;
-      }
+        // Update in local pagesData
+        var idx = pagesData.findIndex(function (p) { return p.id === currentSettingsPageId; });
+        if (idx !== -1 && data.page) {
+          pagesData[idx] = data.page;
+          currentExpectedUpdatedAt = data.page.settings_updated_at || data.page.updated_at;
+          currentExpectedVersion = data.page.settings_version || data.page.version;
+        }
 
-      currentModalOriginalSnapshot = getModalSnapshot();
-      var unsavedBadge = document.getElementById('psmUnsavedBadge');
-      var revertBtn = document.getElementById('psmRevertBtn');
-      if (unsavedBadge) unsavedBadge.style.display = 'none';
-      if (revertBtn) revertBtn.disabled = true;
+        currentModalOriginalSnapshot = getModalSnapshot();
+        var unsavedBadge = document.getElementById('psmUnsavedBadge');
+        var revertBtn = document.getElementById('psmRevertBtn');
+        if (unsavedBadge) unsavedBadge.style.display = 'none';
+        if (revertBtn) revertBtn.disabled = true;
 
-      var savedTime = new Date(data.savedAt || Date.now()).toLocaleTimeString();
-      showToast('✅ Saved and verified at ' + savedTime, 'success');
+        var savedTime = new Date(data.savedAt || Date.now()).toLocaleTimeString();
+        showToast('✅ Saved and verified at ' + savedTime, 'success');
 
-      if (data.page) {
-        updatePageCardDom(data.page);
-        updateModalChecklistDisplay(data.page);
-      }
-    } catch (err) {
-      showToast('Network error while saving settings: ' + err.message, 'error');
-    } finally {
-      if (saveBtn) {
-        saveBtn.disabled = false;
-        saveBtn.innerText = origText;
+        if (data.page) {
+          updatePageCardDom(data.page);
+          updateModalChecklistDisplay(data.page);
+        }
+      } catch (err) {
+        showToast('Network error while saving settings: ' + err.message, 'error');
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.innerText = origText;
+        }
       }
     }
-  }
 
   // --- Concurrency Conflict 3-Way Dialog ---
   let activeConflictPageId = null;
-  let activeConflictData = null;
-  let activePendingPayload = null;
-  let activeConflictRetryCallback = null;
+    let activeConflictData = null;
+    let activePendingPayload = null;
+    let activeConflictRetryCallback = null;
 
-  function openConcurrencyConflictModal(pageId, conflictData, pendingPayload, retryCallback) {
-    activeConflictPageId = pageId;
-    activeConflictData = conflictData;
-    activePendingPayload = pendingPayload;
-    activeConflictRetryCallback = retryCallback;
+    function openConcurrencyConflictModal(pageId, conflictData, pendingPayload, retryCallback) {
+      activeConflictPageId = pageId;
+      activeConflictData = conflictData;
+      activePendingPayload = pendingPayload;
+      activeConflictRetryCallback = retryCallback;
 
-    const modal = document.getElementById('concurrencyConflictModal');
-    if (!modal) {
-      alert('Concurrency conflict: Settings were modified elsewhere. Please reload to see latest.');
-      return;
+      const modal = document.getElementById('concurrencyConflictModal');
+      if (!modal) {
+        alert('Concurrency conflict: Settings were modified elsewhere. Please reload to see latest.');
+        return;
+      }
+
+      const summaryText = document.getElementById('conflictSummaryText');
+      const changedAt = (conflictData.currentRecord && (conflictData.currentRecord.settings_updated_at || conflictData.currentRecord.updated_at)) || 'recently';
+      if (summaryText) {
+        summaryText.innerHTML = '⚠️ Another session or background process modified this page at <strong>' + escapeHtml(new Date(changedAt).toLocaleTimeString()) + '</strong>. Choose how you want to proceed. Your typed edits will not be lost.';
+      }
+
+      const fieldsList = document.getElementById('conflictFieldsList');
+      if (fieldsList) {
+        const changed = conflictData.changedFields && conflictData.changedFields.length > 0
+          ? conflictData.changedFields
+          : ['settings_version', 'publishing_mode', 'schedule'];
+        fieldsList.innerHTML = '<div style="color: #94a3b8; margin-bottom: 4px;">Modified Fields in Database:</div>' +
+          changed.map(function (f) { return '<div style="padding: 2px 0;">• ' + escapeHtml(f) + '</div>'; }).join('');
+      }
+
+      modal.style.display = 'flex';
     }
 
-    const summaryText = document.getElementById('conflictSummaryText');
-    const changedAt = (conflictData.currentRecord && (conflictData.currentRecord.settings_updated_at || conflictData.currentRecord.updated_at)) || 'recently';
-    if (summaryText) {
-      summaryText.innerHTML = '⚠️ Another session or background process modified this page at <strong>' + escapeHtml(new Date(changedAt).toLocaleTimeString()) + '</strong>. Choose how you want to proceed. Your typed edits will not be lost.';
+    function closeConcurrencyConflictModal() {
+      const modal = document.getElementById('concurrencyConflictModal');
+      if (modal) modal.style.display = 'none';
+      activeConflictPageId = null;
+      activeConflictData = null;
+      activePendingPayload = null;
+      activeConflictRetryCallback = null;
     }
 
-    const fieldsList = document.getElementById('conflictFieldsList');
-    if (fieldsList) {
-      const changed = conflictData.changedFields && conflictData.changedFields.length > 0
-        ? conflictData.changedFields
-        : ['settings_version', 'publishing_mode', 'schedule'];
-      fieldsList.innerHTML = '<div style="color: #94a3b8; margin-bottom: 4px;">Modified Fields in Database:</div>' +
-        changed.map(function(f) { return '<div style="padding: 2px 0;">• ' + escapeHtml(f) + '</div>'; }).join('');
+    async function resolveConflictKeepMine() {
+      if (typeof activeConflictRetryCallback === 'function') {
+        const cb = activeConflictRetryCallback;
+        closeConcurrencyConflictModal();
+        await cb();
+      }
     }
 
-    modal.style.display = 'flex';
-  }
-
-  function closeConcurrencyConflictModal() {
-    const modal = document.getElementById('concurrencyConflictModal');
-    if (modal) modal.style.display = 'none';
-    activeConflictPageId = null;
-    activeConflictData = null;
-    activePendingPayload = null;
-    activeConflictRetryCallback = null;
-  }
-
-  async function resolveConflictKeepMine() {
-    if (typeof activeConflictRetryCallback === 'function') {
-      const cb = activeConflictRetryCallback;
+    function resolveConflictUseLatest() {
+      if (activeConflictData && activeConflictData.currentRecord) {
+        const record = activeConflictData.currentRecord;
+        const idx = pagesData.findIndex(function (p) { return p.id === record.id; });
+        if (idx !== -1) pagesData[idx] = record;
+        populateModalFromPage(record);
+        currentExpectedUpdatedAt = record.settings_updated_at || record.updated_at;
+        currentExpectedVersion = record.settings_version || record.version;
+        currentModalOriginalSnapshot = getModalSnapshot();
+        updateModalChecklistDisplay(record);
+        showToast('Loaded latest settings from database.', 'info');
+      }
       closeConcurrencyConflictModal();
-      await cb();
     }
-  }
 
-  function resolveConflictUseLatest() {
-    if (activeConflictData && activeConflictData.currentRecord) {
-      const record = activeConflictData.currentRecord;
-      const idx = pagesData.findIndex(function (p) { return p.id === record.id; });
-      if (idx !== -1) pagesData[idx] = record;
-      populateModalFromPage(record);
-      currentExpectedUpdatedAt = record.settings_updated_at || record.updated_at;
-      currentExpectedVersion = record.settings_version || record.version;
-      currentModalOriginalSnapshot = getModalSnapshot();
-      updateModalChecklistDisplay(record);
-      showToast('Loaded latest settings from database.', 'info');
-    }
-    closeConcurrencyConflictModal();
-  }
-
-  async function resolveConflictMerge() {
-    if (!activeConflictPageId || !activePendingPayload || !activeConflictData) {
+    async function resolveConflictMerge() {
+      if (!activeConflictPageId || !activePendingPayload || !activeConflictData) {
+        closeConcurrencyConflictModal();
+        return;
+      }
+      const merged = Object.assign({}, activeConflictData.currentRecord || {}, activePendingPayload, { force: true });
       closeConcurrencyConflictModal();
-      return;
-    }
-    const merged = Object.assign({}, activeConflictData.currentRecord || {}, activePendingPayload, { force: true });
-    closeConcurrencyConflictModal();
 
-    try {
-      showToast('Merging and saving settings...', 'info');
-      const res = await fetch('/api/pages/update-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(merged),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast('✅ Merged settings successfully saved!', 'success');
-        const idx = pagesData.findIndex(function (p) { return p.id === activeConflictPageId; });
-        if (idx !== -1 && data.page) pagesData[idx] = data.page;
-        if (data.page) updateModalChecklistDisplay(data.page);
-      } else {
-        showToast('Failed to save merged settings: ' + (data.error || 'Unknown error'), 'error');
-      }
-    } catch (e) {
-      showToast('Network error while merging: ' + e.message, 'error');
-    }
-  }
-
-  // --- Test Run Report Modal ---
-  function viewTestRunReport(pageId) {
-    const page = pagesData.find(function (p) { return p.id === pageId; });
-    if (!page || !page.test_run_report) {
-      showToast('No test run report available yet. Run a Test Run first.', 'warning');
-      return;
-    }
-
-    const report = page.test_run_report;
-    const modal = document.getElementById('testRunReportModal');
-    if (!modal) return;
-
-    document.getElementById('trrPageName').innerText = page.name || 'Facebook Page';
-    document.getElementById('trrTestedAt').innerText = report.testedAt ? new Date(report.testedAt).toLocaleString() : 'Recent';
-
-    const badge = document.getElementById('trrStatusBadge');
-    if (badge) {
-      if (report.success) {
-        badge.innerText = 'VERIFIED';
-        badge.style.background = 'rgba(16,185,129,0.2)';
-        badge.style.color = '#34d399';
-      } else {
-        badge.innerText = 'FAILED';
-        badge.style.background = 'rgba(239,68,68,0.2)';
-        badge.style.color = '#f87171';
-      }
-    }
-
-    const stagesList = document.getElementById('trrStagesContainer');
-    if (stagesList) {
-      stagesList.innerHTML = (report.stages || []).map(function (s) {
-        const isPassed = s.status === 'completed' || s.status === 'passed';
-        const color = isPassed ? '#34d399' : '#f87171';
-        const icon = isPassed ? '✅' : '❌';
-        const provInfo = s.provider ? (escapeHtml(s.provider) + (s.model ? ' / ' + escapeHtml(s.model) : '')) : '';
-        const tokenInfo = s.tokens && s.tokens.totalTokens ? (s.tokens.totalTokens + ' tokens') : '';
-        const metaLine = [provInfo, tokenInfo].filter(Boolean).join(' • ');
-
-        return '<div style="background: #020617; border: 1px solid ' + (isPassed ? '#1e293b' : '#7f1d1d') + '; border-radius: 6px; padding: 10px;">' +
-          '<div style="font-size: 11px; color: #94a3b8; margin-bottom: 2px;">' + icon + ' ' + escapeHtml(s.name) + '</div>' +
-          '<div style="font-size: 13px; font-weight: 700; color: ' + color + ';">' + escapeHtml(s.status.toUpperCase()) + (s.score ? (' (' + s.score + ')') : '') + '</div>' +
-          '<div style="font-size: 11px; color: #64748b;">' + (s.durationMs || 0) + 'ms</div>' +
-          (metaLine ? ('<div style="font-size: 10px; color: #475569; margin-top: 2px;">' + metaLine + '</div>') : '') +
-          (s.error ? ('<div style="font-size: 11px; color: #fca5a5; margin-top: 4px;">' + escapeHtml(s.error) + '</div>') : '') +
-          '</div>';
-      }).join('');
-    }
-
-    // Research Sources (Factual Posts)
-    const researchSection = document.getElementById('trrResearchSection');
-    const researchContainer = document.getElementById('trrResearchSourcesContainer');
-    if (researchSection && researchContainer) {
-      if (report.researchSources && report.researchSources.length > 0) {
-        researchContainer.innerHTML = report.researchSources.map(function (url) {
-          return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; font-size: 12px; text-decoration: underline; display: flex; align-items: center; gap: 6px;">' +
-            '<span>🔗</span> <span>' + escapeHtml(url) + '</span>' +
-          '</a>';
-        }).join('');
-        researchSection.style.display = 'block';
-      } else {
-        researchSection.style.display = 'none';
-      }
-    }
-
-    // Claim-by-Claim Factual Verification Audit
-    const claimsSection = document.getElementById('trrClaimsSection');
-    const claimsContainer = document.getElementById('trrClaimsContainer');
-    const claimsBadge = document.getElementById('trrClaimsBadge');
-    if (claimsSection && claimsContainer) {
-      if (report.claimVerification && report.claimVerification.length > 0) {
-        const unverified = report.claimVerification.filter(function (c) { return !c.verified; });
-        if (claimsBadge) {
-          if (unverified.length === 0) {
-            claimsBadge.innerText = '100% GROUNDED';
-            claimsBadge.style.background = 'rgba(16,185,129,0.2)';
-            claimsBadge.style.color = '#34d399';
-          } else {
-            claimsBadge.innerText = unverified.length + ' UNVERIFIED CLAIM(S)';
-            claimsBadge.style.background = 'rgba(239,68,68,0.2)';
-            claimsBadge.style.color = '#f87171';
-          }
+      try {
+        showToast('Merging and saving settings...', 'info');
+        const res = await fetch('/api/pages/update-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(merged),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast('✅ Merged settings successfully saved!', 'success');
+          const idx = pagesData.findIndex(function (p) { return p.id === activeConflictPageId; });
+          if (idx !== -1 && data.page) pagesData[idx] = data.page;
+          if (data.page) updateModalChecklistDisplay(data.page);
+        } else {
+          showToast('Failed to save merged settings: ' + (data.error || 'Unknown error'), 'error');
         }
-        claimsContainer.innerHTML = report.claimVerification.map(function (c) {
-          const ok = c.verified;
-          const icon = ok ? '✅' : '❌';
-          return '<div style="background: #0b0f19; border: 1px solid ' + (ok ? '#1e293b' : 'rgba(239,68,68,0.4)') + '; border-radius: 6px; padding: 8px 10px;">' +
-            '<div style="font-size: 12px; color: ' + (ok ? '#e2e8f0' : '#fca5a5') + ';">' + icon + ' ' + escapeHtml(c.claim) + '</div>' +
-            (c.sourceUrl
-              ? ('<div style="font-size: 11px; color: #38bdf8; margin-top: 3px;"><strong>Evidence Source:</strong> ' + escapeHtml(c.sourceUrl) + '</div>')
-              : ('<div style="font-size: 11px; color: #f87171; margin-top: 3px;"><strong>Audit Warning:</strong> Factual claim lacks verified research source URL</div>')) +
-          '</div>';
+      } catch (e) {
+        showToast('Network error while merging: ' + e.message, 'error');
+      }
+    }
+
+    // --- Test Run Report Modal ---
+    function viewTestRunReport(pageId) {
+      const page = pagesData.find(function (p) { return p.id === pageId; });
+      if (!page || !page.test_run_report) {
+        showToast('No test run report available yet. Run a Test Run first.', 'warning');
+        return;
+      }
+
+      const report = page.test_run_report;
+      const modal = document.getElementById('testRunReportModal');
+      if (!modal) return;
+
+      document.getElementById('trrPageName').innerText = page.name || 'Facebook Page';
+      document.getElementById('trrTestedAt').innerText = report.testedAt ? new Date(report.testedAt).toLocaleString() : 'Recent';
+
+      const badge = document.getElementById('trrStatusBadge');
+      if (badge) {
+        if (report.success) {
+          badge.innerText = 'VERIFIED';
+          badge.style.background = 'rgba(16,185,129,0.2)';
+          badge.style.color = '#34d399';
+        } else {
+          badge.innerText = 'FAILED';
+          badge.style.background = 'rgba(239,68,68,0.2)';
+          badge.style.color = '#f87171';
+        }
+      }
+
+      const stagesList = document.getElementById('trrStagesContainer');
+      if (stagesList) {
+        stagesList.innerHTML = (report.stages || []).map(function (s) {
+          const isPassed = s.status === 'completed' || s.status === 'passed';
+          const color = isPassed ? '#34d399' : '#f87171';
+          const icon = isPassed ? '✅' : '❌';
+          const provInfo = s.provider ? (escapeHtml(s.provider) + (s.model ? ' / ' + escapeHtml(s.model) : '')) : '';
+          const tokenInfo = s.tokens && s.tokens.totalTokens ? (s.tokens.totalTokens + ' tokens') : '';
+          const metaLine = [provInfo, tokenInfo].filter(Boolean).join(' • ');
+
+          return '<div style="background: #020617; border: 1px solid ' + (isPassed ? '#1e293b' : '#7f1d1d') + '; border-radius: 6px; padding: 10px;">' +
+            '<div style="font-size: 11px; color: #94a3b8; margin-bottom: 2px;">' + icon + ' ' + escapeHtml(s.name) + '</div>' +
+            '<div style="font-size: 13px; font-weight: 700; color: ' + color + ';">' + escapeHtml(s.status.toUpperCase()) + (s.score ? (' (' + s.score + ')') : '') + '</div>' +
+            '<div style="font-size: 11px; color: #64748b;">' + (s.durationMs || 0) + 'ms</div>' +
+            (metaLine ? ('<div style="font-size: 10px; color: #475569; margin-top: 2px;">' + metaLine + '</div>') : '') +
+            (s.error ? ('<div style="font-size: 11px; color: #fca5a5; margin-top: 4px;">' + escapeHtml(s.error) + '</div>') : '') +
+            '</div>';
         }).join('');
-        claimsSection.style.display = 'block';
-      } else {
-        claimsSection.style.display = 'none';
       }
-    }
 
-    // Rules Badges
-    const rulesContainer = document.getElementById('trrRulesContainer');
-    if (rulesContainer) {
-      if (report.structureRules) {
-        const r = report.structureRules;
-        rulesContainer.innerHTML =
-          '<span class="badge" style="background: rgba(59,130,246,0.15); color: #93c5fd; padding: 3px 8px;">Target Words: ' + r.minWords + '–' + r.maxWords + ' (Goal: ' + r.targetWords + ')</span>' +
-          '<span class="badge" style="background: rgba(168,85,247,0.15); color: #c084fc; padding: 3px 8px;">Max Sentences/Para: ' + r.maxSentencesPerParagraph + '</span>' +
-          '<span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399; padding: 3px 8px;">QA Pass Threshold: ' + r.passThreshold + '/100</span>';
-      } else {
-        rulesContainer.innerHTML = '';
+      // Research Sources (Factual Posts)
+      const researchSection = document.getElementById('trrResearchSection');
+      const researchContainer = document.getElementById('trrResearchSourcesContainer');
+      if (researchSection && researchContainer) {
+        if (report.researchSources && report.researchSources.length > 0) {
+          researchContainer.innerHTML = report.researchSources.map(function (url) {
+            return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; font-size: 12px; text-decoration: underline; display: flex; align-items: center; gap: 6px;">' +
+              '<span>🔗</span> <span>' + escapeHtml(url) + '</span>' +
+              '</a>';
+          }).join('');
+          researchSection.style.display = 'block';
+        } else {
+          researchSection.style.display = 'none';
+        }
       }
-    }
 
-    // Revision Attempts Log
-    const attemptsSection = document.getElementById('trrAttemptsSection');
-    const attemptsContainer = document.getElementById('trrAttemptsContainer');
-    if (attemptsSection && attemptsContainer) {
-      if (report.attempts && report.attempts.length > 0) {
-        attemptsContainer.innerHTML = report.attempts.map(function (att) {
-          const isPassed = att.status === 'passed';
-          const icon = isPassed ? '✅' : '⚠️';
-          const badgeColor = isPassed ? '#34d399' : '#f59e0b';
-          const violationsHtml = att.violations && att.violations.length > 0
-            ? '<div style="font-size: 11px; color: #fca5a5; margin-top: 4px;"><strong>Violations:</strong> ' + escapeHtml(att.violations.join('; ')) + '</div>'
-            : '';
-          return '<div style="background: #0b0f19; border: 1px solid ' + (isPassed ? '#1e293b' : 'rgba(245,158,11,0.3)') + '; border-radius: 6px; padding: 10px;">' +
-            '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 2px;">' +
+      // Claim-by-Claim Factual Verification Audit
+      const claimsSection = document.getElementById('trrClaimsSection');
+      const claimsContainer = document.getElementById('trrClaimsContainer');
+      const claimsBadge = document.getElementById('trrClaimsBadge');
+      if (claimsSection && claimsContainer) {
+        if (report.claimVerification && report.claimVerification.length > 0) {
+          const unverified = report.claimVerification.filter(function (c) { return !c.verified; });
+          if (claimsBadge) {
+            if (unverified.length === 0) {
+              claimsBadge.innerText = '100% GROUNDED';
+              claimsBadge.style.background = 'rgba(16,185,129,0.2)';
+              claimsBadge.style.color = '#34d399';
+            } else {
+              claimsBadge.innerText = unverified.length + ' UNVERIFIED CLAIM(S)';
+              claimsBadge.style.background = 'rgba(239,68,68,0.2)';
+              claimsBadge.style.color = '#f87171';
+            }
+          }
+          claimsContainer.innerHTML = report.claimVerification.map(function (c) {
+            const ok = c.verified;
+            const icon = ok ? '✅' : '❌';
+            return '<div style="background: #0b0f19; border: 1px solid ' + (ok ? '#1e293b' : 'rgba(239,68,68,0.4)') + '; border-radius: 6px; padding: 8px 10px;">' +
+              '<div style="font-size: 12px; color: ' + (ok ? '#e2e8f0' : '#fca5a5') + ';">' + icon + ' ' + escapeHtml(c.claim) + '</div>' +
+              (c.sourceUrl
+                ? ('<div style="font-size: 11px; color: #38bdf8; margin-top: 3px;"><strong>Evidence Source:</strong> ' + escapeHtml(c.sourceUrl) + '</div>')
+                : ('<div style="font-size: 11px; color: #f87171; margin-top: 3px;"><strong>Audit Warning:</strong> Factual claim lacks verified research source URL</div>')) +
+              '</div>';
+          }).join('');
+          claimsSection.style.display = 'block';
+        } else {
+          claimsSection.style.display = 'none';
+        }
+      }
+
+      // Rules Badges
+      const rulesContainer = document.getElementById('trrRulesContainer');
+      if (rulesContainer) {
+        if (report.structureRules) {
+          const r = report.structureRules;
+          rulesContainer.innerHTML =
+            '<span class="badge" style="background: rgba(59,130,246,0.15); color: #93c5fd; padding: 3px 8px;">Target Words: ' + r.minWords + '–' + r.maxWords + ' (Goal: ' + r.targetWords + ')</span>' +
+            '<span class="badge" style="background: rgba(168,85,247,0.15); color: #c084fc; padding: 3px 8px;">Max Sentences/Para: ' + r.maxSentencesPerParagraph + '</span>' +
+            '<span class="badge" style="background: rgba(16,185,129,0.15); color: #34d399; padding: 3px 8px;">QA Pass Threshold: ' + r.passThreshold + '/100</span>';
+        } else {
+          rulesContainer.innerHTML = '';
+        }
+      }
+
+      // Revision Attempts Log
+      const attemptsSection = document.getElementById('trrAttemptsSection');
+      const attemptsContainer = document.getElementById('trrAttemptsContainer');
+      if (attemptsSection && attemptsContainer) {
+        if (report.attempts && report.attempts.length > 0) {
+          attemptsContainer.innerHTML = report.attempts.map(function (att) {
+            const isPassed = att.status === 'passed';
+            const icon = isPassed ? '✅' : '⚠️';
+            const badgeColor = isPassed ? '#34d399' : '#f59e0b';
+            const violationsHtml = att.violations && att.violations.length > 0
+              ? '<div style="font-size: 11px; color: #fca5a5; margin-top: 4px;"><strong>Violations:</strong> ' + escapeHtml(att.violations.join('; ')) + '</div>'
+              : '';
+            return '<div style="background: #0b0f19; border: 1px solid ' + (isPassed ? '#1e293b' : 'rgba(245,158,11,0.3)') + '; border-radius: 6px; padding: 10px;">' +
+              '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 2px;">' +
               '<span>' + icon + ' <strong>Attempt ' + att.attempt + '</strong> (' + escapeHtml(att.provider) + ' / ' + escapeHtml(att.model) + ')</span>' +
               '<span style="font-weight: 700; color: ' + badgeColor + ';">Score ' + att.qaScore + ' • ' + (att.durationMs || 0) + 'ms</span>' +
-            '</div>' +
-            violationsHtml +
-          '</div>';
-        }).join('');
-        attemptsSection.style.display = 'block';
-      } else {
-        attemptsSection.style.display = 'none';
-      }
-    }
-
-    // Effective Prompt (Masked Secrets)
-    const promptSection = document.getElementById('trrPromptSection');
-    const promptText = document.getElementById('trrEffectivePromptText');
-    if (promptSection && promptText) {
-      if (report.effectivePrompt) {
-        promptText.innerText = report.effectivePrompt;
-        promptSection.style.display = 'block';
-      } else {
-        promptSection.style.display = 'none';
-      }
-    }
-
-    const topicEl = document.getElementById('trrTopicTitle');
-    if (topicEl) {
-      topicEl.innerText = (report.topic && report.topic.title) || page.name + ' Highlight';
-    }
-
-    const captionEl = document.getElementById('trrCaptionText');
-    if (captionEl) {
-      captionEl.innerText = report.caption || '(No caption generated)';
-    }
-
-    const wordBadge = document.getElementById('trrWordBadge');
-    if (wordBadge) {
-      wordBadge.innerText = (report.wordCount || 0) + ' words';
-    }
-
-    const imagePromptEl = document.getElementById('trrImagePrompt');
-    if (imagePromptEl) {
-      imagePromptEl.innerText = report.imagePrompt || '(Standard atmospheric visual framing)';
-    }
-
-    const headlineEl = document.getElementById('trrHeadlineText');
-    if (headlineEl) {
-      headlineEl.innerText = (report.headlinePanel && report.headlinePanel.headlineText) || 'Headline Overlay';
-    }
-
-    const aspectDimEl = document.getElementById('trrAspectDim');
-    if (aspectDimEl) {
-      aspectDimEl.innerText = report.imageDimensions || '1080x1350 (4:5 Portrait)';
-    }
-
-    // Visual Previews (Thumbnail & 1080x1350 Composite)
-    const previewRow = document.getElementById('trrPreviewImagesRow');
-    const thumbImg = document.getElementById('trrThumbnailImg');
-    const compImg = document.getElementById('trrCompositeImg');
-    if (previewRow && (report.compositeImageUrl || report.thumbnailUrl)) {
-      if (thumbImg && report.thumbnailUrl) {
-        thumbImg.src = report.thumbnailUrl;
-      }
-      if (compImg && report.compositeImageUrl) {
-        compImg.src = report.compositeImageUrl;
-      }
-      previewRow.style.display = 'flex';
-    } else if (previewRow) {
-      previewRow.style.display = 'none';
-    }
-
-    modal.style.display = 'flex';
-  }
-
-  function closeTestRunReportModal() {
-    const modal = document.getElementById('testRunReportModal');
-    if (modal) modal.style.display = 'none';
-  }
-
-  async function openPostDetailsModal(postId) {
-    const modal = document.getElementById('postDetailsModal');
-    if (!modal) return;
-
-    let post = postsData.find(function (p) { return p.id === postId; });
-
-    modal.style.display = 'flex';
-
-    if (post) {
-      populateAndShowPostDetails(post);
-    } else {
-      const titleEl = document.getElementById('pdmTitle');
-      if (titleEl) titleEl.textContent = 'Loading post details...';
-      const capEl = document.getElementById('pdmCaption');
-      if (capEl) capEl.textContent = 'Fetching post data from Supabase...';
-    }
-
-    try {
-      const res = await fetch('/api/post-details?id=' + encodeURIComponent(postId));
-      if (res.ok) {
-        const fullPost = await res.json();
-        const existingIdx = postsData.findIndex(function (p) { return p.id === fullPost.id; });
-        if (existingIdx >= 0) {
-          postsData[existingIdx] = fullPost;
+              '</div>' +
+              violationsHtml +
+              '</div>';
+          }).join('');
+          attemptsSection.style.display = 'block';
         } else {
-          postsData.push(fullPost);
+          attemptsSection.style.display = 'none';
         }
-        populateAndShowPostDetails(fullPost);
       }
-    } catch (e) {
-      console.warn('[Dashboard] Could not fetch fresh post details:', e);
-    }
-  }
 
-  function populateAndShowPostDetails(post) {
-    const statusBadge = document.getElementById('pdmStatusBadge');
-    const catBadge = document.getElementById('pdmCategoryBadge');
-    const qaBadge = document.getElementById('pdmQaScoreBadge');
-    const titleEl = document.getElementById('pdmTitle');
-    const pageNameEl = document.getElementById('pdmPageName');
-    const idEl = document.getElementById('pdmId');
-    const audTimeEl = document.getElementById('pdmAudienceTime');
-    const audTzEl = document.getElementById('pdmAudienceTz');
-    const locTimeEl = document.getElementById('pdmLocalTime');
-    const locTzEl = document.getElementById('pdmLocalTz');
-    const fbStatusEl = document.getElementById('pdmFbStatusText');
-    const fbPostIdEl = document.getElementById('pdmFbPostId');
-    const fbLinkBtn = document.getElementById('pdmFbLinkBtn');
-    const wordCountBadge = document.getElementById('pdmWordCountBadge');
-    const hashtagsBadge = document.getElementById('pdmHashtagsBadge');
-    const captionEl = document.getElementById('pdmCaption');
-    const imagePromptRow = document.getElementById('pdmImagePromptRow');
-    const imagePromptEl = document.getElementById('pdmImagePrompt');
-    const previewImg = document.getElementById('pdmPreviewImg');
-
-    if (statusBadge) {
-      if (post.status === 'published') {
-        statusBadge.style.background = '#064e3b';
-        statusBadge.style.color = '#34d399';
-        statusBadge.textContent = '● PUBLISHED';
-      } else if (post.status === 'scheduled_on_fb') {
-        statusBadge.style.background = '#1e3a8a';
-        statusBadge.style.color = '#60a5fa';
-        statusBadge.textContent = '● SCHEDULED ON FACEBOOK';
-      } else if (post.status === 'pending_review') {
-        statusBadge.style.background = '#78350f';
-        statusBadge.style.color = '#f59e0b';
-        statusBadge.textContent = '● REVIEW REQUIRED';
-      } else {
-        statusBadge.style.background = '#1e293b';
-        statusBadge.style.color = '#94a3b8';
-        statusBadge.textContent = '● ' + (post.status || 'SCHEDULED').toUpperCase();
-      }
-    }
-
-    if (catBadge) {
-      catBadge.textContent = post.category || post.topic_key || 'Science & Space';
-    }
-
-    if (qaBadge) {
-      qaBadge.textContent = 'QA: ' + (post.qa_score != null ? Math.round(Number(post.qa_score)) : 100) + '/100';
-    }
-
-    if (titleEl) {
-      titleEl.textContent = post.title || post.headline || 'Scheduled Post';
-    }
-
-    const linkedPage = pagesData.find(function (p) { return p.id === post.page_id; });
-    const pageName = post.pageName || (linkedPage ? linkedPage.name : 'Beyond the Known');
-    const pageTz = post.pageTimezone || (linkedPage && linkedPage.schedule && linkedPage.schedule.timezone) || 'America/New_York';
-
-    if (pageNameEl) pageNameEl.textContent = pageName;
-    if (idEl) idEl.textContent = post.id;
-
-    if (audTimeEl && post.scheduled_for) {
-      try {
-        const audFormatted = new Date(post.scheduled_for).toLocaleString('en-US', {
-          timeZone: pageTz,
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-        });
-        audTimeEl.textContent = audFormatted + ' EST';
-      } catch (_) {
-        audTimeEl.textContent = post.scheduled_for;
-      }
-    }
-    if (audTzEl) audTzEl.textContent = pageTz + ' (Audience Cadence)';
-
-    if (locTimeEl && post.scheduled_for) {
-      try {
-        const locFormatted = new Date(post.scheduled_for).toLocaleString([], {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-        });
-        locTimeEl.textContent = locFormatted;
-      } catch (_) {
-        locTimeEl.textContent = post.scheduled_for;
-      }
-    }
-    if (locTzEl) {
-      try {
-        locTzEl.textContent = (Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata') + ' (Your Browser Time)';
-      } catch (_) {
-        locTzEl.textContent = 'Local Time';
-      }
-    }
-
-    if (post.fb_post_id) {
-      if (fbStatusEl) fbStatusEl.textContent = 'Verified in Meta Graph API Queue';
-      if (fbPostIdEl) fbPostIdEl.textContent = 'FB Post ID: ' + post.fb_post_id;
-      if (fbLinkBtn) {
-        fbLinkBtn.style.display = 'inline-flex';
-        fbLinkBtn.href = post.fb_permalink || ('https://www.facebook.com/' + post.fb_post_id);
-      }
-    } else {
-      if (fbStatusEl) fbStatusEl.textContent = 'Internal Queue (Scheduled)';
-      if (fbPostIdEl) fbPostIdEl.textContent = 'Will be dispatched at scheduled time';
-      if (fbLinkBtn) fbLinkBtn.style.display = 'none';
-    }
-
-    if (captionEl) {
-      captionEl.textContent = post.caption || 'No caption available.';
-    }
-    const words = post.caption_word_count || (post.caption ? post.caption.trim().split(/\s+/).length : 0);
-    if (wordCountBadge) wordCountBadge.textContent = words + ' words';
-    const hashtags = Array.isArray(post.hashtags) ? post.hashtags.length : 0;
-    if (hashtagsBadge) hashtagsBadge.textContent = hashtags + ' hashtags';
-
-    currentModalPost = post;
-    currentModalImageView = 'composed';
-    updateModalImageView();
-
-    if (imagePromptRow && imagePromptEl) {
-      if (post.image_prompt) {
-        imagePromptEl.textContent = post.image_prompt;
-        imagePromptRow.style.display = 'block';
-      } else {
-        imagePromptRow.style.display = 'none';
-      }
-    }
-  }
-
-  let currentModalPost = null;
-  let currentModalImageView = 'composed';
-
-  function updateModalImageView() {
-    if (!currentModalPost) return;
-    const previewImg = document.getElementById('pdmPreviewImg');
-    const previewLink = document.getElementById('pdmPreviewLink');
-    const viewComposedBtn = document.getElementById('pdmViewComposedBtn');
-    const viewRawBtn = document.getElementById('pdmViewRawBtn');
-    const viewToggleRow = document.getElementById('pdmViewToggleRow');
-    const downloadBtn = document.getElementById('pdmDownloadBtn');
-
-    const composed = currentModalPost.composed_image_path;
-    const raw = currentModalPost.raw_image_path;
-
-    if (viewToggleRow) {
-      viewToggleRow.style.display = (composed && raw) ? 'flex' : 'none';
-    }
-
-    const targetSrc = (currentModalImageView === 'raw' && raw) ? raw : (composed || raw);
-    if (previewImg) {
-      if (targetSrc) {
-        previewImg.src = targetSrc;
-        previewImg.style.display = 'block';
-        const filename = (currentModalImageView === 'raw' ? 'photo-' : 'card-') + (currentModalPost.id || 'post') + '.jpg';
-        if (previewLink) {
-          previewLink.href = targetSrc;
-          previewLink.style.display = 'flex';
-          previewLink.download = filename;
+      // Effective Prompt (Masked Secrets)
+      const promptSection = document.getElementById('trrPromptSection');
+      const promptText = document.getElementById('trrEffectivePromptText');
+      if (promptSection && promptText) {
+        if (report.effectivePrompt) {
+          promptText.innerText = report.effectivePrompt;
+          promptSection.style.display = 'block';
+        } else {
+          promptSection.style.display = 'none';
         }
-        if (downloadBtn) {
-          downloadBtn.style.display = 'inline-flex';
-          downloadBtn.innerHTML = currentModalImageView === 'raw'
-            ? '⬇️ Save Raw Photo (.JPG)'
-            : '⬇️ Save Composed Card (.JPG)';
+      }
+
+      const topicEl = document.getElementById('trrTopicTitle');
+      if (topicEl) {
+        topicEl.innerText = (report.topic && report.topic.title) || page.name + ' Highlight';
+      }
+
+      const captionEl = document.getElementById('trrCaptionText');
+      if (captionEl) {
+        captionEl.innerText = report.caption || '(No caption generated)';
+      }
+
+      const wordBadge = document.getElementById('trrWordBadge');
+      if (wordBadge) {
+        wordBadge.innerText = (report.wordCount || 0) + ' words';
+      }
+
+      const imagePromptEl = document.getElementById('trrImagePrompt');
+      if (imagePromptEl) {
+        imagePromptEl.innerText = report.imagePrompt || '(Standard atmospheric visual framing)';
+      }
+
+      const headlineEl = document.getElementById('trrHeadlineText');
+      if (headlineEl) {
+        headlineEl.innerText = (report.headlinePanel && report.headlinePanel.headlineText) || 'Headline Overlay';
+      }
+
+      const aspectDimEl = document.getElementById('trrAspectDim');
+      if (aspectDimEl) {
+        aspectDimEl.innerText = report.imageDimensions || '1080x1350 (4:5 Portrait)';
+      }
+
+      // Visual Previews (Thumbnail & 1080x1350 Composite)
+      const previewRow = document.getElementById('trrPreviewImagesRow');
+      const thumbImg = document.getElementById('trrThumbnailImg');
+      const compImg = document.getElementById('trrCompositeImg');
+      if (previewRow && (report.compositeImageUrl || report.thumbnailUrl)) {
+        if (thumbImg && report.thumbnailUrl) {
+          thumbImg.src = report.thumbnailUrl;
+        }
+        if (compImg && report.compositeImageUrl) {
+          compImg.src = report.compositeImageUrl;
+        }
+        previewRow.style.display = 'flex';
+      } else if (previewRow) {
+        previewRow.style.display = 'none';
+      }
+
+      modal.style.display = 'flex';
+    }
+
+    function closeTestRunReportModal() {
+      const modal = document.getElementById('testRunReportModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function openPostDetailsModal(postId) {
+      const modal = document.getElementById('postDetailsModal');
+      if (!modal) return;
+
+      let post = postsData.find(function (p) { return p.id === postId; });
+
+      modal.style.display = 'flex';
+
+      if (post) {
+        populateAndShowPostDetails(post);
+      } else {
+        const titleEl = document.getElementById('pdmTitle');
+        if (titleEl) titleEl.textContent = 'Loading post details...';
+        const capEl = document.getElementById('pdmCaption');
+        if (capEl) capEl.textContent = 'Fetching post data from Supabase...';
+      }
+
+      try {
+        const res = await fetch('/api/post-details?id=' + encodeURIComponent(postId));
+        if (res.ok) {
+          const fullPost = await res.json();
+          const existingIdx = postsData.findIndex(function (p) { return p.id === fullPost.id; });
+          if (existingIdx >= 0) {
+            postsData[existingIdx] = fullPost;
+          } else {
+            postsData.push(fullPost);
+          }
+          populateAndShowPostDetails(fullPost);
+        }
+      } catch (e) {
+        console.warn('[Dashboard] Could not fetch fresh post details:', e);
+      }
+    }
+
+    function populateAndShowPostDetails(post) {
+      const statusBadge = document.getElementById('pdmStatusBadge');
+      const catBadge = document.getElementById('pdmCategoryBadge');
+      const qaBadge = document.getElementById('pdmQaScoreBadge');
+      const titleEl = document.getElementById('pdmTitle');
+      const pageNameEl = document.getElementById('pdmPageName');
+      const idEl = document.getElementById('pdmId');
+      const audTimeEl = document.getElementById('pdmAudienceTime');
+      const audTzEl = document.getElementById('pdmAudienceTz');
+      const locTimeEl = document.getElementById('pdmLocalTime');
+      const locTzEl = document.getElementById('pdmLocalTz');
+      const fbStatusEl = document.getElementById('pdmFbStatusText');
+      const fbPostIdEl = document.getElementById('pdmFbPostId');
+      const fbLinkBtn = document.getElementById('pdmFbLinkBtn');
+      const wordCountBadge = document.getElementById('pdmWordCountBadge');
+      const hashtagsBadge = document.getElementById('pdmHashtagsBadge');
+      const captionEl = document.getElementById('pdmCaption');
+      const imagePromptRow = document.getElementById('pdmImagePromptRow');
+      const imagePromptEl = document.getElementById('pdmImagePrompt');
+      const previewImg = document.getElementById('pdmPreviewImg');
+
+      if (statusBadge) {
+        if (post.status === 'published') {
+          statusBadge.style.background = '#064e3b';
+          statusBadge.style.color = '#34d399';
+          statusBadge.textContent = '● PUBLISHED';
+        } else if (post.status === 'scheduled_on_fb') {
+          statusBadge.style.background = '#1e3a8a';
+          statusBadge.style.color = '#60a5fa';
+          statusBadge.textContent = '● SCHEDULED ON FACEBOOK';
+        } else if (post.status === 'pending_review') {
+          statusBadge.style.background = '#78350f';
+          statusBadge.style.color = '#f59e0b';
+          statusBadge.textContent = '● REVIEW REQUIRED';
+        } else {
+          statusBadge.style.background = '#1e293b';
+          statusBadge.style.color = '#94a3b8';
+          statusBadge.textContent = '● ' + (post.status || 'SCHEDULED').toUpperCase();
+        }
+      }
+
+      if (catBadge) {
+        catBadge.textContent = post.category || post.topic_key || 'Science & Space';
+      }
+
+      if (qaBadge) {
+        qaBadge.textContent = 'QA: ' + (post.qa_score != null ? Math.round(Number(post.qa_score)) : 100) + '/100';
+      }
+
+      if (titleEl) {
+        titleEl.textContent = post.title || post.headline || 'Scheduled Post';
+      }
+
+      const linkedPage = pagesData.find(function (p) { return p.id === post.page_id; });
+      const pageName = post.pageName || (linkedPage ? linkedPage.name : 'Beyond the Known');
+      const pageTz = post.pageTimezone || (linkedPage && linkedPage.schedule && linkedPage.schedule.timezone) || 'America/New_York';
+
+      if (pageNameEl) pageNameEl.textContent = pageName;
+      if (idEl) idEl.textContent = post.id;
+
+      if (audTimeEl && post.scheduled_for) {
+        try {
+          const audFormatted = new Date(post.scheduled_for).toLocaleString('en-US', {
+            timeZone: pageTz,
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+          });
+          audTimeEl.textContent = audFormatted + ' EST';
+        } catch (_) {
+          audTimeEl.textContent = post.scheduled_for;
+        }
+      }
+      if (audTzEl) audTzEl.textContent = pageTz + ' (Audience Cadence)';
+
+      if (locTimeEl && post.scheduled_for) {
+        try {
+          const locFormatted = new Date(post.scheduled_for).toLocaleString([], {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+          });
+          locTimeEl.textContent = locFormatted;
+        } catch (_) {
+          locTimeEl.textContent = post.scheduled_for;
+        }
+      }
+      if (locTzEl) {
+        try {
+          locTzEl.textContent = (Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata') + ' (Your Browser Time)';
+        } catch (_) {
+          locTzEl.textContent = 'Local Time';
+        }
+      }
+
+      if (post.fb_post_id) {
+        if (fbStatusEl) fbStatusEl.textContent = 'Verified in Meta Graph API Queue';
+        if (fbPostIdEl) fbPostIdEl.textContent = 'FB Post ID: ' + post.fb_post_id;
+        if (fbLinkBtn) {
+          fbLinkBtn.style.display = 'inline-flex';
+          fbLinkBtn.href = post.fb_permalink || ('https://www.facebook.com/' + post.fb_post_id);
         }
       } else {
-        previewImg.style.display = 'none';
-        if (previewLink) previewLink.style.display = 'none';
-        if (downloadBtn) downloadBtn.style.display = 'none';
+        if (fbStatusEl) fbStatusEl.textContent = 'Internal Queue (Scheduled)';
+        if (fbPostIdEl) fbPostIdEl.textContent = 'Will be dispatched at scheduled time';
+        if (fbLinkBtn) fbLinkBtn.style.display = 'none';
+      }
+
+      if (captionEl) {
+        captionEl.textContent = post.caption || 'No caption available.';
+      }
+      const words = post.caption_word_count || (post.caption ? post.caption.trim().split(/\s+/).length : 0);
+      if (wordCountBadge) wordCountBadge.textContent = words + ' words';
+      const hashtags = Array.isArray(post.hashtags) ? post.hashtags.length : 0;
+      if (hashtagsBadge) hashtagsBadge.textContent = hashtags + ' hashtags';
+
+      currentModalPost = post;
+      currentModalImageView = 'composed';
+      updateModalImageView();
+
+      if (imagePromptRow && imagePromptEl) {
+        if (post.image_prompt) {
+          imagePromptEl.textContent = post.image_prompt;
+          imagePromptRow.style.display = 'block';
+        } else {
+          imagePromptRow.style.display = 'none';
+        }
       }
     }
 
-    if (viewComposedBtn && viewRawBtn) {
-      if (currentModalImageView === 'composed') {
-        viewComposedBtn.style.background = '#1e3a8a';
-        viewComposedBtn.style.color = '#60a5fa';
-        viewRawBtn.style.background = '#1e293b';
-        viewRawBtn.style.color = '#94a3b8';
-      } else {
-        viewRawBtn.style.background = '#1e3a8a';
-        viewRawBtn.style.color = '#60a5fa';
-        viewComposedBtn.style.background = '#1e293b';
-        viewComposedBtn.style.color = '#94a3b8';
+    let currentModalPost = null;
+    let currentModalImageView = 'composed';
+
+    function updateModalImageView() {
+      if (!currentModalPost) return;
+      const previewImg = document.getElementById('pdmPreviewImg');
+      const previewLink = document.getElementById('pdmPreviewLink');
+      const viewComposedBtn = document.getElementById('pdmViewComposedBtn');
+      const viewRawBtn = document.getElementById('pdmViewRawBtn');
+      const viewToggleRow = document.getElementById('pdmViewToggleRow');
+      const downloadBtn = document.getElementById('pdmDownloadBtn');
+
+      const composed = currentModalPost.composed_image_path;
+      const raw = currentModalPost.raw_image_path;
+
+      if (viewToggleRow) {
+        viewToggleRow.style.display = (composed && raw) ? 'flex' : 'none';
+      }
+
+      const targetSrc = (currentModalImageView === 'raw' && raw) ? raw : (composed || raw);
+      if (previewImg) {
+        if (targetSrc) {
+          previewImg.src = targetSrc;
+          previewImg.style.display = 'block';
+          const filename = (currentModalImageView === 'raw' ? 'photo-' : 'card-') + (currentModalPost.id || 'post') + '.jpg';
+          if (previewLink) {
+            previewLink.href = targetSrc;
+            previewLink.style.display = 'flex';
+            previewLink.download = filename;
+          }
+          if (downloadBtn) {
+            downloadBtn.style.display = 'inline-flex';
+            downloadBtn.innerHTML = currentModalImageView === 'raw'
+              ? '⬇️ Save Raw Photo (.JPG)'
+              : '⬇️ Save Composed Card (.JPG)';
+          }
+        } else {
+          previewImg.style.display = 'none';
+          if (previewLink) previewLink.style.display = 'none';
+          if (downloadBtn) downloadBtn.style.display = 'none';
+        }
+      }
+
+      if (viewComposedBtn && viewRawBtn) {
+        if (currentModalImageView === 'composed') {
+          viewComposedBtn.style.background = '#1e3a8a';
+          viewComposedBtn.style.color = '#60a5fa';
+          viewRawBtn.style.background = '#1e293b';
+          viewRawBtn.style.color = '#94a3b8';
+        } else {
+          viewRawBtn.style.background = '#1e3a8a';
+          viewRawBtn.style.color = '#60a5fa';
+          viewComposedBtn.style.background = '#1e293b';
+          viewComposedBtn.style.color = '#94a3b8';
+        }
       }
     }
-  }
 
-  function downloadCurrentPostImage() {
-    if (!currentModalPost) return;
-    const composed = currentModalPost.composed_image_path;
-    const raw = currentModalPost.raw_image_path;
-    const targetSrc = (currentModalImageView === 'raw' && raw) ? raw : (composed || raw);
-    if (!targetSrc) return;
+    function downloadCurrentPostImage() {
+      if (!currentModalPost) return;
+      const composed = currentModalPost.composed_image_path;
+      const raw = currentModalPost.raw_image_path;
+      const targetSrc = (currentModalImageView === 'raw' && raw) ? raw : (composed || raw);
+      if (!targetSrc) return;
 
-    const filename = (currentModalImageView === 'raw' ? 'raw-photo-' : 'composed-card-') + (currentModalPost.id || 'fb-post') + '.jpg';
+      const filename = (currentModalImageView === 'raw' ? 'raw-photo-' : 'composed-card-') + (currentModalPost.id || 'fb-post') + '.jpg';
 
-    if (targetSrc.startsWith('data:image/jpeg') || targetSrc.startsWith('data:image/png')) {
+      if (targetSrc.startsWith('data:image/jpeg') || targetSrc.startsWith('data:image/png')) {
+        const a = document.createElement('a');
+        a.href = targetSrc;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast('⬇️ Saved ' + filename + ' to your computer!', 'success');
+        return;
+      }
+
+      if (targetSrc.startsWith('data:image/svg+xml') || targetSrc.startsWith('<svg')) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function () {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1080;
+            canvas.height = 1350;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, 1080, 1350);
+            ctx.drawImage(img, 0, 0, 1080, 1350);
+            const jpegUri = canvas.toDataURL('image/jpeg', 0.95);
+            const a = document.createElement('a');
+            a.href = jpegUri;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast('⬇️ Saved ' + filename + ' (1080×1350 single JPEG)!', 'success');
+          } catch (cvErr) {
+            const a = document.createElement('a');
+            a.href = targetSrc;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          }
+        };
+        img.src = targetSrc;
+        return;
+      }
+
       const a = document.createElement('a');
       a.href = targetSrc;
+      a.target = '_blank';
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      showToast('⬇️ Saved ' + filename + ' to your computer!', 'success');
-      return;
     }
 
-    if (targetSrc.startsWith('data:image/svg+xml') || targetSrc.startsWith('<svg')) {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = function () {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = 1080;
-          canvas.height = 1350;
-          const ctx = canvas.getContext('2d');
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, 1080, 1350);
-          ctx.drawImage(img, 0, 0, 1080, 1350);
-          const jpegUri = canvas.toDataURL('image/jpeg', 0.95);
-          const a = document.createElement('a');
-          a.href = jpegUri;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          showToast('⬇️ Saved ' + filename + ' (1080×1350 single JPEG)!', 'success');
-        } catch (cvErr) {
-          const a = document.createElement('a');
-          a.href = targetSrc;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        }
-      };
-      img.src = targetSrc;
-      return;
+    function togglePostModalView(view) {
+      currentModalImageView = view;
+      updateModalImageView();
     }
 
-    const a = document.createElement('a');
-    a.href = targetSrc;
-    a.target = '_blank';
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-
-  function togglePostModalView(view) {
-    currentModalImageView = view;
-    updateModalImageView();
-  }
-
-  function closePostDetailsModal() {
-    const modal = document.getElementById('postDetailsModal');
-    if (modal) modal.style.display = 'none';
-  }
-
-  function copyPostCaptionToClipboard() {
-    const capEl = document.getElementById('pdmCaption');
-    if (!capEl) return;
-    const text = capEl.textContent || '';
-    if (!text) return;
-
-    const copyBtns = [
-      document.getElementById('pdmCopyCaptionBtn'),
-      document.querySelector('#postDetailsModal .btn-primary')
-    ];
-
-    navigator.clipboard.writeText(text).then(function () {
-      copyBtns.forEach(function (btn) {
-        if (btn) {
-          const originalText = btn.innerHTML;
-          btn.innerHTML = '✅ Copied!';
-          setTimeout(function () {
-            btn.innerHTML = originalText;
-          }, 2000);
-        }
-      });
-      showToast('📋 Caption copied to clipboard!', 'success');
-    }).catch(function () {
-      prompt('Copy caption text:', text);
-    });
-  }
-
-  async function togglePageAutoPosting(pageId, targetActive) {
-    if (!pageId) return;
-    var page = pagesData.find(function (p) { return p.id === pageId; });
-    var pageName = page ? page.name : 'Page';
-
-    if (typeof targetActive !== 'boolean') {
-      var currentIsActive = page ? Boolean(page.active || page.is_live) : false;
-      targetActive = !currentIsActive;
+    function closePostDetailsModal() {
+      const modal = document.getElementById('postDetailsModal');
+      if (modal) modal.style.display = 'none';
     }
 
-    // Instant optimistic UI update on table button if present
-    var rowBtn = document.querySelector('#page-card-' + pageId + ' .start-stop-btn');
-    if (rowBtn) {
-      rowBtn.disabled = true;
-      rowBtn.innerText = targetActive ? '⏳ Starting...' : '⏳ Stopping...';
-    }
+    function copyPostCaptionToClipboard() {
+      const capEl = document.getElementById('pdmCaption');
+      if (!capEl) return;
+      const text = capEl.textContent || '';
+      if (!text) return;
 
-    var bigBtn = document.getElementById('psmBigSwitchBtn');
-    if (bigBtn && currentSettingsPageId === pageId) {
-      bigBtn.disabled = true;
-    }
+      const copyBtns = [
+        document.getElementById('pdmCopyCaptionBtn'),
+        document.querySelector('#postDetailsModal .btn-primary')
+      ];
 
-    var timeoutHandle = null;
-    try {
-      var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      if (controller) {
-        timeoutHandle = setTimeout(function () { controller.abort(); }, 12000);
-      }
-
-      var res = await fetch('/api/pages/toggle-live', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: pageId, active: targetActive, force: true }),
-        signal: controller ? controller.signal : undefined,
-      });
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-
-      var data = await res.json().catch(function () { return {}; });
-      if (!res.ok || data.error) {
-        showToast('Error: ' + (data.error || 'Failed to toggle page status'), 'error');
-        if (page) updatePageCardDom(page);
-        return;
-      }
-
-      if (page) {
-        page.active = targetActive;
-        page.is_live = targetActive;
-        if (data.page && data.page.schedule) page.schedule = data.page.schedule;
-        updatePageCardDom(page);
-      } else if (data.page) {
-        updatePageCardDom(data.page);
-      }
-
-      if (currentSettingsPageId === pageId) {
-        updateBigSwitchUI(targetActive);
-        if (page) updateModalChecklistDisplay(page);
-      }
-
-      if (targetActive) {
-        showToast('🚀 Autonomous posting is now LIVE for ' + pageName + '!', 'success');
-      } else {
-        showToast('⏸️ Autonomous posting STOPPED for ' + pageName, 'warning');
-      }
-    } catch (err) {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      var msg = err.name === 'AbortError' ? 'Request timed out after 12s. Reverting button.' : err.message;
-      showToast('Error toggling auto-posting: ' + msg, 'error');
-      if (page) updatePageCardDom(page);
-    } finally {
-      if (bigBtn) bigBtn.disabled = false;
-      var freshBtn = document.querySelector('#page-card-' + pageId + ' .start-stop-btn');
-      if (freshBtn) freshBtn.disabled = false;
-    }
-  }
-
-  function startAutoPostingFromRow(pageId) {
-    togglePageAutoPosting(pageId, true);
-  }
-
-  function stopAutoPostingFromRow(pageId) {
-    togglePageAutoPosting(pageId, false);
-  }
-
-  function promptStopAutoPosting(pageId, pageName) {
-    togglePageAutoPosting(pageId, false);
-  }
-
-  function closeStopAutoPostingModal() {
-    var modal = document.getElementById('stopAutoPostingModal');
-    if (modal) modal.classList.remove('active');
-  }
-
-  async function confirmStopAutoPosting() {
-    var pageId = currentStopPageId || currentSettingsPageId;
-    if (pageId) togglePageAutoPosting(pageId, false);
-    closeStopAutoPostingModal();
-  }
-
-  function toggleAutoPostingFromSwitch() {
-    if (!currentSettingsPageId) return;
-    var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
-    var isLive = page ? Boolean(page.active || page.is_live) : false;
-    togglePageAutoPosting(currentSettingsPageId, !isLive);
-  }
-
-  async function runTestRunFromModal() {
-    if (!currentSettingsPageId) return;
-    triggerPageTestRun(currentSettingsPageId);
-  }
-
-  async function triggerPageTestRun(pageId) {
-    if (!pageId) return;
-    try {
-      var res = await fetch('/api/test-run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: pageId }),
-      });
-      var data = await res.json();
-      if (res.ok && data.success) {
-        showToast('⚡ Test Run Succeeded! Step 4 marked verified.', 'success');
-        var p = pagesData.find(function (x) { return x.id === pageId; });
-        if (p) {
-          p.last_test_run_at = new Date().toISOString();
-          p.test_run_completed = true;
-          if (currentSettingsPageId === pageId) updateModalChecklistDisplay(p);
-        }
-        fetchPagesTab();
-      } else {
-        showToast('Test run error: ' + (data.error || 'Failed to run test'), 'error');
-      }
-    } catch (err) {
-      showToast('Error executing test run: ' + err.message, 'error');
-    }
-  }
-
-  async function analyzePageNicheAction(pageId) {
-    if (!pageId) return;
-    var page = pagesData.find(function (p) { return p.id === pageId; });
-    var pageName = page ? page.name : 'this Page';
-
-    var ok = confirm('✨ Run Automatic Niche Detection for "' + pageName + '"?\n\nThis will scan public Page metadata and recent posts via Meta Graph API, and evaluate the ideal content profile with strict privacy (zero tokens transmitted).');
-    if (!ok) return;
-
-    try {
-      var res = await fetch('/api/pages/analyze-niche', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: pageId }),
-      });
-      var data = await res.json();
-
-      if (!res.ok && data.noProviders) {
-        alert('⚠️ No active AI providers configured.\n\nPlease add an API key under the "Providers & Quotas" tab first to enable AI Niche Detection.');
-        showTab('providers');
-        return;
-      }
-
-      if (!res.ok || data.error) {
-        alert('Niche Detection Notice: ' + (data.error || 'Failed'));
-        return;
-      }
-
-      if (data.analysis) {
-        var ana = data.analysis;
-        var msg = '✨ Niche Evaluation Complete for "' + pageName + '":\n\n' +
-          '• Suggested Profile: ' + (ana.suggested_profile_name || 'N/A') + '\n' +
-          '• Match Confidence: ' + Math.round((ana.confidence || 0) * 100) + '%\n' +
-          '• Reasoning: ' + (ana.reasoning || '') + '\n' +
-          '• Tone: ' + (ana.detected_tone || 'Standard') + '\n' +
-          '• Suggested Cadence: ' + (ana.suggested_posts_per_day || 2) + ' posts/day\n\n' +
-          'Click OK to open Page Settings and review or apply this recommendation.';
-        alert(msg);
-        openPageSettingsModal(pageId);
-      }
-    } catch (err) {
-      alert('Network error while analyzing niche: ' + err.message);
-    }
-  }
-
-  function analyzePageNicheActionFromModal() {
-    if (currentSettingsPageId) {
-      analyzePageNicheAction(currentSettingsPageId);
-    }
-  }
-
-  function dismissModalNicheSuggestion() {
-    var box = document.getElementById('psmNicheSuggestionBox');
-    if (box) box.style.display = 'none';
-  }
-
-  async function acceptModalNicheSuggestion() {
-    if (!currentSettingsPageId) return;
-    var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
-    if (!page || !page.niche_analysis || !page.niche_analysis.suggested_profile_id) return;
-
-    var profSelect = document.getElementById('psmProfileSelect');
-    if (profSelect) {
-      profSelect.value = page.niche_analysis.suggested_profile_id;
-    }
-    if (page.niche_analysis.suggested_posts_per_day) {
-      applyQuickSchedule(page.niche_analysis.suggested_posts_per_day);
-    }
-    dismissModalNicheSuggestion();
-    markFormModified();
-    showToast('Suggested profile "' + page.niche_analysis.suggested_profile_name + '" applied! Click Save Settings to persist.', 'success');
-  }
-
-  async function applyNicheProfile(pageId, profileId) {
-    if (!pageId || !profileId) return;
-    try {
-      var res = await fetch('/api/pages/update-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: pageId, profile_id: profileId }),
-      });
-      var data = await res.json();
-      if (res.ok && data.success) {
-        showToast('✅ Niche profile applied!', 'success');
-        var page = pagesData.find(function (p) { return p.id === pageId; });
-        if (page) page.profile_id = profileId;
-        fetchPagesTab();
-      } else {
-        showToast('Notice: ' + (data.error || 'Failed to apply niche profile'), 'error');
-      }
-    } catch (err) {
-      showToast('Error applying niche: ' + err.message, 'error');
-    }
-  }
-
-  async function createProfileFromModalNiche() {
-    if (!currentSettingsPageId) return;
-    try {
-      var res = await fetch('/api/pages/create-profile-from-niche', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: currentSettingsPageId }),
-      });
-      var data = await res.json();
-      if (res.ok && data.success) {
-        showToast('🎉 New Content Profile created!', 'success');
-        if (data.profile) {
-          var profSelect = document.getElementById('psmProfileSelect');
-          if (profSelect) {
-            var opt = document.createElement('option');
-            opt.value = data.profile.id;
-            opt.innerText = data.profile.name + ' (' + (data.profile.niche || data.profile.type || 'profile') + ')';
-            profSelect.insertBefore(opt, profSelect.lastElementChild);
-            profSelect.value = data.profile.id;
+      navigator.clipboard.writeText(text).then(function () {
+        copyBtns.forEach(function (btn) {
+          if (btn) {
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '✅ Copied!';
+            setTimeout(function () {
+              btn.innerHTML = originalText;
+            }, 2000);
           }
-        }
-        fetchPagesTab();
-      } else {
-        showToast('Failed: ' + (data.error || 'Could not generate profile'), 'error');
-      }
-    } catch (err) {
-      showToast('Error creating profile: ' + err.message, 'error');
-    }
-  }
-
-  async function importStarterProfilesFromModal() {
-    try {
-      var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
-      var data = await res.json();
-      if (res.ok && data.success) {
-        var imp = data.importedCount !== undefined ? data.importedCount : (data.count || 0);
-        var skip = data.skippedCount !== undefined ? data.skippedCount : 0;
-        var upd = data.updatedCount !== undefined ? data.updatedCount : 0;
-        showToast('📦 Starter profiles: ' + imp + ' imported, ' + skip + ' skipped, ' + upd + ' updated.', 'success');
-        var profSelect = document.getElementById('psmProfileSelect');
-        var studioSelect = document.getElementById('editProfileSelect');
-        if (data.profiles) {
-          [profSelect, studioSelect].forEach(function (sel) {
-            if (!sel) return;
-            var currentVal = sel.value;
-            sel.innerHTML = '';
-            data.profiles.forEach(function (prof) {
-              var opt = document.createElement('option');
-              opt.value = prof.id;
-              opt.innerText = prof.name + ' (' + (prof.niche || prof.type || 'profile') + ')';
-              sel.appendChild(opt);
-            });
-            var customOpt = document.createElement('option');
-            customOpt.value = '__custom__';
-            customOpt.innerText = '✍️ Custom / Type Your Own Niche...';
-            sel.appendChild(customOpt);
-            if (currentVal) sel.value = currentVal;
-          });
-        }
-      } else {
-        showToast('Notice: ' + (data.error || 'Failed to import starter profiles'), 'error');
-      }
-    } catch (err) {
-      showToast('Network error importing starter profiles: ' + err.message, 'error');
-    }
-  }
-
-  async function importStarterProfilesFromSettings(btn) {
-    var origText = btn ? btn.innerHTML : '';
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = '⏳ Importing...';
-    }
-
-    try {
-      var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
-      var data = await res.json();
-      if (res.ok && data.success) {
-        var imp = data.importedCount !== undefined ? data.importedCount : (data.count || 0);
-        var skip = data.skippedCount !== undefined ? data.skippedCount : 0;
-        var upd = data.updatedCount !== undefined ? data.updatedCount : 0;
-        showToast('📦 Starter profiles: ' + imp + ' imported, ' + skip + ' skipped, ' + upd + ' updated.', 'success');
-        fetchPagesTab();
-      } else {
-        showToast('Notice: ' + (data.error || 'Failed to import starter profiles'), 'error');
-      }
-    } catch (err) {
-      showToast('Network error importing starter profiles: ' + err.message, 'error');
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = origText;
-      }
-    }
-  }
-
-  async function runSystemReadinessAuditAction(btn) {
-    var origText = btn ? btn.innerHTML : '';
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = '⏳ Auditing System...';
-    }
-    var container = document.getElementById('readinessAuditContainer');
-    if (!container) return;
-    container.style.display = 'block';
-    container.innerHTML = '<div style="padding: 14px; color: var(--text-muted); font-size: 13px;">Checking all 11 production readiness vectors against Supabase and Meta...</div>';
-
-    try {
-      var res = await fetch('/api/settings/readiness');
-      var data = await res.json();
-      if (!res.ok || !data.success) {
-        container.innerHTML = '<div style="color: #f87171; padding: 12px; background: rgba(239,68,68,0.1); border-radius: 6px;">Audit failed: ' + escapeHtml(data.error || 'Unknown error') + '</div>';
-        return;
-      }
-
-      var overallColor = data.overallReady ? '#34d399' : '#f59e0b';
-      var overallTitle = data.overallReady ? '🟢 100% PRODUCTION READY' : '⚠️ ATTENTION NEEDED BEFORE GO-LIVE';
-
-      var html = '<div style="background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px;">' +
-        '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">' +
-        '<strong style="color: ' + overallColor + '; font-size: 14px;">' + overallTitle + '</strong>' +
-        '<span style="font-size: 12px; color: var(--text-muted);">' + data.passedCount + ' / ' + data.totalCount + ' Checks Passed</span>' +
-        '</div>' +
-        '<div style="display: flex; flex-direction: column; gap: 8px;">';
-
-      data.checks.forEach(function (c) {
-        var statusPill = c.passed
-          ? '<span class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; font-size: 10px; font-weight: 700;">PASS</span>'
-          : (c.critical ? '<span class="badge" style="background: rgba(239,68,68,0.2); color: #f87171; font-size: 10px; font-weight: 700;">FAIL</span>' : '<span class="badge" style="background: rgba(245,158,11,0.2); color: #fbbf24; font-size: 10px; font-weight: 700;">WARN</span>');
-        html += '<div style="display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 10px; background: rgba(255,255,255,0.02); border-radius: 6px; font-size: 12px;">' +
-          '<div>' +
-          '<div style="font-weight: 600; color: #f3f4f6;">' + escapeHtml(c.title) + '</div>' +
-          '<div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">' + escapeHtml(c.message) + '</div>' +
-          '</div>' +
-          '<div>' + statusPill + '</div>' +
-          '</div>';
+        });
+        showToast('📋 Caption copied to clipboard!', 'success');
+      }).catch(function () {
+        prompt('Copy caption text:', text);
       });
-
-      html += '</div></div>';
-      container.innerHTML = html;
-    } catch (err) {
-      container.innerHTML = '<div style="color: #f87171; padding: 12px;">Audit request error: ' + escapeHtml(err.message) + '</div>';
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = origText;
-      }
     }
-  }
 
-  async function runDatabaseSchemaCheckAction(btn) {
-    var origText = btn ? btn.innerHTML : '';
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = '⏳ Verifying Schema...';
-    }
-    var container = document.getElementById('schemaCheckContainer');
-    if (!container) return;
-    container.style.display = 'block';
-    container.innerHTML = '<div style="padding: 14px; color: var(--text-muted); font-size: 13px;">Checking all 19 database tables and columns in Supabase...</div>';
+    async function togglePageAutoPosting(pageId, targetActive) {
+      if (!pageId) return;
+      var page = pagesData.find(function (p) { return p.id === pageId; });
+      var pageName = page ? page.name : 'Page';
 
-    try {
-      var res = await fetch('/api/settings/schema-check');
-      var data = await res.json();
-      if (!res.ok) throw new Error('Status ' + res.status);
-
-      var color = data.isComplete ? '#34d399' : '#f87171';
-      var title = data.isComplete ? '✅ Database Schema 100% Complete & Synchronized' : '⚠️ Missing Schema Tables or Columns';
-
-      var html = '<div style="background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px;">' +
-        '<div style="margin-bottom: 12px; font-weight: 700; color: ' + color + '; font-size: 14px;">' + title + '</div>' +
-        '<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">' +
-        'Verified: ' + data.tablesFound.length + ' / ' + data.expectedTables.length + ' tables present in public schema.' +
-        '</div>';
-
-      if (data.missingTables && data.missingTables.length > 0) {
-        html += '<div style="padding: 10px; background: rgba(239,68,68,0.15); border: 1px solid #ef4444; border-radius: 6px; margin-bottom: 10px; font-size: 12px; color: #fecaca;">' +
-          '<strong>Missing Tables:</strong> ' + escapeHtml(data.missingTables.join(', ')) +
-          '<div style="margin-top: 6px; font-size: 11px;">Run <code>supabase/all_migrations.sql</code> or <code>supabase/delta_20261109.sql</code> in Supabase SQL Editor.</div>' +
-          '</div>';
+      if (typeof targetActive !== 'boolean') {
+        var currentIsActive = page ? Boolean(page.active || page.is_live) : false;
+        targetActive = !currentIsActive;
       }
 
-      if (data.missingColumns && data.missingColumns.length > 0) {
-        html += '<div style="padding: 10px; background: rgba(245,158,11,0.15); border: 1px solid #f59e0b; border-radius: 6px; margin-bottom: 10px; font-size: 12px; color: #fde68a;">' +
-          '<strong>Missing Columns:</strong> ' + escapeHtml(data.missingColumns.map(function(m) { return m.table + '.' + m.column; }).join(', ')) +
-          '<div style="margin-top: 6px; font-size: 11px;">Run <code>supabase/delta_20261109.sql</code> in Supabase SQL Editor to add these columns.</div>' +
-          '</div>';
+      // Instant optimistic UI update on table button if present
+      var rowBtn = document.querySelector('#page-card-' + pageId + ' .start-stop-btn');
+      if (rowBtn) {
+        rowBtn.disabled = true;
+        rowBtn.innerText = targetActive ? '⏳ Starting...' : '⏳ Stopping...';
       }
 
-      if (data.isComplete) {
-        html += '<div style="font-size: 12px; color: #a7f3d0;">All core tables, RLS policies, indexes, and versioning columns are present and ready for autonomous operations.</div>';
+      var bigBtn = document.getElementById('psmBigSwitchBtn');
+      if (bigBtn && currentSettingsPageId === pageId) {
+        bigBtn.disabled = true;
       }
 
-      html += '</div>';
-      container.innerHTML = html;
-    } catch (err) {
-      container.innerHTML = '<div style="color: #f87171; padding: 12px;">Schema check error: ' + escapeHtml(err.message) + '</div>';
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = origText;
-      }
-    }
-  }
-
-  function downloadSettingsBackupAction() {
-    var a = document.createElement('a');
-    a.href = '/api/settings/backup';
-    a.download = 'fb-auto-settings-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    showToast('📥 Downloading settings backup (zero secrets)...', 'info');
-  }
-
-  async function handleRestoreBackupFile(fileInput) {
-    if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
-    var file = fileInput.files[0];
-    var reader = new FileReader();
-
-    reader.onload = async function (e) {
+      var timeoutHandle = null;
       try {
-        var json = JSON.parse(e.target.result);
-        var res = await fetch('/api/settings/restore', {
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        if (controller) {
+          timeoutHandle = setTimeout(function () { controller.abort(); }, 12000);
+        }
+
+        var res = await fetch('/api/pages/toggle-live', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(json),
+          body: JSON.stringify({ pageId: pageId, active: targetActive, force: true }),
+          signal: controller ? controller.signal : undefined,
+        });
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+
+        var data = await res.json().catch(function () { return {}; });
+        if (!res.ok || data.error) {
+          showToast('Error: ' + (data.error || 'Failed to toggle page status'), 'error');
+          if (page) updatePageCardDom(page);
+          return;
+        }
+
+        if (page) {
+          page.active = targetActive;
+          page.is_live = targetActive;
+          if (data.page && data.page.schedule) page.schedule = data.page.schedule;
+          updatePageCardDom(page);
+        } else if (data.page) {
+          updatePageCardDom(data.page);
+        }
+
+        if (currentSettingsPageId === pageId) {
+          updateBigSwitchUI(targetActive);
+          if (page) updateModalChecklistDisplay(page);
+        }
+
+        if (targetActive) {
+          showToast('🚀 Autonomous posting is now LIVE for ' + pageName + '!', 'success');
+        } else {
+          showToast('⏸️ Autonomous posting STOPPED for ' + pageName, 'warning');
+        }
+      } catch (err) {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        var msg = err.name === 'AbortError' ? 'Request timed out after 12s. Reverting button.' : err.message;
+        showToast('Error toggling auto-posting: ' + msg, 'error');
+        if (page) updatePageCardDom(page);
+      } finally {
+        if (bigBtn) bigBtn.disabled = false;
+        var freshBtn = document.querySelector('#page-card-' + pageId + ' .start-stop-btn');
+        if (freshBtn) freshBtn.disabled = false;
+      }
+    }
+
+    function startAutoPostingFromRow(pageId) {
+      togglePageAutoPosting(pageId, true);
+    }
+
+    function stopAutoPostingFromRow(pageId) {
+      togglePageAutoPosting(pageId, false);
+    }
+
+    function promptStopAutoPosting(pageId, pageName) {
+      togglePageAutoPosting(pageId, false);
+    }
+
+    function closeStopAutoPostingModal() {
+      var modal = document.getElementById('stopAutoPostingModal');
+      if (modal) modal.classList.remove('active');
+    }
+
+    async function confirmStopAutoPosting() {
+      var pageId = currentStopPageId || currentSettingsPageId;
+      if (pageId) togglePageAutoPosting(pageId, false);
+      closeStopAutoPostingModal();
+    }
+
+    function toggleAutoPostingFromSwitch() {
+      if (!currentSettingsPageId) return;
+      var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
+      var isLive = page ? Boolean(page.active || page.is_live) : false;
+      togglePageAutoPosting(currentSettingsPageId, !isLive);
+    }
+
+    async function runTestRunFromModal() {
+      if (!currentSettingsPageId) return;
+      triggerPageTestRun(currentSettingsPageId);
+    }
+
+    async function triggerPageTestRun(pageId) {
+      if (!pageId) return;
+      try {
+        var res = await fetch('/api/test-run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: pageId }),
         });
         var data = await res.json();
         if (res.ok && data.success) {
-          showToast('✅ Settings restored: ' + data.restored.pages + ' pages, ' + data.restored.profiles + ' profiles!', 'success');
+          showToast('⚡ Test Run Succeeded! Step 4 marked verified.', 'success');
+          var p = pagesData.find(function (x) { return x.id === pageId; });
+          if (p) {
+            p.last_test_run_at = new Date().toISOString();
+            p.test_run_completed = true;
+            if (currentSettingsPageId === pageId) updateModalChecklistDisplay(p);
+          }
           fetchPagesTab();
-          fetchAccountsTab();
-          fetchProvidersTab();
         } else {
-          alert('Restore notice: ' + (data.error || 'Failed to restore backup'));
+          showToast('Test run error: ' + (data.error || 'Failed to run test'), 'error');
         }
       } catch (err) {
-        alert('Invalid backup JSON file: ' + err.message);
+        showToast('Error executing test run: ' + err.message, 'error');
+      }
+    }
+
+    async function analyzePageNicheAction(pageId) {
+      if (!pageId) return;
+      var page = pagesData.find(function (p) { return p.id === pageId; });
+      var pageName = page ? page.name : 'this Page';
+
+      var ok = confirm('✨ Run Automatic Niche Detection for "' + pageName + '"?\n\nThis will scan public Page metadata and recent posts via Meta Graph API, and evaluate the ideal content profile with strict privacy (zero tokens transmitted).');
+      if (!ok) return;
+
+      try {
+        var res = await fetch('/api/pages/analyze-niche', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: pageId }),
+        });
+        var data = await res.json();
+
+        if (!res.ok && data.noProviders) {
+          alert('⚠️ No active AI providers configured.\n\nPlease add an API key under the "Providers & Quotas" tab first to enable AI Niche Detection.');
+          showTab('providers');
+          return;
+        }
+
+        if (!res.ok || data.error) {
+          alert('Niche Detection Notice: ' + (data.error || 'Failed'));
+          return;
+        }
+
+        if (data.analysis) {
+          var ana = data.analysis;
+          var msg = '✨ Niche Evaluation Complete for "' + pageName + '":\n\n' +
+            '• Suggested Profile: ' + (ana.suggested_profile_name || 'N/A') + '\n' +
+            '• Match Confidence: ' + Math.round((ana.confidence || 0) * 100) + '%\n' +
+            '• Reasoning: ' + (ana.reasoning || '') + '\n' +
+            '• Tone: ' + (ana.detected_tone || 'Standard') + '\n' +
+            '• Suggested Cadence: ' + (ana.suggested_posts_per_day || 2) + ' posts/day\n\n' +
+            'Click OK to open Page Settings and review or apply this recommendation.';
+          alert(msg);
+          openPageSettingsModal(pageId);
+        }
+      } catch (err) {
+        alert('Network error while analyzing niche: ' + err.message);
+      }
+    }
+
+    function analyzePageNicheActionFromModal() {
+      if (currentSettingsPageId) {
+        analyzePageNicheAction(currentSettingsPageId);
+      }
+    }
+
+    function dismissModalNicheSuggestion() {
+      var box = document.getElementById('psmNicheSuggestionBox');
+      if (box) box.style.display = 'none';
+    }
+
+    async function acceptModalNicheSuggestion() {
+      if (!currentSettingsPageId) return;
+      var page = pagesData.find(function (p) { return p.id === currentSettingsPageId; });
+      if (!page || !page.niche_analysis || !page.niche_analysis.suggested_profile_id) return;
+
+      var profSelect = document.getElementById('psmProfileSelect');
+      if (profSelect) {
+        profSelect.value = page.niche_analysis.suggested_profile_id;
+      }
+      if (page.niche_analysis.suggested_posts_per_day) {
+        applyQuickSchedule(page.niche_analysis.suggested_posts_per_day);
+      }
+      dismissModalNicheSuggestion();
+      markFormModified();
+      showToast('Suggested profile "' + page.niche_analysis.suggested_profile_name + '" applied! Click Save Settings to persist.', 'success');
+    }
+
+    async function applyNicheProfile(pageId, profileId) {
+      if (!pageId || !profileId) return;
+      try {
+        var res = await fetch('/api/pages/update-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: pageId, profile_id: profileId }),
+        });
+        var data = await res.json();
+        if (res.ok && data.success) {
+          showToast('✅ Niche profile applied!', 'success');
+          var page = pagesData.find(function (p) { return p.id === pageId; });
+          if (page) page.profile_id = profileId;
+          fetchPagesTab();
+        } else {
+          showToast('Notice: ' + (data.error || 'Failed to apply niche profile'), 'error');
+        }
+      } catch (err) {
+        showToast('Error applying niche: ' + err.message, 'error');
+      }
+    }
+
+    async function createProfileFromModalNiche() {
+      if (!currentSettingsPageId) return;
+      try {
+        var res = await fetch('/api/pages/create-profile-from-niche', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: currentSettingsPageId }),
+        });
+        var data = await res.json();
+        if (res.ok && data.success) {
+          showToast('🎉 New Content Profile created!', 'success');
+          if (data.profile) {
+            var profSelect = document.getElementById('psmProfileSelect');
+            if (profSelect) {
+              var opt = document.createElement('option');
+              opt.value = data.profile.id;
+              opt.innerText = data.profile.name + ' (' + (data.profile.niche || data.profile.type || 'profile') + ')';
+              profSelect.insertBefore(opt, profSelect.lastElementChild);
+              profSelect.value = data.profile.id;
+            }
+          }
+          fetchPagesTab();
+        } else {
+          showToast('Failed: ' + (data.error || 'Could not generate profile'), 'error');
+        }
+      } catch (err) {
+        showToast('Error creating profile: ' + err.message, 'error');
+      }
+    }
+
+    async function importStarterProfilesFromModal() {
+      try {
+        var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
+        var data = await res.json();
+        if (res.ok && data.success) {
+          var imp = data.importedCount !== undefined ? data.importedCount : (data.count || 0);
+          var skip = data.skippedCount !== undefined ? data.skippedCount : 0;
+          var upd = data.updatedCount !== undefined ? data.updatedCount : 0;
+          showToast('📦 Starter profiles: ' + imp + ' imported, ' + skip + ' skipped, ' + upd + ' updated.', 'success');
+          var profSelect = document.getElementById('psmProfileSelect');
+          var studioSelect = document.getElementById('editProfileSelect');
+          if (data.profiles) {
+            [profSelect, studioSelect].forEach(function (sel) {
+              if (!sel) return;
+              var currentVal = sel.value;
+              sel.innerHTML = '';
+              data.profiles.forEach(function (prof) {
+                var opt = document.createElement('option');
+                opt.value = prof.id;
+                opt.innerText = prof.name + ' (' + (prof.niche || prof.type || 'profile') + ')';
+                sel.appendChild(opt);
+              });
+              var customOpt = document.createElement('option');
+              customOpt.value = '__custom__';
+              customOpt.innerText = '✍️ Custom / Type Your Own Niche...';
+              sel.appendChild(customOpt);
+              if (currentVal) sel.value = currentVal;
+            });
+          }
+        } else {
+          showToast('Notice: ' + (data.error || 'Failed to import starter profiles'), 'error');
+        }
+      } catch (err) {
+        showToast('Network error importing starter profiles: ' + err.message, 'error');
+      }
+    }
+
+    async function importStarterProfilesFromSettings(btn) {
+      var origText = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Importing...';
+      }
+
+      try {
+        var res = await fetch('/api/profiles/import-starter', { method: 'POST' });
+        var data = await res.json();
+        if (res.ok && data.success) {
+          var imp = data.importedCount !== undefined ? data.importedCount : (data.count || 0);
+          var skip = data.skippedCount !== undefined ? data.skippedCount : 0;
+          var upd = data.updatedCount !== undefined ? data.updatedCount : 0;
+          showToast('📦 Starter profiles: ' + imp + ' imported, ' + skip + ' skipped, ' + upd + ' updated.', 'success');
+          fetchPagesTab();
+        } else {
+          showToast('Notice: ' + (data.error || 'Failed to import starter profiles'), 'error');
+        }
+      } catch (err) {
+        showToast('Network error importing starter profiles: ' + err.message, 'error');
       } finally {
-        fileInput.value = '';
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = origText;
+        }
       }
-    };
-
-    reader.readAsText(file);
-  }
-
-  function openPagePromptStudioFromModal() {
-    var pageId = currentSettingsPageId;
-    closePageSettingsModal();
-    if (pageId) {
-      openPagePromptStudio(pageId);
     }
-  }
 
-  window.showToast = showToast;
-  window.openPageSettingsModal = openPageSettingsModal;
-  window.closePageSettingsModal = closePageSettingsModal;
-  window.setScheduleTimingMode = setScheduleTimingMode;
-  window.handlePublishingModeChange = handlePublishingModeChange;
-  window.toggleLiveFromModal = toggleLiveFromModal;
-  window.toggleAutoPostingFromSwitch = toggleAutoPostingFromSwitch;
-  window.togglePageAutoPosting = togglePageAutoPosting;
-  window.promptStopAutoPosting = promptStopAutoPosting;
-  window.startAutoPostingFromRow = startAutoPostingFromRow;
-  window.stopAutoPostingFromRow = stopAutoPostingFromRow;
-  window.closeStopAutoPostingModal = closeStopAutoPostingModal;
-  window.confirmStopAutoPosting = confirmStopAutoPosting;
-  window.addFixedTimePicker = addFixedTimePicker;
-  window.removeFixedTimePicker = removeFixedTimePicker;
-  window.applyQuickSchedule = applyQuickSchedule;
-  window.selectPublishingMode = selectPublishingMode;
-  window.handleModalProfileChange = handleModalProfileChange;
-  window.handleCustomNicheTextInput = handleCustomNicheTextInput;
-  window.applyUsPrimeTimeSuggestions = applyUsPrimeTimeSuggestions;
-  window.handleScheduleInputChange = handleScheduleInputChange;
-  window.handleSavePageSettings = handleSavePageSettings;
-  window.revertModalChanges = revertModalChanges;
-  window.markFormModified = markFormModified;
-  window.runTestRunFromModal = runTestRunFromModal;
-  window.analyzePageNicheActionFromModal = analyzePageNicheActionFromModal;
-  window.dismissModalNicheSuggestion = dismissModalNicheSuggestion;
-  window.acceptModalNicheSuggestion = acceptModalNicheSuggestion;
-  window.createProfileFromModalNiche = createProfileFromModalNiche;
-  window.importStarterProfilesFromModal = importStarterProfilesFromModal;
-  window.importStarterProfilesFromSettings = importStarterProfilesFromSettings;
-  window.runSystemReadinessAuditAction = runSystemReadinessAuditAction;
-  window.runDatabaseSchemaCheckAction = runDatabaseSchemaCheckAction;
-  window.downloadSettingsBackupAction = downloadSettingsBackupAction;
-  window.handleRestoreBackupFile = handleRestoreBackupFile;
-  window.openPagePromptStudioFromModal = openPagePromptStudioFromModal;
-  window.handleStudioProfileChange = handleStudioProfileChange;
-  window.validateStudioWordLimits = validateStudioWordLimits;
-  window.validateStudioFirstComment = validateStudioFirstComment;
-  window.toggleFirstCommentValidation = toggleFirstCommentValidation;
-  window.syncHeadlineColorPicker = syncHeadlineColorPicker;
-  window.syncHeadlineColorText = syncHeadlineColorText;
-  window.openConcurrencyConflictModal = openConcurrencyConflictModal;
-  window.closeConcurrencyConflictModal = closeConcurrencyConflictModal;
-  window.resolveConflictKeepMine = resolveConflictKeepMine;
-  window.resolveConflictUseLatest = resolveConflictUseLatest;
-  window.resolveConflictMerge = resolveConflictMerge;
-  window.viewTestRunReport = viewTestRunReport;
-  window.closeTestRunReportModal = closeTestRunReportModal;
-  window.openPostDetailsModal = openPostDetailsModal;
-  window.closePostDetailsModal = closePostDetailsModal;
-  window.copyPostCaptionToClipboard = copyPostCaptionToClipboard;
-  window.togglePostModalView = togglePostModalView;
-  window.downloadCurrentPostImage = downloadCurrentPostImage;
-  window.confirmModeChange = confirmModeChange;
-  window.cancelModeConfirmation = cancelModeConfirmation;
-  window.reloadProfilesAndResetToCustom = reloadProfilesAndResetToCustom;
+    async function runSystemReadinessAuditAction(btn) {
+      var origText = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Auditing System...';
+      }
+      var container = document.getElementById('readinessAuditContainer');
+      if (!container) return;
+      container.style.display = 'block';
+      container.innerHTML = '<div style="padding: 14px; color: var(--text-muted); font-size: 13px;">Checking all 11 production readiness vectors against Supabase and Meta...</div>';
 
-  // ==========================================
-  // DAILY CONTENT & IMAGE IDEAS STUDIO
-  // ==========================================
-  let currentDcsPageId = '';
-  let currentDcsPageName = '';
-  let currentDcsTopics = [];
+      try {
+        var res = await fetch('/api/settings/readiness');
+        var data = await res.json();
+        if (!res.ok || !data.success) {
+          container.innerHTML = '<div style="color: #f87171; padding: 12px; background: rgba(239,68,68,0.1); border-radius: 6px;">Audit failed: ' + escapeHtml(data.error || 'Unknown error') + '</div>';
+          return;
+        }
 
-  function openDailyContentStudio(pageId, pageName) {
-    currentDcsPageId = pageId;
-    currentDcsPageName = pageName || 'Selected Page';
-    const modal = document.getElementById('dailyContentStudioModal');
-    if (!modal) return;
-    
-    const pageBadge = document.getElementById('dcsPageBadge');
-    if (pageBadge) pageBadge.textContent = 'Page: ' + currentDcsPageName;
-    
-    modal.style.display = 'flex';
-    document.body.style.overflow = 'hidden';
-    loadDailyTopics();
-  }
+        var overallColor = data.overallReady ? '#34d399' : '#f59e0b';
+        var overallTitle = data.overallReady ? '🟢 100% PRODUCTION READY' : '⚠️ ATTENTION NEEDED BEFORE GO-LIVE';
 
-  function closeDailyContentStudio() {
-    const modal = document.getElementById('dailyContentStudioModal');
-    if (modal) modal.style.display = 'none';
-    document.body.style.overflow = '';
-  }
+        var html = '<div style="background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px;">' +
+          '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 10px;">' +
+          '<strong style="color: ' + overallColor + '; font-size: 14px;">' + overallTitle + '</strong>' +
+          '<span style="font-size: 12px; color: var(--text-muted);">' + data.passedCount + ' / ' + data.totalCount + ' Checks Passed</span>' +
+          '</div>' +
+          '<div style="display: flex; flex-direction: column; gap: 8px;">';
 
-  async function loadDailyTopics() {
-    const loading = document.getElementById('dcsLoading');
-    const loadingText = document.getElementById('dcsLoadingText');
-    const emptyState = document.getElementById('dcsEmptyState');
-    const container = document.getElementById('dcsCardsContainer');
-    const countBadge = document.getElementById('dcsCountBadge');
+        data.checks.forEach(function (c) {
+          var statusPill = c.passed
+            ? '<span class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; font-size: 10px; font-weight: 700;">PASS</span>'
+            : (c.critical ? '<span class="badge" style="background: rgba(239,68,68,0.2); color: #f87171; font-size: 10px; font-weight: 700;">FAIL</span>' : '<span class="badge" style="background: rgba(245,158,11,0.2); color: #fbbf24; font-size: 10px; font-weight: 700;">WARN</span>');
+          html += '<div style="display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 10px; background: rgba(255,255,255,0.02); border-radius: 6px; font-size: 12px;">' +
+            '<div>' +
+            '<div style="font-weight: 600; color: #f3f4f6;">' + escapeHtml(c.title) + '</div>' +
+            '<div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">' + escapeHtml(c.message) + '</div>' +
+            '</div>' +
+            '<div>' + statusPill + '</div>' +
+            '</div>';
+        });
 
-    if (loading) {
-      if (loadingText) loadingText.textContent = 'Loading today\'s researched ideas & visual scenes...';
-      loading.style.display = 'block';
+        html += '</div></div>';
+        container.innerHTML = html;
+      } catch (err) {
+        container.innerHTML = '<div style="color: #f87171; padding: 12px;">Audit request error: ' + escapeHtml(err.message) + '</div>';
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = origText;
+        }
+      }
     }
-    if (emptyState) emptyState.style.display = 'none';
-    if (container) container.innerHTML = '';
 
-    try {
-      const res = await fetch('/api/topics?pageId=' + encodeURIComponent(currentDcsPageId));
-      const data = await res.json();
-      if (loading) loading.style.display = 'none';
-
-      if (!res.ok || !data.success) {
-        showToast('⚠️ Failed to load ideas: ' + (data.error || 'Server error'), 'error');
-        return;
+    async function runDatabaseSchemaCheckAction(btn) {
+      var origText = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Verifying Schema...';
       }
+      var container = document.getElementById('schemaCheckContainer');
+      if (!container) return;
+      container.style.display = 'block';
+      container.innerHTML = '<div style="padding: 14px; color: var(--text-muted); font-size: 13px;">Checking all 19 database tables and columns in Supabase...</div>';
 
-      currentDcsTopics = data.topics || [];
-      if (countBadge) {
-        countBadge.textContent = currentDcsTopics.length + ' Ideas in Queue';
-      }
+      try {
+        var res = await fetch('/api/settings/schema-check');
+        var data = await res.json();
+        if (!res.ok) throw new Error('Status ' + res.status);
 
-      if (currentDcsTopics.length === 0) {
-        if (emptyState) emptyState.style.display = 'block';
-      } else {
-        renderDailyTopicCards(currentDcsTopics);
+        var color = data.isComplete ? '#34d399' : '#f87171';
+        var title = data.isComplete ? '✅ Database Schema 100% Complete & Synchronized' : '⚠️ Missing Schema Tables or Columns';
+
+        var html = '<div style="background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px;">' +
+          '<div style="margin-bottom: 12px; font-weight: 700; color: ' + color + '; font-size: 14px;">' + title + '</div>' +
+          '<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">' +
+          'Verified: ' + data.tablesFound.length + ' / ' + data.expectedTables.length + ' tables present in public schema.' +
+          '</div>';
+
+        if (data.missingTables && data.missingTables.length > 0) {
+          html += '<div style="padding: 10px; background: rgba(239,68,68,0.15); border: 1px solid #ef4444; border-radius: 6px; margin-bottom: 10px; font-size: 12px; color: #fecaca;">' +
+            '<strong>Missing Tables:</strong> ' + escapeHtml(data.missingTables.join(', ')) +
+            '<div style="margin-top: 6px; font-size: 11px;">Run <code>supabase/all_migrations.sql</code> or <code>supabase/delta_20261109.sql</code> in Supabase SQL Editor.</div>' +
+            '</div>';
+        }
+
+        if (data.missingColumns && data.missingColumns.length > 0) {
+          html += '<div style="padding: 10px; background: rgba(245,158,11,0.15); border: 1px solid #f59e0b; border-radius: 6px; margin-bottom: 10px; font-size: 12px; color: #fde68a;">' +
+            '<strong>Missing Columns:</strong> ' + escapeHtml(data.missingColumns.map(function (m) { return m.table + '.' + m.column; }).join(', ')) +
+            '<div style="margin-top: 6px; font-size: 11px;">Run <code>supabase/delta_20261109.sql</code> in Supabase SQL Editor to add these columns.</div>' +
+            '</div>';
+        }
+
+        if (data.isComplete) {
+          html += '<div style="font-size: 12px; color: #a7f3d0;">All core tables, RLS policies, indexes, and versioning columns are present and ready for autonomous operations.</div>';
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+      } catch (err) {
+        container.innerHTML = '<div style="color: #f87171; padding: 12px;">Schema check error: ' + escapeHtml(err.message) + '</div>';
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = origText;
+        }
       }
-    } catch (e) {
-      if (loading) loading.style.display = 'none';
-      showToast('⚠️ Network error loading ideas', 'error');
     }
-  }
 
-  function renderDailyTopicCards(topics) {
-    const container = document.getElementById('dcsCardsContainer');
-    if (!container) return;
-    container.innerHTML = '';
+    function downloadSettingsBackupAction() {
+      var a = document.createElement('a');
+      a.href = '/api/settings/backup';
+      a.download = 'fb-auto-settings-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast('📥 Downloading settings backup (zero secrets)...', 'info');
+    }
 
-    topics.forEach((t, idx) => {
-      const card = document.createElement('div');
-      card.className = 'card';
-      card.style.cssText = 'background: #020617; border: 1px solid #1e293b; border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 14px; position: relative;';
+    async function handleRestoreBackupFile(fileInput) {
+      if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
+      var file = fileInput.files[0];
+      var reader = new FileReader();
 
-      const factsList = Array.isArray(t.facts) ? t.facts : [];
-      const factsHtml = factsList.map(f => `<li style="margin-bottom: 4px; color: #cbd5e1; font-size: 12px; line-height: 1.4;">${escapeHtml(f)}</li>`).join('');
+      reader.onload = async function (e) {
+        try {
+          var json = JSON.parse(e.target.result);
+          var res = await fetch('/api/settings/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(json),
+          });
+          var data = await res.json();
+          if (res.ok && data.success) {
+            showToast('✅ Settings restored: ' + data.restored.pages + ' pages, ' + data.restored.profiles + ' profiles!', 'success');
+            fetchPagesTab();
+            fetchAccountsTab();
+            fetchProvidersTab();
+          } else {
+            alert('Restore notice: ' + (data.error || 'Failed to restore backup'));
+          }
+        } catch (err) {
+          alert('Invalid backup JSON file: ' + err.message);
+        } finally {
+          fileInput.value = '';
+        }
+      };
 
-      const headlineFormatted = escapeHtml(t.headline || t.title)
-        .replace(/\*\*([^*]+)\*\*/g, '<span style="color: #facc15; font-weight: 800;">$1</span>');
+      reader.readAsText(file);
+    }
 
-      const imageUrl = t.imageUrl || '';
+    function openPagePromptStudioFromModal() {
+      var pageId = currentSettingsPageId;
+      closePageSettingsModal();
+      if (pageId) {
+        openPagePromptStudio(pageId);
+      }
+    }
 
-      card.innerHTML = `
+    window.showToast = showToast;
+    window.openPageSettingsModal = openPageSettingsModal;
+    window.closePageSettingsModal = closePageSettingsModal;
+    window.setScheduleTimingMode = setScheduleTimingMode;
+    window.handlePublishingModeChange = handlePublishingModeChange;
+    window.toggleLiveFromModal = toggleLiveFromModal;
+    window.toggleAutoPostingFromSwitch = toggleAutoPostingFromSwitch;
+    window.togglePageAutoPosting = togglePageAutoPosting;
+    window.promptStopAutoPosting = promptStopAutoPosting;
+    window.startAutoPostingFromRow = startAutoPostingFromRow;
+    window.stopAutoPostingFromRow = stopAutoPostingFromRow;
+    window.closeStopAutoPostingModal = closeStopAutoPostingModal;
+    window.confirmStopAutoPosting = confirmStopAutoPosting;
+    window.addFixedTimePicker = addFixedTimePicker;
+    window.removeFixedTimePicker = removeFixedTimePicker;
+    window.applyQuickSchedule = applyQuickSchedule;
+    window.selectPublishingMode = selectPublishingMode;
+    window.handleModalProfileChange = handleModalProfileChange;
+    window.handleCustomNicheTextInput = handleCustomNicheTextInput;
+    window.applyUsPrimeTimeSuggestions = applyUsPrimeTimeSuggestions;
+    window.handleScheduleInputChange = handleScheduleInputChange;
+    window.handleSavePageSettings = handleSavePageSettings;
+    window.revertModalChanges = revertModalChanges;
+    window.markFormModified = markFormModified;
+    window.runTestRunFromModal = runTestRunFromModal;
+    window.analyzePageNicheActionFromModal = analyzePageNicheActionFromModal;
+    window.dismissModalNicheSuggestion = dismissModalNicheSuggestion;
+    window.acceptModalNicheSuggestion = acceptModalNicheSuggestion;
+    window.createProfileFromModalNiche = createProfileFromModalNiche;
+    window.importStarterProfilesFromModal = importStarterProfilesFromModal;
+    window.importStarterProfilesFromSettings = importStarterProfilesFromSettings;
+    window.runSystemReadinessAuditAction = runSystemReadinessAuditAction;
+    window.runDatabaseSchemaCheckAction = runDatabaseSchemaCheckAction;
+    window.downloadSettingsBackupAction = downloadSettingsBackupAction;
+    window.handleRestoreBackupFile = handleRestoreBackupFile;
+    window.openPagePromptStudioFromModal = openPagePromptStudioFromModal;
+    window.handleStudioProfileChange = handleStudioProfileChange;
+    window.validateStudioWordLimits = validateStudioWordLimits;
+    window.validateStudioFirstComment = validateStudioFirstComment;
+    window.toggleFirstCommentValidation = toggleFirstCommentValidation;
+    window.syncHeadlineColorPicker = syncHeadlineColorPicker;
+    window.syncHeadlineColorText = syncHeadlineColorText;
+    window.openConcurrencyConflictModal = openConcurrencyConflictModal;
+    window.closeConcurrencyConflictModal = closeConcurrencyConflictModal;
+    window.resolveConflictKeepMine = resolveConflictKeepMine;
+    window.resolveConflictUseLatest = resolveConflictUseLatest;
+    window.resolveConflictMerge = resolveConflictMerge;
+    window.viewTestRunReport = viewTestRunReport;
+    window.closeTestRunReportModal = closeTestRunReportModal;
+    window.openPostDetailsModal = openPostDetailsModal;
+    window.closePostDetailsModal = closePostDetailsModal;
+    window.copyPostCaptionToClipboard = copyPostCaptionToClipboard;
+    window.togglePostModalView = togglePostModalView;
+    window.downloadCurrentPostImage = downloadCurrentPostImage;
+    window.confirmModeChange = confirmModeChange;
+    window.cancelModeConfirmation = cancelModeConfirmation;
+    window.reloadProfilesAndResetToCustom = reloadProfilesAndResetToCustom;
+
+    // ==========================================
+    // DAILY CONTENT & IMAGE IDEAS STUDIO
+    // ==========================================
+    let currentDcsPageId = '';
+    let currentDcsPageName = '';
+    let currentDcsTopics = [];
+
+    function openDailyContentStudio(pageId, pageName) {
+      currentDcsPageId = pageId;
+      currentDcsPageName = pageName || 'Selected Page';
+      const modal = document.getElementById('dailyContentStudioModal');
+      if (!modal) return;
+
+      const pageBadge = document.getElementById('dcsPageBadge');
+      if (pageBadge) pageBadge.textContent = 'Page: ' + currentDcsPageName;
+
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+      loadDailyTopics();
+    }
+
+    function closeDailyContentStudio() {
+      const modal = document.getElementById('dailyContentStudioModal');
+      if (modal) modal.style.display = 'none';
+      document.body.style.overflow = '';
+    }
+
+    async function loadDailyTopics() {
+      const loading = document.getElementById('dcsLoading');
+      const loadingText = document.getElementById('dcsLoadingText');
+      const emptyState = document.getElementById('dcsEmptyState');
+      const container = document.getElementById('dcsCardsContainer');
+      const countBadge = document.getElementById('dcsCountBadge');
+
+      if (loading) {
+        if (loadingText) loadingText.textContent = 'Loading today\'s researched ideas & visual scenes...';
+        loading.style.display = 'block';
+      }
+      if (emptyState) emptyState.style.display = 'none';
+      if (container) container.innerHTML = '';
+
+      try {
+        const res = await fetch('/api/topics?pageId=' + encodeURIComponent(currentDcsPageId));
+        const data = await res.json();
+        if (loading) loading.style.display = 'none';
+
+        if (!res.ok || !data.success) {
+          showToast('⚠️ Failed to load ideas: ' + (data.error || 'Server error'), 'error');
+          return;
+        }
+
+        currentDcsTopics = data.topics || [];
+        if (countBadge) {
+          countBadge.textContent = currentDcsTopics.length + ' Ideas in Queue';
+        }
+
+        if (currentDcsTopics.length === 0) {
+          if (emptyState) emptyState.style.display = 'block';
+        } else {
+          renderDailyTopicCards(currentDcsTopics);
+        }
+      } catch (e) {
+        if (loading) loading.style.display = 'none';
+        showToast('⚠️ Network error loading ideas', 'error');
+      }
+    }
+
+    function renderDailyTopicCards(topics) {
+      const container = document.getElementById('dcsCardsContainer');
+      if (!container) return;
+      container.innerHTML = '';
+
+      topics.forEach((t, idx) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.style.cssText = 'background: #020617; border: 1px solid #1e293b; border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 14px; position: relative;';
+
+        const factsList = Array.isArray(t.facts) ? t.facts : [];
+        const factsHtml = factsList.map(f => `<li style="margin-bottom: 4px; color: #cbd5e1; font-size: 12px; line-height: 1.4;">${escapeHtml(f)}</li>`).join('');
+
+        const headlineFormatted = escapeHtml(t.headline || t.title)
+          .replace(/\*\*([^*]+)\*\*/g, '<span style="color: #facc15; font-weight: 800;">$1</span>');
+
+        const imageUrl = t.imageUrl || '';
+
+        card.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid #0f172a; padding-bottom: 10px;">
           <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
             <span class="badge" style="background: #1e293b; color: #38bdf8; font-weight: 700; font-size: 11px;">Slot #${idx + 1}</span>
@@ -5481,8 +5487,8 @@
           <div style="display: flex; flex-direction: column; gap: 8px; align-items: center; background: #000; border: 1px solid #1e293b; border-radius: 8px; padding: 10px;">
             <div style="width: 100%; aspect-ratio: 4 / 5; max-height: 220px; overflow: hidden; border-radius: 6px; background: #0b0f19; display: flex; align-items: center; justify-content: center; position: relative;">
               ${imageUrl
-                ? `<img src="${escapeHtml(imageUrl)}" alt="Preview" style="width: 100%; height: 100%; object-fit: cover;" loading="lazy" onerror="this.src=''; this.alt='Image generation pending...';" />`
-                : '<div style="color: #64748b; font-size: 11px; text-align: center; padding: 10px;">No image generated yet</div>'}
+            ? `<img src="${escapeHtml(imageUrl)}" alt="Preview" style="width: 100%; height: 100%; object-fit: cover;" loading="lazy" onerror="this.src=''; this.alt='Image generation pending...';" />`
+            : '<div style="color: #64748b; font-size: 11px; text-align: center; padding: 10px;">No image generated yet</div>'}
             </div>
             <button class="btn btn-secondary btn-image-regen" style="width: 100%; font-size: 11px; font-weight: 600; padding: 6px; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); display: flex; align-items: center; justify-content: center; gap: 4px;">🎨 New Image Variant</button>
             ${imageUrl ? `<a href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener" style="font-size: 10px; color: #64748b; text-decoration: underline;">View Full HD</a>` : ''}
@@ -5490,1242 +5496,1242 @@
         </div>
       `;
 
-      // Event listeners for card buttons (safe and clean)
-      const editBtn = card.querySelector('.btn-edit-topic');
-      if (editBtn) editBtn.addEventListener('click', () => openEditTopicModal(t.id));
+        // Event listeners for card buttons (safe and clean)
+        const editBtn = card.querySelector('.btn-edit-topic');
+        if (editBtn) editBtn.addEventListener('click', () => openEditTopicModal(t.id));
 
-      const regenBtn = card.querySelector('.btn-regen-topic');
-      if (regenBtn) regenBtn.addEventListener('click', () => regenerateSingleTopicAction(t.id));
+        const regenBtn = card.querySelector('.btn-regen-topic');
+        if (regenBtn) regenBtn.addEventListener('click', () => regenerateSingleTopicAction(t.id));
 
-      const customBtn = card.querySelector('.btn-custom-topic');
-      if (customBtn) customBtn.addEventListener('click', () => openCustomPromptRegenModal(t.id, t.title));
+        const customBtn = card.querySelector('.btn-custom-topic');
+        if (customBtn) customBtn.addEventListener('click', () => openCustomPromptRegenModal(t.id, t.title));
 
-      const deleteBtn = card.querySelector('.btn-delete-topic');
-      if (deleteBtn) deleteBtn.addEventListener('click', () => deleteTopicItemAction(t.id));
+        const deleteBtn = card.querySelector('.btn-delete-topic');
+        if (deleteBtn) deleteBtn.addEventListener('click', () => deleteTopicItemAction(t.id));
 
-      const imageRegenBtn = card.querySelector('.btn-image-regen');
-      if (imageRegenBtn) imageRegenBtn.addEventListener('click', () => regenerateTopicImage(t.id, t.visualSubject || t.title));
+        const imageRegenBtn = card.querySelector('.btn-image-regen');
+        if (imageRegenBtn) imageRegenBtn.addEventListener('click', () => regenerateTopicImage(t.id, t.visualSubject || t.title));
 
-      container.appendChild(card);
-    });
-  }
-
-  async function regenerateAllTopics() {
-    if (!confirm('Regenerate all daily ideas? This will research a fresh batch of content ideas and matching visual scenes for today.')) {
-      return;
-    }
-    const regenBtn = document.getElementById('dcsRegenAllBtn');
-    const loading = document.getElementById('dcsLoading');
-    const loadingText = document.getElementById('dcsLoadingText');
-    const emptyState = document.getElementById('dcsEmptyState');
-    const container = document.getElementById('dcsCardsContainer');
-
-    if (regenBtn) regenBtn.disabled = true;
-    if (loading) {
-      if (loadingText) loadingText.textContent = 'Conducting AI research & generating FLUX visual scenes for today...';
-      loading.style.display = 'block';
-    }
-    if (emptyState) emptyState.style.display = 'none';
-    if (container) container.innerHTML = '';
-
-    try {
-      const res = await fetch('/api/topics/research', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: currentDcsPageId, force: true }),
+        container.appendChild(card);
       });
-      const data = await res.json();
-      if (regenBtn) regenBtn.disabled = false;
+    }
 
-      if (!res.ok || !data.success) {
-        if (loading) loading.style.display = 'none';
-        showToast('⚠️ Error researching topics: ' + (data.error || 'Server error'), 'error');
+    async function regenerateAllTopics() {
+      if (!confirm('Regenerate all daily ideas? This will research a fresh batch of content ideas and matching visual scenes for today.')) {
         return;
       }
+      const regenBtn = document.getElementById('dcsRegenAllBtn');
+      const loading = document.getElementById('dcsLoading');
+      const loadingText = document.getElementById('dcsLoadingText');
+      const emptyState = document.getElementById('dcsEmptyState');
+      const container = document.getElementById('dcsCardsContainer');
 
-      showToast('🎉 Fresh daily ideas and visuals generated successfully!', 'success');
-      loadDailyTopics();
-    } catch (e) {
-      if (regenBtn) regenBtn.disabled = false;
-      if (loading) loading.style.display = 'none';
-      showToast('⚠️ Network error during research', 'error');
-    }
-  }
-
-  async function regenerateSingleTopicAction(itemId) {
-    const loading = document.getElementById('dcsLoading');
-    const loadingText = document.getElementById('dcsLoadingText');
-    if (loading) {
-      if (loadingText) loadingText.textContent = 'Generating 1 replacement topic & FLUX visual with AI...';
-      loading.style.display = 'block';
-    }
-
-    try {
-      const res = await fetch('/api/topics/regenerate-item', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: currentDcsPageId, itemId: itemId }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        if (loading) loading.style.display = 'none';
-        showToast('⚠️ Failed to regenerate item: ' + (data.error || 'Server error'), 'error');
-        return;
+      if (regenBtn) regenBtn.disabled = true;
+      if (loading) {
+        if (loadingText) loadingText.textContent = 'Conducting AI research & generating FLUX visual scenes for today...';
+        loading.style.display = 'block';
       }
+      if (emptyState) emptyState.style.display = 'none';
+      if (container) container.innerHTML = '';
 
-      showToast('✨ Idea regenerated with verified facts and new visual!', 'success');
-      loadDailyTopics();
-    } catch (e) {
-      if (loading) loading.style.display = 'none';
-      showToast('⚠️ Network error regenerating idea', 'error');
-    }
-  }
-
-  function openCustomPromptRegenModal(itemId, currentTitle) {
-    const modal = document.getElementById('customPromptRegenModal');
-    if (!modal) return;
-    const itemInput = document.getElementById('cprItemId');
-    const titleSpan = document.getElementById('cprCurrentTitle');
-    const guidanceArea = document.getElementById('cprGuidanceText');
-
-    if (itemInput) itemInput.value = itemId;
-    if (titleSpan) titleSpan.textContent = currentTitle;
-    if (guidanceArea) guidanceArea.value = '';
-    modal.style.display = 'flex';
-  }
-
-  function closeCustomPromptRegenModal() {
-    const modal = document.getElementById('customPromptRegenModal');
-    if (modal) modal.style.display = 'none';
-  }
-
-  async function submitCustomPromptRegen() {
-    const itemIdEl = document.getElementById('cprItemId');
-    const guidanceEl = document.getElementById('cprGuidanceText');
-    const itemId = itemIdEl ? itemIdEl.value : '';
-    const guidance = guidanceEl ? guidanceEl.value.trim() : '';
-
-    if (!guidance) {
-      alert('Please enter some guidance or prompt direction for the AI.');
-      return;
-    }
-
-    closeCustomPromptRegenModal();
-    const loading = document.getElementById('dcsLoading');
-    const loadingText = document.getElementById('dcsLoadingText');
-    if (loading) {
-      if (loadingText) loadingText.textContent = 'Researching topic matching: "' + guidance.slice(0, 30) + '..."';
-      loading.style.display = 'block';
-    }
-
-    try {
-      const res = await fetch('/api/topics/regenerate-item', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: currentDcsPageId, itemId: itemId, userGuidance: guidance }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        if (loading) loading.style.display = 'none';
-        showToast('⚠️ Failed with guidance: ' + (data.error || 'Server error'), 'error');
-        return;
-      }
-
-      showToast('🎯 Regenerated idea matching your exact guidance!', 'success');
-      loadDailyTopics();
-    } catch (e) {
-      if (loading) loading.style.display = 'none';
-      showToast('⚠️ Network error', 'error');
-    }
-  }
-
-  function openEditTopicModal(itemId) {
-    const topic = currentDcsTopics.find(t => t.id === itemId);
-    if (!topic) return;
-
-    const idEl = document.getElementById('etiItemId');
-    const titleEl = document.getElementById('etiTitle');
-    const catEl = document.getElementById('etiCategory');
-    const headEl = document.getElementById('etiHeadline');
-    const factsEl = document.getElementById('etiFacts');
-    const visualEl = document.getElementById('etiVisualSubject');
-    const imgEl = document.getElementById('etiImageUrl');
-
-    if (idEl) idEl.value = topic.id;
-    if (titleEl) titleEl.value = topic.title || '';
-    if (catEl) catEl.value = topic.category || '';
-    if (headEl) headEl.value = topic.headline || '';
-    if (factsEl) factsEl.value = Array.isArray(topic.facts) ? topic.facts.join('\n') : (topic.facts || '');
-    if (visualEl) visualEl.value = topic.visualSubject || '';
-    if (imgEl) imgEl.value = topic.imageUrl || '';
-
-    const modal = document.getElementById('editTopicIdeaModal');
-    if (modal) modal.style.display = 'flex';
-  }
-
-  function openAddTopicModal() {
-    const idEl = document.getElementById('etiItemId');
-    const titleEl = document.getElementById('etiTitle');
-    const catEl = document.getElementById('etiCategory');
-    const headEl = document.getElementById('etiHeadline');
-    const factsEl = document.getElementById('etiFacts');
-    const visualEl = document.getElementById('etiVisualSubject');
-    const imgEl = document.getElementById('etiImageUrl');
-
-    if (idEl) idEl.value = '';
-    if (titleEl) titleEl.value = '';
-    if (catEl) catEl.value = 'Science & Space';
-    if (headEl) headEl.value = '';
-    if (factsEl) factsEl.value = '';
-    if (visualEl) visualEl.value = '';
-    if (imgEl) imgEl.value = '';
-
-    const modal = document.getElementById('editTopicIdeaModal');
-    if (modal) modal.style.display = 'flex';
-  }
-
-  function closeEditTopicModal() {
-    const modal = document.getElementById('editTopicIdeaModal');
-    if (modal) modal.style.display = 'none';
-  }
-
-  async function saveTopicEditAction() {
-    const idEl = document.getElementById('etiItemId');
-    const titleEl = document.getElementById('etiTitle');
-    const catEl = document.getElementById('etiCategory');
-    const headEl = document.getElementById('etiHeadline');
-    const factsEl = document.getElementById('etiFacts');
-    const visualEl = document.getElementById('etiVisualSubject');
-    const imgEl = document.getElementById('etiImageUrl');
-
-    const itemId = idEl ? idEl.value : '';
-    const title = titleEl ? titleEl.value.trim() : '';
-    const category = catEl ? catEl.value.trim() : '';
-    const headline = headEl ? headEl.value.trim() : '';
-    const factsRaw = factsEl ? factsEl.value.trim() : '';
-    const facts = factsRaw ? factsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
-    const visualSubject = visualEl ? visualEl.value.trim() : '';
-    const imageUrl = imgEl ? imgEl.value.trim() : '';
-
-    if (!title) {
-      alert('Title is required.');
-      return;
-    }
-
-    try {
-      let res;
-      if (itemId) {
-        res = await fetch('/api/topics/update', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: itemId,
-            title,
-            category,
-            headline,
-            facts,
-            visualSubject,
-            imageUrl,
-          }),
-        });
-      } else {
-        res = await fetch('/api/topics/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            pageId: currentDcsPageId,
-            title,
-            category,
-            headline,
-            facts,
-            visualSubject,
-            imageUrl,
-          }),
-        });
-      }
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showToast('⚠️ Failed to save: ' + (data.error || 'Server error'), 'error');
-        return;
-      }
-
-      closeEditTopicModal();
-      showToast('💾 Topic saved successfully!', 'success');
-      loadDailyTopics();
-    } catch (e) {
-      showToast('⚠️ Network error saving topic', 'error');
-    }
-  }
-
-  async function regenerateTopicImage(itemId, visualSubject) {
-    showToast('🎨 Generating new image variant...', 'info');
-
-    try {
-      const res = await fetch('/api/topics/regenerate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId, visualSubject }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showToast('⚠️ Image update failed: ' + (data.error || 'Server error'), 'error');
-        return;
-      }
-
-      showToast('🎨 New image variant generated!', 'success');
-      loadDailyTopics();
-    } catch (e) {
-      showToast('⚠️ Network error updating image', 'error');
-    }
-  }
-
-  async function deleteTopicItemAction(itemId) {
-    if (!confirm('Remove this idea from today\'s queue?')) return;
-
-    try {
-      const res = await fetch('/api/topics/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: itemId }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showToast('⚠️ Failed to delete: ' + (data.error || 'Server error'), 'error');
-        return;
-      }
-
-      showToast('🗑️ Idea removed from queue', 'info');
-      loadDailyTopics();
-    } catch (e) {
-      showToast('⚠️ Network error deleting idea', 'error');
-    }
-  }
-
-  window.openDailyContentStudio = openDailyContentStudio;
-  window.closeDailyContentStudio = closeDailyContentStudio;
-  window.loadDailyTopics = loadDailyTopics;
-  window.renderDailyTopicCards = renderDailyTopicCards;
-  window.regenerateAllTopics = regenerateAllTopics;
-  window.regenerateSingleTopicAction = regenerateSingleTopicAction;
-  window.openCustomPromptRegenModal = openCustomPromptRegenModal;
-  window.closeCustomPromptRegenModal = closeCustomPromptRegenModal;
-  window.submitCustomPromptRegen = submitCustomPromptRegen;
-  window.openEditTopicModal = openEditTopicModal;
-  window.openAddTopicModal = openAddTopicModal;
-  window.closeEditTopicModal = closeEditTopicModal;
-  window.saveTopicEditAction = saveTopicEditAction;
-  window.regenerateTopicImage = regenerateTopicImage;
-  window.deleteTopicItemAction = deleteTopicItemAction;
-
-
-  function copyExpectedRedirectUri() {
-    const el = document.getElementById('expectedRedirectUriText');
-    if (!el) return;
-    const text = el.innerText || el.textContent;
-    navigator.clipboard.writeText(text.trim()).then(function () {
-      alert('Copied OAuth Redirect URI to clipboard:\n' + text.trim());
-    }).catch(function () {
-      prompt('Copy OAuth Redirect URI:', text.trim());
-    });
-  }
-
-  async function testFacebookConnectionAction(btn) {
-    const origText = btn ? btn.innerHTML : '';
-    const statusSpan = document.getElementById('testFbConnStatus');
-    const resultsBox = document.getElementById('testFbConnResults');
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = '⏳ Testing with Meta Graph API...';
-    }
-    if (statusSpan) statusSpan.innerText = 'Connecting to Meta...';
-    if (resultsBox) resultsBox.style.display = 'none';
-
-    try {
-      const res = await fetch('/api/facebook/test-connection', { method: 'POST' });
-      const data = await res.json();
-
-      if (resultsBox) {
-        resultsBox.style.display = 'block';
-        if (data.success) {
-          resultsBox.innerHTML =
-            '<div style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); padding: 14px 18px; border-radius: 8px; color: #a7f3d0;">' +
-            '<div style="font-weight: 700; font-size: 14px; margin-bottom: 6px;">✅ Meta Graph API Connection Verified!</div>' +
-            '<div style="font-size: 13px;">Meta App Name: <strong>' + escapeHtml(data.metaAppName || 'N/A') + '</strong> (ID: ' + escapeHtml(data.metaAppId || 'N/A') + ')</div>' +
-            (data.configIdValid ? '<div style="font-size: 13px; margin-top: 4px;">✅ Business Login Configuration ID verified with Meta.</div>' : '') +
-            '</div>';
-        } else {
-          let issuesHtml = '';
-          if (data.issues && data.issues.length > 0) {
-            issuesHtml = '<ul style="margin: 8px 0 8px 20px; font-size: 13px;">' +
-              data.issues.map(function (iss) { return '<li>' + escapeHtml(iss) + '</li>'; }).join('') +
-              '</ul>';
-          }
-          let recsHtml = '';
-          if (data.recommendations && data.recommendations.length > 0) {
-            recsHtml = '<div style="margin-top: 8px; font-size: 12px; color: #fde68a;"><strong>Recommendations:</strong><ul style="margin: 4px 0 0 20px;">' +
-              data.recommendations.map(function (rec) { return '<li>' + escapeHtml(rec) + '</li>'; }).join('') +
-              '</ul></div>';
-          }
-
-          resultsBox.innerHTML =
-            '<div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); padding: 14px 18px; border-radius: 8px; color: #fecaca;">' +
-            '<div style="font-weight: 700; font-size: 14px;">⚠️ Meta Graph API Connection Diagnostic Report</div>' +
-            issuesHtml +
-            recsHtml +
-            '</div>';
-        }
-      }
-      if (statusSpan) statusSpan.innerText = data.success ? 'Verified' : 'Issues detected';
-    } catch (e) {
-      if (resultsBox) {
-        resultsBox.style.display = 'block';
-        resultsBox.innerHTML = '<div style="background: rgba(239,68,68,0.15); border: 1px solid #ef4444; padding: 12px; border-radius: 6px; color: #fecaca;">Network test error: ' + escapeHtml(e.message) + '</div>';
-      }
-      if (statusSpan) statusSpan.innerText = 'Error';
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = origText;
-      }
-    }
-  }
-
-  // --- Content Library Handlers ---
-  let currentLibraryData = null;
-
-  async function loadContentLibraryForPage(pageId) {
-    if (!pageId) {
-      const sel = document.getElementById('libPageSelector');
-      pageId = sel ? sel.value : (pagesData[0] ? pagesData[0].id : null);
-    }
-    if (!pageId) return;
-    window.currentLibraryPageId = pageId;
-
-    try {
-      const res = await fetch('/api/library?pageId=' + encodeURIComponent(pageId));
-      if (!res.ok) throw new Error('Status ' + res.status);
-      const data = await res.json();
-      currentLibraryData = data;
-
-      // Update badge & radios
-      const mode = data.contentSourceMode || 'full_ai';
-      const badge = document.getElementById('libActiveModeBadge');
-      if (badge) {
-        if (mode === 'excel_library') {
-          badge.style.background = 'rgba(16, 185, 129, 0.2)';
-          badge.style.color = '#34d399';
-          badge.innerText = 'EXCEL + IMAGE LIBRARY';
-        } else if (mode === 'hybrid') {
-          badge.style.background = 'rgba(245, 158, 11, 0.2)';
-          badge.style.color = '#fbbf24';
-          badge.innerText = 'HYBRID MODE';
-        } else {
-          badge.style.background = 'rgba(59, 130, 246, 0.2)';
-          badge.style.color = '#60a5fa';
-          badge.innerText = 'FULL AI';
-        }
-      }
-
-      document.querySelectorAll('input[name="libPageSourceMode"]').forEach(function (r) {
-        r.checked = r.value === mode;
-      });
-
-      // Populate active library Drive settings
-      if (data.libraries && data.libraries.length > 0) {
-        window.currentActiveLibraryId = data.libraries[0].id;
-        window.currentLibraryId = data.libraries[0].id;
-        const lib = data.libraries[0];
-        const driveInput = document.getElementById('libDriveFolderInput');
-        if (driveInput) driveInput.value = lib.drive_folder_id || '';
-        const afterPub = document.getElementById('libAfterPublishAction');
-        if (afterPub) afterPub.value = lib.after_publish_action || 'move_to_posted';
-        const driveBadge = document.getElementById('libDriveStatusBadge');
-        if (driveBadge) {
-          if (lib.drive_folder_id) {
-            driveBadge.style.background = 'rgba(16, 185, 129, 0.15)';
-            driveBadge.style.color = '#34d399';
-            driveBadge.innerText = '● LINKED (' + (lib.last_synced_at ? new Date(lib.last_synced_at).toLocaleTimeString() : 'Not Synced') + ')';
-          } else {
-            driveBadge.style.background = 'rgba(148, 163, 184, 0.15)';
-            driveBadge.style.color = '#94a3b8';
-            driveBadge.innerText = 'NOT CONFIGURED';
-          }
-        }
-      }
-
-      // Check migration requirement
-      const migBanner = document.getElementById('libMigrationBanner');
-      if (migBanner) {
-        migBanner.style.display = data.migrationRequired ? 'block' : 'none';
-      }
-
-      // Update readiness alert
-      const readinessEl = document.getElementById('libReadinessAlert');
-      if (readinessEl) {
-        if (mode === 'excel_library') {
-          const activeRows = (data.items || []).filter(function (it) { return it.status !== 'skipped'; });
-          const missing = activeRows.filter(function (it) { return !it.matched_asset_id; });
-          if (missing.length > 0) {
-            readinessEl.innerHTML = '<span style="color: #f87171; font-weight: 600;">⚠️ Blocked: ' + missing.length + ' active row(s) lack an image. Excel Library requires an image for every row.</span>';
-          } else if (activeRows.length > 0) {
-            readinessEl.innerHTML = '<span style="color: #34d399; font-weight: 600;">✅ Ready: All ' + activeRows.length + ' active row(s) have paired images.</span>';
-          } else {
-            readinessEl.innerHTML = '<span style="color: #94a3b8;">No active rows in library.</span>';
-          }
-        } else if (mode === 'hybrid') {
-          readinessEl.innerHTML = '<span style="color: #fbbf24; font-weight: 600;">⚡ Hybrid: Library items used first, AI fallback active.</span>';
-        } else {
-          readinessEl.innerHTML = '';
-        }
-      }
-
-      // Update metrics
-      const m = data.metrics || {};
-      const elTotal = document.getElementById('libMetricTotalRows');
-      if (elTotal) elTotal.innerText = m.totalRows || 0;
-      const elMatched = document.getElementById('libMetricMatched');
-      if (elMatched) elMatched.innerText = m.matchedCount || 0;
-      const elAssets = document.getElementById('libMetricAssets');
-      if (elAssets) elAssets.innerText = m.availableAssetsCount || 0;
-      const elStock = document.getElementById('libMetricStock');
-      if (elStock) elStock.innerText = (m.stockDaysRemaining || 0) + ' days';
-      const elCadence = document.getElementById('libMetricCadence');
-      if (elCadence) elCadence.innerText = '@ ' + (m.postsPerDay || 5) + ' posts/day';
-
-      const lowBanner = document.getElementById('libLowStockBanner');
-      if (lowBanner) {
-        lowBanner.style.display = (m.lowStock && m.totalRows > 0) ? 'block' : 'none';
-      }
-
-      // Render items table
-      renderLibraryItemsTable(data.items || [], data.assets || []);
-    } catch (err) {
-      console.warn('[Library] Error loading library for page:', err);
-    }
-  }
-  window.loadContentLibraryForPage = loadContentLibraryForPage;
-
-  function renderLibraryItemsTable(items, assets) {
-    const tbody = document.getElementById('libItemsTableBody');
-    if (!tbody) return;
-
-    if (!items || items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="padding: 32px; text-align: center; color: var(--text-muted);"><div style="font-size: 24px; margin-bottom: 6px;">📄</div><strong>No content library rows uploaded yet.</strong><div style="font-size: 11px; margin-top: 4px;">Download the template above, fill your ideas/facts, and upload the spreadsheet or connect Google Drive.</div></td></tr>';
-      return;
-    }
-
-    tbody.innerHTML = items.map(function (item) {
-      const matchedAsset = item.library_assets || assets.find(function (a) { return a.id === item.matched_asset_id; });
-      const hasMatch = Boolean(matchedAsset);
-
-      let statusBadge = '';
-      if (item.status === 'published') {
-        statusBadge = '<span class="badge" style="background: #064e3b; color: #34d399;">● Published</span>';
-      } else if (item.status === 'skipped') {
-        statusBadge = '<span class="badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8;">○ Skipped</span>';
-      } else if (item.status === 'failed') {
-        statusBadge = '<span class="badge" style="background: #7f1d1d; color: #fca5a5;" title="' + escapeHtml(item.rejection_reason || 'Failed') + '">✕ Failed</span>';
-      } else if (item.status === 'needs_review') {
-        statusBadge = '<span class="badge" style="background: #7f1d1d; color: #fca5a5;">⚠️ Needs Review</span>';
-      } else if (hasMatch) {
-        const confPct = Math.round((item.match_confidence || 1.0) * 100);
-        const method = item.match_method || 'exact';
-        statusBadge = '<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">✓ ' + method.toUpperCase() + ' (' + confPct + '%)</span>';
-      } else {
-        statusBadge = '<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;">● Unmatched</span>';
-      }
-
-      const assetDisplay = matchedAsset
-        ? '<div style="display: flex; align-items: center; gap: 8px;">' +
-            (matchedAsset.id
-              ? '<img src="/api/library/thumbnail?assetId=' + matchedAsset.id + '&pageId=' + encodeURIComponent(window.currentLibraryPageId || '') + '" style="width: 38px; height: 38px; object-fit: cover; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);" onerror="this.style.display=\'none\';">'
-              : '<span style="font-size: 16px;">🖼️</span>') +
-            '<div>' +
-              '<div style="font-weight: 600; color: #93c5fd; font-size: 11px;">' + escapeHtml(matchedAsset.filename) + '</div>' +
-              '<div style="font-size: 10px; color: var(--text-muted);">' + (matchedAsset.source === 'drive' ? '☁️ Drive' : '📁 Upload') + ' (' + (matchedAsset.aspect_ratio || 'photo') + ')</div>' +
-            '</div>' +
-          '</div>'
-        : '<span style="color: var(--text-muted); font-style: italic;">No image paired</span>';
-
-      let actionsHtml = '';
-      if (item.status === 'skipped') {
-        actionsHtml = '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px;" onclick="toggleSkipItem(\'' + item.id + '\', true)">Unskip</button>';
-      } else if (hasMatch) {
-        actionsHtml = '<div style="display: flex; gap: 4px;">' +
-          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px;" onclick="promptSwapItems(\'' + item.id + '\')" title="Swap photo with another row">Swap</button>' +
-          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px; color: #f87171;" onclick="promptUnmatchItem(\'' + item.id + '\')" title="Unmatch photo">Unmatch</button>' +
-          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px; color: #94a3b8;" onclick="toggleSkipItem(\'' + item.id + '\', false)" title="Skip this row">Skip</button>' +
-        '</div>';
-      } else {
-        actionsHtml = '<div style="display: flex; gap: 4px;">' +
-          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px;" onclick="promptManualMatch(\'' + item.id + '\')">🔗 Match</button>' +
-          '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px; color: #94a3b8;" onclick="toggleSkipItem(\'' + item.id + '\', false)">Skip</button>' +
-        '</div>';
-      }
-
-      return '<tr>' +
-        '<td style="padding: 10px 12px; font-weight: 700; color: var(--text-muted);">' + item.row_index + '</td>' +
-        '<td style="padding: 10px 12px;"><div style="font-weight: 600; color: #f3f4f6; max-width: 280px;">' + escapeHtml(item.content_idea) + '</div>' +
-        (item.image_idea ? '<div style="font-size: 11px; color: #38bdf8; margin-top: 2px;">Photo: ' + escapeHtml(item.image_idea.slice(0, 50)) + '...</div>' : '') +
-        (item.teaser_seed ? '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Hook: ' + escapeHtml(item.teaser_seed.slice(0, 50)) + '...</div>' : '') + '</td>' +
-        '<td style="padding: 10px 12px;"><span class="badge" style="background: #1e293b; color: #94a3b8;">' + escapeHtml(item.category || 'General') + '</span></td>' +
-        '<td style="padding: 10px 12px;"><code>' + escapeHtml(item.image_filename_hint || '-') + '</code></td>' +
-        '<td style="padding: 10px 12px;">' + assetDisplay + '</td>' +
-        '<td style="padding: 10px 12px;">' + statusBadge + '</td>' +
-        '<td style="padding: 10px 12px;">' + actionsHtml + '</td>' +
-      '</tr>';
-    }).join('');
-  }
-
-  async function updatePageContentSourceMode(mode) {
-    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    if (!pageId) return;
-
-    try {
-      const res = await fetch('/api/library/set-page-mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: pageId, mode: mode }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast('Updated content mode to ' + mode.toUpperCase(), 'success');
-        loadContentLibraryForPage(pageId);
-      } else {
-        alert('Could not update content source mode: ' + (data.error || 'Unknown error'));
-      }
-    } catch (e) {
-      alert('Network error updating mode: ' + e.message);
-    }
-  }
-  window.updatePageContentSourceMode = updatePageContentSourceMode;
-
-  function handleSheetFileSelected(files) {
-    if (!files || files.length === 0) return;
-    const file = files[0];
-    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    if (!pageId) {
-      alert('Please select a Facebook Page first.');
-      return;
-    }
-
-    const statusEl = document.getElementById('libSheetUploadStatus');
-    if (statusEl) statusEl.innerText = '⏳ Reading and parsing sheet...';
-
-    const reader = new FileReader();
-    reader.onload = async function (e) {
       try {
-        const base64 = e.target.result.split(',')[1];
-        if (statusEl) statusEl.innerText = '⏳ Uploading and importing rows to Supabase...';
+        const res = await fetch('/api/topics/research', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: currentDcsPageId, force: true }),
+        });
+        const data = await res.json();
+        if (regenBtn) regenBtn.disabled = false;
 
-        const res = await fetch('/api/library/upload-sheet', {
+        if (!res.ok || !data.success) {
+          if (loading) loading.style.display = 'none';
+          showToast('⚠️ Error researching topics: ' + (data.error || 'Server error'), 'error');
+          return;
+        }
+
+        showToast('🎉 Fresh daily ideas and visuals generated successfully!', 'success');
+        loadDailyTopics();
+      } catch (e) {
+        if (regenBtn) regenBtn.disabled = false;
+        if (loading) loading.style.display = 'none';
+        showToast('⚠️ Network error during research', 'error');
+      }
+    }
+
+    async function regenerateSingleTopicAction(itemId) {
+      const loading = document.getElementById('dcsLoading');
+      const loadingText = document.getElementById('dcsLoadingText');
+      if (loading) {
+        if (loadingText) loadingText.textContent = 'Generating 1 replacement topic & FLUX visual with AI...';
+        loading.style.display = 'block';
+      }
+
+      try {
+        const res = await fetch('/api/topics/regenerate-item', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: currentDcsPageId, itemId: itemId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          if (loading) loading.style.display = 'none';
+          showToast('⚠️ Failed to regenerate item: ' + (data.error || 'Server error'), 'error');
+          return;
+        }
+
+        showToast('✨ Idea regenerated with verified facts and new visual!', 'success');
+        loadDailyTopics();
+      } catch (e) {
+        if (loading) loading.style.display = 'none';
+        showToast('⚠️ Network error regenerating idea', 'error');
+      }
+    }
+
+    function openCustomPromptRegenModal(itemId, currentTitle) {
+      const modal = document.getElementById('customPromptRegenModal');
+      if (!modal) return;
+      const itemInput = document.getElementById('cprItemId');
+      const titleSpan = document.getElementById('cprCurrentTitle');
+      const guidanceArea = document.getElementById('cprGuidanceText');
+
+      if (itemInput) itemInput.value = itemId;
+      if (titleSpan) titleSpan.textContent = currentTitle;
+      if (guidanceArea) guidanceArea.value = '';
+      modal.style.display = 'flex';
+    }
+
+    function closeCustomPromptRegenModal() {
+      const modal = document.getElementById('customPromptRegenModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function submitCustomPromptRegen() {
+      const itemIdEl = document.getElementById('cprItemId');
+      const guidanceEl = document.getElementById('cprGuidanceText');
+      const itemId = itemIdEl ? itemIdEl.value : '';
+      const guidance = guidanceEl ? guidanceEl.value.trim() : '';
+
+      if (!guidance) {
+        alert('Please enter some guidance or prompt direction for the AI.');
+        return;
+      }
+
+      closeCustomPromptRegenModal();
+      const loading = document.getElementById('dcsLoading');
+      const loadingText = document.getElementById('dcsLoadingText');
+      if (loading) {
+        if (loadingText) loadingText.textContent = 'Researching topic matching: "' + guidance.slice(0, 30) + '..."';
+        loading.style.display = 'block';
+      }
+
+      try {
+        const res = await fetch('/api/topics/regenerate-item', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: currentDcsPageId, itemId: itemId, userGuidance: guidance }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          if (loading) loading.style.display = 'none';
+          showToast('⚠️ Failed with guidance: ' + (data.error || 'Server error'), 'error');
+          return;
+        }
+
+        showToast('🎯 Regenerated idea matching your exact guidance!', 'success');
+        loadDailyTopics();
+      } catch (e) {
+        if (loading) loading.style.display = 'none';
+        showToast('⚠️ Network error', 'error');
+      }
+    }
+
+    function openEditTopicModal(itemId) {
+      const topic = currentDcsTopics.find(t => t.id === itemId);
+      if (!topic) return;
+
+      const idEl = document.getElementById('etiItemId');
+      const titleEl = document.getElementById('etiTitle');
+      const catEl = document.getElementById('etiCategory');
+      const headEl = document.getElementById('etiHeadline');
+      const factsEl = document.getElementById('etiFacts');
+      const visualEl = document.getElementById('etiVisualSubject');
+      const imgEl = document.getElementById('etiImageUrl');
+
+      if (idEl) idEl.value = topic.id;
+      if (titleEl) titleEl.value = topic.title || '';
+      if (catEl) catEl.value = topic.category || '';
+      if (headEl) headEl.value = topic.headline || '';
+      if (factsEl) factsEl.value = Array.isArray(topic.facts) ? topic.facts.join('\n') : (topic.facts || '');
+      if (visualEl) visualEl.value = topic.visualSubject || '';
+      if (imgEl) imgEl.value = topic.imageUrl || '';
+
+      const modal = document.getElementById('editTopicIdeaModal');
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function openAddTopicModal() {
+      const idEl = document.getElementById('etiItemId');
+      const titleEl = document.getElementById('etiTitle');
+      const catEl = document.getElementById('etiCategory');
+      const headEl = document.getElementById('etiHeadline');
+      const factsEl = document.getElementById('etiFacts');
+      const visualEl = document.getElementById('etiVisualSubject');
+      const imgEl = document.getElementById('etiImageUrl');
+
+      if (idEl) idEl.value = '';
+      if (titleEl) titleEl.value = '';
+      if (catEl) catEl.value = 'Science & Space';
+      if (headEl) headEl.value = '';
+      if (factsEl) factsEl.value = '';
+      if (visualEl) visualEl.value = '';
+      if (imgEl) imgEl.value = '';
+
+      const modal = document.getElementById('editTopicIdeaModal');
+      if (modal) modal.style.display = 'flex';
+    }
+
+    function closeEditTopicModal() {
+      const modal = document.getElementById('editTopicIdeaModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function saveTopicEditAction() {
+      const idEl = document.getElementById('etiItemId');
+      const titleEl = document.getElementById('etiTitle');
+      const catEl = document.getElementById('etiCategory');
+      const headEl = document.getElementById('etiHeadline');
+      const factsEl = document.getElementById('etiFacts');
+      const visualEl = document.getElementById('etiVisualSubject');
+      const imgEl = document.getElementById('etiImageUrl');
+
+      const itemId = idEl ? idEl.value : '';
+      const title = titleEl ? titleEl.value.trim() : '';
+      const category = catEl ? catEl.value.trim() : '';
+      const headline = headEl ? headEl.value.trim() : '';
+      const factsRaw = factsEl ? factsEl.value.trim() : '';
+      const facts = factsRaw ? factsRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
+      const visualSubject = visualEl ? visualEl.value.trim() : '';
+      const imageUrl = imgEl ? imgEl.value.trim() : '';
+
+      if (!title) {
+        alert('Title is required.');
+        return;
+      }
+
+      try {
+        let res;
+        if (itemId) {
+          res = await fetch('/api/topics/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: itemId,
+              title,
+              category,
+              headline,
+              facts,
+              visualSubject,
+              imageUrl,
+            }),
+          });
+        } else {
+          res = await fetch('/api/topics/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pageId: currentDcsPageId,
+              title,
+              category,
+              headline,
+              facts,
+              visualSubject,
+              imageUrl,
+            }),
+          });
+        }
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          showToast('⚠️ Failed to save: ' + (data.error || 'Server error'), 'error');
+          return;
+        }
+
+        closeEditTopicModal();
+        showToast('💾 Topic saved successfully!', 'success');
+        loadDailyTopics();
+      } catch (e) {
+        showToast('⚠️ Network error saving topic', 'error');
+      }
+    }
+
+    async function regenerateTopicImage(itemId, visualSubject) {
+      showToast('🎨 Generating new image variant...', 'info');
+
+      try {
+        const res = await fetch('/api/topics/regenerate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ itemId, visualSubject }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          showToast('⚠️ Image update failed: ' + (data.error || 'Server error'), 'error');
+          return;
+        }
+
+        showToast('🎨 New image variant generated!', 'success');
+        loadDailyTopics();
+      } catch (e) {
+        showToast('⚠️ Network error updating image', 'error');
+      }
+    }
+
+    async function deleteTopicItemAction(itemId) {
+      if (!confirm('Remove this idea from today\'s queue?')) return;
+
+      try {
+        const res = await fetch('/api/topics/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: itemId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          showToast('⚠️ Failed to delete: ' + (data.error || 'Server error'), 'error');
+          return;
+        }
+
+        showToast('🗑️ Idea removed from queue', 'info');
+        loadDailyTopics();
+      } catch (e) {
+        showToast('⚠️ Network error deleting idea', 'error');
+      }
+    }
+
+    window.openDailyContentStudio = openDailyContentStudio;
+    window.closeDailyContentStudio = closeDailyContentStudio;
+    window.loadDailyTopics = loadDailyTopics;
+    window.renderDailyTopicCards = renderDailyTopicCards;
+    window.regenerateAllTopics = regenerateAllTopics;
+    window.regenerateSingleTopicAction = regenerateSingleTopicAction;
+    window.openCustomPromptRegenModal = openCustomPromptRegenModal;
+    window.closeCustomPromptRegenModal = closeCustomPromptRegenModal;
+    window.submitCustomPromptRegen = submitCustomPromptRegen;
+    window.openEditTopicModal = openEditTopicModal;
+    window.openAddTopicModal = openAddTopicModal;
+    window.closeEditTopicModal = closeEditTopicModal;
+    window.saveTopicEditAction = saveTopicEditAction;
+    window.regenerateTopicImage = regenerateTopicImage;
+    window.deleteTopicItemAction = deleteTopicItemAction;
+
+
+    function copyExpectedRedirectUri() {
+      const el = document.getElementById('expectedRedirectUriText');
+      if (!el) return;
+      const text = el.innerText || el.textContent;
+      navigator.clipboard.writeText(text.trim()).then(function () {
+        alert('Copied OAuth Redirect URI to clipboard:\n' + text.trim());
+      }).catch(function () {
+        prompt('Copy OAuth Redirect URI:', text.trim());
+      });
+    }
+
+    async function testFacebookConnectionAction(btn) {
+      const origText = btn ? btn.innerHTML : '';
+      const statusSpan = document.getElementById('testFbConnStatus');
+      const resultsBox = document.getElementById('testFbConnResults');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Testing with Meta Graph API...';
+      }
+      if (statusSpan) statusSpan.innerText = 'Connecting to Meta...';
+      if (resultsBox) resultsBox.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/facebook/test-connection', { method: 'POST' });
+        const data = await res.json();
+
+        if (resultsBox) {
+          resultsBox.style.display = 'block';
+          if (data.success) {
+            resultsBox.innerHTML =
+              '<div style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); padding: 14px 18px; border-radius: 8px; color: #a7f3d0;">' +
+              '<div style="font-weight: 700; font-size: 14px; margin-bottom: 6px;">✅ Meta Graph API Connection Verified!</div>' +
+              '<div style="font-size: 13px;">Meta App Name: <strong>' + escapeHtml(data.metaAppName || 'N/A') + '</strong> (ID: ' + escapeHtml(data.metaAppId || 'N/A') + ')</div>' +
+              (data.configIdValid ? '<div style="font-size: 13px; margin-top: 4px;">✅ Business Login Configuration ID verified with Meta.</div>' : '') +
+              '</div>';
+          } else {
+            let issuesHtml = '';
+            if (data.issues && data.issues.length > 0) {
+              issuesHtml = '<ul style="margin: 8px 0 8px 20px; font-size: 13px;">' +
+                data.issues.map(function (iss) { return '<li>' + escapeHtml(iss) + '</li>'; }).join('') +
+                '</ul>';
+            }
+            let recsHtml = '';
+            if (data.recommendations && data.recommendations.length > 0) {
+              recsHtml = '<div style="margin-top: 8px; font-size: 12px; color: #fde68a;"><strong>Recommendations:</strong><ul style="margin: 4px 0 0 20px;">' +
+                data.recommendations.map(function (rec) { return '<li>' + escapeHtml(rec) + '</li>'; }).join('') +
+                '</ul></div>';
+            }
+
+            resultsBox.innerHTML =
+              '<div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); padding: 14px 18px; border-radius: 8px; color: #fecaca;">' +
+              '<div style="font-weight: 700; font-size: 14px;">⚠️ Meta Graph API Connection Diagnostic Report</div>' +
+              issuesHtml +
+              recsHtml +
+              '</div>';
+          }
+        }
+        if (statusSpan) statusSpan.innerText = data.success ? 'Verified' : 'Issues detected';
+      } catch (e) {
+        if (resultsBox) {
+          resultsBox.style.display = 'block';
+          resultsBox.innerHTML = '<div style="background: rgba(239,68,68,0.15); border: 1px solid #ef4444; padding: 12px; border-radius: 6px; color: #fecaca;">Network test error: ' + escapeHtml(e.message) + '</div>';
+        }
+        if (statusSpan) statusSpan.innerText = 'Error';
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = origText;
+        }
+      }
+    }
+
+    // --- Content Library Handlers ---
+    let currentLibraryData = null;
+
+    async function loadContentLibraryForPage(pageId) {
+      if (!pageId) {
+        const sel = document.getElementById('libPageSelector');
+        pageId = sel ? sel.value : (pagesData[0] ? pagesData[0].id : null);
+      }
+      if (!pageId) return;
+      window.currentLibraryPageId = pageId;
+
+      try {
+        const res = await fetch('/api/library?pageId=' + encodeURIComponent(pageId));
+        if (!res.ok) throw new Error('Status ' + res.status);
+        const data = await res.json();
+        currentLibraryData = data;
+
+        // Update badge & radios
+        const mode = data.contentSourceMode || 'full_ai';
+        const badge = document.getElementById('libActiveModeBadge');
+        if (badge) {
+          if (mode === 'excel_library') {
+            badge.style.background = 'rgba(16, 185, 129, 0.2)';
+            badge.style.color = '#34d399';
+            badge.innerText = 'EXCEL + IMAGE LIBRARY';
+          } else if (mode === 'hybrid') {
+            badge.style.background = 'rgba(245, 158, 11, 0.2)';
+            badge.style.color = '#fbbf24';
+            badge.innerText = 'HYBRID MODE';
+          } else {
+            badge.style.background = 'rgba(59, 130, 246, 0.2)';
+            badge.style.color = '#60a5fa';
+            badge.innerText = 'FULL AI';
+          }
+        }
+
+        document.querySelectorAll('input[name="libPageSourceMode"]').forEach(function (r) {
+          r.checked = r.value === mode;
+        });
+
+        // Populate active library Drive settings
+        if (data.libraries && data.libraries.length > 0) {
+          window.currentActiveLibraryId = data.libraries[0].id;
+          window.currentLibraryId = data.libraries[0].id;
+          const lib = data.libraries[0];
+          const driveInput = document.getElementById('libDriveFolderInput');
+          if (driveInput) driveInput.value = lib.drive_folder_id || '';
+          const afterPub = document.getElementById('libAfterPublishAction');
+          if (afterPub) afterPub.value = lib.after_publish_action || 'move_to_posted';
+          const driveBadge = document.getElementById('libDriveStatusBadge');
+          if (driveBadge) {
+            if (lib.drive_folder_id) {
+              driveBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+              driveBadge.style.color = '#34d399';
+              driveBadge.innerText = '● LINKED (' + (lib.last_synced_at ? new Date(lib.last_synced_at).toLocaleTimeString() : 'Not Synced') + ')';
+            } else {
+              driveBadge.style.background = 'rgba(148, 163, 184, 0.15)';
+              driveBadge.style.color = '#94a3b8';
+              driveBadge.innerText = 'NOT CONFIGURED';
+            }
+          }
+        }
+
+        // Check migration requirement
+        const migBanner = document.getElementById('libMigrationBanner');
+        if (migBanner) {
+          migBanner.style.display = data.migrationRequired ? 'block' : 'none';
+        }
+
+        // Update readiness alert
+        const readinessEl = document.getElementById('libReadinessAlert');
+        if (readinessEl) {
+          if (mode === 'excel_library') {
+            const activeRows = (data.items || []).filter(function (it) { return it.status !== 'skipped'; });
+            const missing = activeRows.filter(function (it) { return !it.matched_asset_id; });
+            if (missing.length > 0) {
+              readinessEl.innerHTML = '<span style="color: #f87171; font-weight: 600;">⚠️ Blocked: ' + missing.length + ' active row(s) lack an image. Excel Library requires an image for every row.</span>';
+            } else if (activeRows.length > 0) {
+              readinessEl.innerHTML = '<span style="color: #34d399; font-weight: 600;">✅ Ready: All ' + activeRows.length + ' active row(s) have paired images.</span>';
+            } else {
+              readinessEl.innerHTML = '<span style="color: #94a3b8;">No active rows in library.</span>';
+            }
+          } else if (mode === 'hybrid') {
+            readinessEl.innerHTML = '<span style="color: #fbbf24; font-weight: 600;">⚡ Hybrid: Library items used first, AI fallback active.</span>';
+          } else {
+            readinessEl.innerHTML = '';
+          }
+        }
+
+        // Update metrics
+        const m = data.metrics || {};
+        const elTotal = document.getElementById('libMetricTotalRows');
+        if (elTotal) elTotal.innerText = m.totalRows || 0;
+        const elMatched = document.getElementById('libMetricMatched');
+        if (elMatched) elMatched.innerText = m.matchedCount || 0;
+        const elAssets = document.getElementById('libMetricAssets');
+        if (elAssets) elAssets.innerText = m.availableAssetsCount || 0;
+        const elStock = document.getElementById('libMetricStock');
+        if (elStock) elStock.innerText = (m.stockDaysRemaining || 0) + ' days';
+        const elCadence = document.getElementById('libMetricCadence');
+        if (elCadence) elCadence.innerText = '@ ' + (m.postsPerDay || 5) + ' posts/day';
+
+        const lowBanner = document.getElementById('libLowStockBanner');
+        if (lowBanner) {
+          lowBanner.style.display = (m.lowStock && m.totalRows > 0) ? 'block' : 'none';
+        }
+
+        // Render items table
+        renderLibraryItemsTable(data.items || [], data.assets || []);
+      } catch (err) {
+        console.warn('[Library] Error loading library for page:', err);
+      }
+    }
+    window.loadContentLibraryForPage = loadContentLibraryForPage;
+
+    function renderLibraryItemsTable(items, assets) {
+      const tbody = document.getElementById('libItemsTableBody');
+      if (!tbody) return;
+
+      if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="padding: 32px; text-align: center; color: var(--text-muted);"><div style="font-size: 24px; margin-bottom: 6px;">📄</div><strong>No content library rows uploaded yet.</strong><div style="font-size: 11px; margin-top: 4px;">Download the template above, fill your ideas/facts, and upload the spreadsheet or connect Google Drive.</div></td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = items.map(function (item) {
+        const matchedAsset = item.library_assets || assets.find(function (a) { return a.id === item.matched_asset_id; });
+        const hasMatch = Boolean(matchedAsset);
+
+        let statusBadge = '';
+        if (item.status === 'published') {
+          statusBadge = '<span class="badge" style="background: #064e3b; color: #34d399;">● Published</span>';
+        } else if (item.status === 'skipped') {
+          statusBadge = '<span class="badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8;">○ Skipped</span>';
+        } else if (item.status === 'failed') {
+          statusBadge = '<span class="badge" style="background: #7f1d1d; color: #fca5a5;" title="' + escapeHtml(item.rejection_reason || 'Failed') + '">✕ Failed</span>';
+        } else if (item.status === 'needs_review') {
+          statusBadge = '<span class="badge" style="background: #7f1d1d; color: #fca5a5;">⚠️ Needs Review</span>';
+        } else if (hasMatch) {
+          const confPct = Math.round((item.match_confidence || 1.0) * 100);
+          const method = item.match_method || 'exact';
+          statusBadge = '<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">✓ ' + method.toUpperCase() + ' (' + confPct + '%)</span>';
+        } else {
+          statusBadge = '<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;">● Unmatched</span>';
+        }
+
+        const assetDisplay = matchedAsset
+          ? '<div style="display: flex; align-items: center; gap: 8px;">' +
+          (matchedAsset.id
+            ? '<img src="/api/library/thumbnail?assetId=' + matchedAsset.id + '&pageId=' + encodeURIComponent(window.currentLibraryPageId || '') + '" style="width: 38px; height: 38px; object-fit: cover; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);" onerror="this.style.display=\'none\';">'
+            : '<span style="font-size: 16px;">🖼️</span>') +
+          '<div>' +
+          '<div style="font-weight: 600; color: #93c5fd; font-size: 11px;">' + escapeHtml(matchedAsset.filename) + '</div>' +
+          '<div style="font-size: 10px; color: var(--text-muted);">' + (matchedAsset.source === 'drive' ? '☁️ Drive' : '📁 Upload') + ' (' + (matchedAsset.aspect_ratio || 'photo') + ')</div>' +
+          '</div>' +
+          '</div>'
+          : '<span style="color: var(--text-muted); font-style: italic;">No image paired</span>';
+
+        let actionsHtml = '';
+        if (item.status === 'skipped') {
+          actionsHtml = '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px;" onclick="toggleSkipItem(\'' + item.id + '\', true)">Unskip</button>';
+        } else if (hasMatch) {
+          actionsHtml = '<div style="display: flex; gap: 4px;">' +
+            '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px;" onclick="promptSwapItems(\'' + item.id + '\')" title="Swap photo with another row">Swap</button>' +
+            '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px; color: #f87171;" onclick="promptUnmatchItem(\'' + item.id + '\')" title="Unmatch photo">Unmatch</button>' +
+            '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px; color: #94a3b8;" onclick="toggleSkipItem(\'' + item.id + '\', false)" title="Skip this row">Skip</button>' +
+            '</div>';
+        } else {
+          actionsHtml = '<div style="display: flex; gap: 4px;">' +
+            '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px;" onclick="promptManualMatch(\'' + item.id + '\')">🔗 Match</button>' +
+            '<button class="btn btn-secondary" style="font-size: 10px; padding: 3px 6px; color: #94a3b8;" onclick="toggleSkipItem(\'' + item.id + '\', false)">Skip</button>' +
+            '</div>';
+        }
+
+        return '<tr>' +
+          '<td style="padding: 10px 12px; font-weight: 700; color: var(--text-muted);">' + item.row_index + '</td>' +
+          '<td style="padding: 10px 12px;"><div style="font-weight: 600; color: #f3f4f6; max-width: 280px;">' + escapeHtml(item.content_idea) + '</div>' +
+          (item.image_idea ? '<div style="font-size: 11px; color: #38bdf8; margin-top: 2px;">Photo: ' + escapeHtml(item.image_idea.slice(0, 50)) + '...</div>' : '') +
+          (item.teaser_seed ? '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Hook: ' + escapeHtml(item.teaser_seed.slice(0, 50)) + '...</div>' : '') + '</td>' +
+          '<td style="padding: 10px 12px;"><span class="badge" style="background: #1e293b; color: #94a3b8;">' + escapeHtml(item.category || 'General') + '</span></td>' +
+          '<td style="padding: 10px 12px;"><code>' + escapeHtml(item.image_filename_hint || '-') + '</code></td>' +
+          '<td style="padding: 10px 12px;">' + assetDisplay + '</td>' +
+          '<td style="padding: 10px 12px;">' + statusBadge + '</td>' +
+          '<td style="padding: 10px 12px;">' + actionsHtml + '</td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    async function updatePageContentSourceMode(mode) {
+      const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+      if (!pageId) return;
+
+      try {
+        const res = await fetch('/api/library/set-page-mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: pageId, mode: mode }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast('Updated content mode to ' + mode.toUpperCase(), 'success');
+          loadContentLibraryForPage(pageId);
+        } else {
+          alert('Could not update content source mode: ' + (data.error || 'Unknown error'));
+        }
+      } catch (e) {
+        alert('Network error updating mode: ' + e.message);
+      }
+    }
+    window.updatePageContentSourceMode = updatePageContentSourceMode;
+
+    function handleSheetFileSelected(files) {
+      if (!files || files.length === 0) return;
+      const file = files[0];
+      const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+      if (!pageId) {
+        alert('Please select a Facebook Page first.');
+        return;
+      }
+
+      const statusEl = document.getElementById('libSheetUploadStatus');
+      if (statusEl) statusEl.innerText = '⏳ Reading and parsing sheet...';
+
+      const reader = new FileReader();
+      reader.onload = async function (e) {
+        try {
+          const base64 = e.target.result.split(',')[1];
+          if (statusEl) statusEl.innerText = '⏳ Uploading and importing rows to Supabase...';
+
+          const res = await fetch('/api/library/upload-sheet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pageId: pageId,
+              filename: file.name,
+              base64Data: base64,
+            }),
+          });
+
+          const data = await res.json();
+          if (res.ok && data.success) {
+            if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ Imported ' + data.totalRows + ' rows (' + data.matchedRows + ' auto-matched with photos)!</span>';
+            showToast('✅ Imported ' + data.totalRows + ' spreadsheet rows!', 'success');
+            loadContentLibraryForPage(pageId);
+          } else {
+            if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Import failed') + '</span>';
+            alert('Upload failed: ' + (data.error || 'Unknown error'));
+          }
+        } catch (err) {
+          if (statusEl) statusEl.innerText = '⚠️ Error: ' + err.message;
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+    window.handleSheetFileSelected = handleSheetFileSelected;
+
+    async function handleImageFilesSelected(files) {
+      if (!files || files.length === 0) return;
+      const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+      if (!pageId) {
+        alert('Please select a Facebook Page first.');
+        return;
+      }
+
+      const statusEl = document.getElementById('libImageUploadStatus');
+      if (statusEl) statusEl.innerText = '⏳ Processing and resizing ' + files.length + ' image(s)...';
+
+      const processedImages = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          const dataUrl = await new Promise(function (resolve, reject) {
+            const r = new FileReader();
+            r.onload = function () { resolve(r.result); };
+            r.onerror = reject;
+            r.readAsDataURL(file);
+          });
+
+          const resizedDataUrl = await new Promise(function (resolve) {
+            const img = new Image();
+            img.onload = function () {
+              let w = img.width;
+              let h = img.height;
+              const maxDim = 2160;
+              if (w > maxDim || h > maxDim) {
+                if (w > h) {
+                  h = Math.round((h * maxDim) / w);
+                  w = maxDim;
+                } else {
+                  w = Math.round((w * maxDim) / h);
+                  h = maxDim;
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
+                resolve(canvas.toDataURL(file.type || 'image/jpeg', 0.92));
+              } else {
+                resolve(dataUrl);
+              }
+            };
+            img.onerror = function () { resolve(dataUrl); };
+            img.src = dataUrl;
+          });
+
+          const base64 = resizedDataUrl.split(',')[1];
+          processedImages.push({
+            filename: file.name,
+            mimeType: file.type || 'image/jpeg',
+            base64Data: base64,
+          });
+        } catch (fErr) {
+          console.warn('Error reading file:', file.name, fErr);
+        }
+      }
+
+      if (statusEl) statusEl.innerText = '⏳ Uploading ' + processedImages.length + ' photos to private storage...';
+
+      try {
+        const res = await fetch('/api/library/upload-images', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             pageId: pageId,
-            filename: file.name,
-            base64Data: base64,
+            images: processedImages,
           }),
         });
 
         const data = await res.json();
         if (res.ok && data.success) {
-          if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ Imported ' + data.totalRows + ' rows (' + data.matchedRows + ' auto-matched with photos)!</span>';
-          showToast('✅ Imported ' + data.totalRows + ' spreadsheet rows!', 'success');
+          if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ Uploaded ' + data.uploadedCount + ' photos (' + data.autoMatchedCount + ' auto-matched)!</span>';
+          showToast('✅ Uploaded ' + data.uploadedCount + ' photos!', 'success');
           loadContentLibraryForPage(pageId);
         } else {
-          if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Import failed') + '</span>';
-          alert('Upload failed: ' + (data.error || 'Unknown error'));
+          if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Upload failed') + '</span>';
+          alert('Photo upload failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        if (statusEl) statusEl.innerText = '⚠️ Network error: ' + err.message;
+      }
+    }
+    window.handleImageFilesSelected = handleImageFilesSelected;
+
+    async function runAutoMatchAction() {
+      const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+      if (!pageId) return;
+
+      const allowOrder = document.getElementById('libAllowOrderMatch') ? document.getElementById('libAllowOrderMatch').checked : false;
+
+      try {
+        const res = await fetch('/api/library/match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'auto',
+            pageId: pageId,
+            enableOrderMatching: Boolean(allowOrder),
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast('⚡ Auto-matched ' + data.matchedCount + ' items with photos!', 'success');
+          loadContentLibraryForPage(pageId);
+        } else {
+          alert('Auto-match failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Auto-match network error: ' + err.message);
+      }
+    }
+    window.runAutoMatchAction = runAutoMatchAction;
+
+    async function saveDriveFolderConfigAction() {
+      const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+      const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
+      const folderInput = document.getElementById('libDriveFolderInput');
+      const folderVal = folderInput ? folderInput.value.trim() : '';
+      const afterPub = document.getElementById('libAfterPublishAction') ? document.getElementById('libAfterPublishAction').value : 'move_to_posted';
+
+      if (!pageId || !folderVal) {
+        alert('Please select a page and enter a Google Drive folder ID or URL.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/library/drive-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pageId: pageId,
+            libraryId: libraryId,
+            driveFolderId: folderVal,
+            afterPublishAction: afterPub,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (data.library && data.library.id) {
+            window.currentActiveLibraryId = data.library.id;
+            window.currentLibraryId = data.library.id;
+          }
+          showToast('Saved Google Drive folder configuration!', 'success');
+          loadContentLibraryForPage(pageId);
+        } else {
+          alert('Could not save Drive config: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Error saving Drive config: ' + err.message);
+      }
+    }
+    window.saveDriveFolderConfigAction = saveDriveFolderConfigAction;
+
+    async function clearCurrentSheetAction() {
+      const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+      const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
+      if (!pageId) {
+        alert('Please select a Facebook page first.');
+        return;
+      }
+      if (!confirm('Are you sure you want to completely delete all spreadsheet rows from Supabase for this page? This cannot be undone.')) {
+        return;
+      }
+      try {
+        const res = await fetch('/api/library/clear-sheet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: pageId, libraryId: libraryId }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast('Spreadsheet rows deleted successfully from Supabase.', 'success');
+          await loadContentLibraryForPage(pageId);
+        } else {
+          alert('Failed to delete sheet: ' + (data.error || 'Server error'));
+        }
+      } catch (err) {
+        alert('Error deleting sheet: ' + err.message);
+      }
+    }
+    window.clearCurrentSheetAction = clearCurrentSheetAction;
+
+    async function syncDriveImagesAction() {
+      const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+      const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
+      const folderInput = document.getElementById('libDriveFolderInput');
+      const folderVal = folderInput ? folderInput.value.trim() : '';
+      const statusEl = document.getElementById('libDriveSyncStatus');
+
+      if (!pageId) {
+        alert('Please select a Facebook page first.');
+        return;
+      }
+
+      if (statusEl) statusEl.innerText = '⏳ Syncing images from Google Drive...';
+
+      try {
+        const res = await fetch('/api/library/sync-drive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageId: pageId, libraryId: libraryId, driveFolderId: folderVal }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (data.library && data.library.id) {
+            window.currentActiveLibraryId = data.library.id;
+            window.currentLibraryId = data.library.id;
+          }
+          if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ ' + escapeHtml(data.message) + '</span>';
+          showToast(data.message, 'success');
+          await loadContentLibraryForPage(pageId);
+          // Automatically attempt auto-matching if rows exist
+          if (typeof runAutoMatchAction === 'function') {
+            setTimeout(function () { runAutoMatchAction(false); }, 300);
+          }
+        } else {
+          if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Sync failed') + '</span>';
+          alert('Drive sync failed: ' + (data.error || 'Unknown error'));
         }
       } catch (err) {
         if (statusEl) statusEl.innerText = '⚠️ Error: ' + err.message;
       }
-    };
-    reader.readAsDataURL(file);
-  }
-  window.handleSheetFileSelected = handleSheetFileSelected;
-
-  async function handleImageFilesSelected(files) {
-    if (!files || files.length === 0) return;
-    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    if (!pageId) {
-      alert('Please select a Facebook Page first.');
-      return;
     }
+    window.syncDriveImagesAction = syncDriveImagesAction;
 
-    const statusEl = document.getElementById('libImageUploadStatus');
-    if (statusEl) statusEl.innerText = '⏳ Processing and resizing ' + files.length + ' image(s)...';
-
-    const processedImages = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    async function promptUnmatchItem(itemId) {
+      if (!confirm('Unmatch this image from the row?')) return;
       try {
-        const dataUrl = await new Promise(function (resolve, reject) {
-          const r = new FileReader();
-          r.onload = function () { resolve(r.result); };
-          r.onerror = reject;
-          r.readAsDataURL(file);
+        const res = await fetch('/api/library/match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'unmatch', itemId: itemId }),
         });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast('Unmatched image successfully.', 'success');
+          loadContentLibraryForPage(window.currentLibraryPageId);
+        } else {
+          alert('Unmatch failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Error unmatching: ' + err.message);
+      }
+    }
+    window.promptUnmatchItem = promptUnmatchItem;
 
-        const resizedDataUrl = await new Promise(function (resolve) {
-          const img = new Image();
-          img.onload = function () {
-            let w = img.width;
-            let h = img.height;
-            const maxDim = 2160;
-            if (w > maxDim || h > maxDim) {
-              if (w > h) {
-                h = Math.round((h * maxDim) / w);
-                w = maxDim;
-              } else {
-                w = Math.round((w * maxDim) / h);
-                h = maxDim;
-              }
-              const canvas = document.createElement('canvas');
-              canvas.width = w;
-              canvas.height = h;
-              const ctx = canvas.getContext('2d');
-              ctx.drawImage(img, 0, 0, w, h);
-              resolve(canvas.toDataURL(file.type || 'image/jpeg', 0.92));
-            } else {
-              resolve(dataUrl);
-            }
-          };
-          img.onerror = function () { resolve(dataUrl); };
-          img.src = dataUrl;
+    async function promptSwapItems(itemId) {
+      const targetRow = prompt('Enter the row number (#) you want to swap photos with:');
+      if (!targetRow) return;
+      const targetIdx = parseInt(targetRow, 10);
+      if (isNaN(targetIdx) || !currentLibraryData || !currentLibraryData.items) {
+        alert('Invalid row number.');
+        return;
+      }
+      const targetItem = currentLibraryData.items.find(function (i) { return i.row_index === targetIdx; });
+      if (!targetItem) {
+        alert('Row #' + targetIdx + ' not found in library.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/library/match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'swap',
+            pageId: window.currentLibraryPageId,
+            itemId: itemId,
+            targetItemId: targetItem.id,
+          }),
         });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast('Swapped photos between rows successfully!', 'success');
+          loadContentLibraryForPage(window.currentLibraryPageId);
+        } else {
+          alert('Swap failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Error swapping: ' + err.message);
+      }
+    }
+    window.promptSwapItems = promptSwapItems;
 
-        const base64 = resizedDataUrl.split(',')[1];
-        processedImages.push({
-          filename: file.name,
-          mimeType: file.type || 'image/jpeg',
-          base64Data: base64,
+    async function toggleSkipItem(itemId, isUnskip) {
+      const action = isUnskip ? 'unskip' : 'skip';
+      try {
+        const res = await fetch('/api/library/match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: action, itemId: itemId, pageId: window.currentLibraryPageId }),
         });
-      } catch (fErr) {
-        console.warn('Error reading file:', file.name, fErr);
-      }
-    }
-
-    if (statusEl) statusEl.innerText = '⏳ Uploading ' + processedImages.length + ' photos to private storage...';
-
-    try {
-      const res = await fetch('/api/library/upload-images', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pageId: pageId,
-          images: processedImages,
-        }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.success) {
-        if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ Uploaded ' + data.uploadedCount + ' photos (' + data.autoMatchedCount + ' auto-matched)!</span>';
-        showToast('✅ Uploaded ' + data.uploadedCount + ' photos!', 'success');
-        loadContentLibraryForPage(pageId);
-      } else {
-        if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Upload failed') + '</span>';
-        alert('Photo upload failed: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      if (statusEl) statusEl.innerText = '⚠️ Network error: ' + err.message;
-    }
-  }
-  window.handleImageFilesSelected = handleImageFilesSelected;
-
-  async function runAutoMatchAction() {
-    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    if (!pageId) return;
-
-    const allowOrder = document.getElementById('libAllowOrderMatch') ? document.getElementById('libAllowOrderMatch').checked : false;
-
-    try {
-      const res = await fetch('/api/library/match', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'auto',
-          pageId: pageId,
-          enableOrderMatching: Boolean(allowOrder),
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast('⚡ Auto-matched ' + data.matchedCount + ' items with photos!', 'success');
-        loadContentLibraryForPage(pageId);
-      } else {
-        alert('Auto-match failed: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      alert('Auto-match network error: ' + err.message);
-    }
-  }
-  window.runAutoMatchAction = runAutoMatchAction;
-
-  async function saveDriveFolderConfigAction() {
-    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
-    const folderInput = document.getElementById('libDriveFolderInput');
-    const folderVal = folderInput ? folderInput.value.trim() : '';
-    const afterPub = document.getElementById('libAfterPublishAction') ? document.getElementById('libAfterPublishAction').value : 'move_to_posted';
-
-    if (!pageId || !folderVal) {
-      alert('Please select a page and enter a Google Drive folder ID or URL.');
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/library/drive-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pageId: pageId,
-          libraryId: libraryId,
-          driveFolderId: folderVal,
-          afterPublishAction: afterPub,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        if (data.library && data.library.id) {
-          window.currentActiveLibraryId = data.library.id;
-          window.currentLibraryId = data.library.id;
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast(isUnskip ? 'Row restored to pending.' : 'Row marked as skipped.', 'info');
+          loadContentLibraryForPage(window.currentLibraryPageId);
         }
-        showToast('Saved Google Drive folder configuration!', 'success');
-        loadContentLibraryForPage(pageId);
-      } else {
-        alert('Could not save Drive config: ' + (data.error || 'Unknown error'));
+      } catch (err) {
+        alert('Error: ' + err.message);
       }
-    } catch (err) {
-      alert('Error saving Drive config: ' + err.message);
     }
-  }
-  window.saveDriveFolderConfigAction = saveDriveFolderConfigAction;
+    window.toggleSkipItem = toggleSkipItem;
 
-  async function clearCurrentSheetAction() {
-    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
-    if (!pageId) {
-      alert('Please select a Facebook page first.');
-      return;
-    }
-    if (!confirm('Are you sure you want to completely delete all spreadsheet rows from Supabase for this page? This cannot be undone.')) {
-      return;
-    }
-    try {
-      const res = await fetch('/api/library/clear-sheet', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: pageId, libraryId: libraryId }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast('Spreadsheet rows deleted successfully from Supabase.', 'success');
-        await loadContentLibraryForPage(pageId);
-      } else {
-        alert('Failed to delete sheet: ' + (data.error || 'Server error'));
+    async function saveGoogleDriveServiceAccountKeyAction() {
+      const textarea = document.getElementById('driveServiceAccountJson');
+      const statusEl = document.getElementById('driveKeySaveStatus');
+      const rawVal = textarea ? textarea.value.trim() : '';
+
+      if (!rawVal) {
+        alert('Please paste a Google Cloud Service Account JSON key.');
+        return;
       }
-    } catch (err) {
-      alert('Error deleting sheet: ' + err.message);
-    }
-  }
-  window.clearCurrentSheetAction = clearCurrentSheetAction;
 
-  async function syncDriveImagesAction() {
-    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    const libraryId = window.currentActiveLibraryId || window.currentLibraryId || (currentLibraryData && currentLibraryData.libraries && currentLibraryData.libraries[0] ? currentLibraryData.libraries[0].id : null);
-    const folderInput = document.getElementById('libDriveFolderInput');
-    const folderVal = folderInput ? folderInput.value.trim() : '';
-    const statusEl = document.getElementById('libDriveSyncStatus');
+      if (statusEl) statusEl.innerText = '⏳ Encrypting & saving key to Supabase vault...';
 
-    if (!pageId) {
-      alert('Please select a Facebook page first.');
-      return;
-    }
-
-    if (statusEl) statusEl.innerText = '⏳ Syncing images from Google Drive...';
-
-    try {
-      const res = await fetch('/api/library/sync-drive', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageId: pageId, libraryId: libraryId, driveFolderId: folderVal }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        if (data.library && data.library.id) {
-          window.currentActiveLibraryId = data.library.id;
-          window.currentLibraryId = data.library.id;
+      try {
+        const res = await fetch('/api/settings/drive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serviceAccountJson: rawVal }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (textarea) textarea.value = '';
+          if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ Connected as ' + escapeHtml(data.clientEmail) + '</span>';
+          showToast('Google Drive service account saved encrypted!', 'success');
+          loadGoogleDriveSettingsStatus();
+        } else {
+          if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Failed to save') + '</span>';
+          alert('Could not save service account: ' + (data.error || 'Unknown error'));
         }
-        if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ ' + escapeHtml(data.message) + '</span>';
-        showToast(data.message, 'success');
-        await loadContentLibraryForPage(pageId);
-        // Automatically attempt auto-matching if rows exist
-        if (typeof runAutoMatchAction === 'function') {
-          setTimeout(function() { runAutoMatchAction(false); }, 300);
+      } catch (err) {
+        if (statusEl) statusEl.innerText = '⚠️ Error: ' + err.message;
+      }
+    }
+    window.saveGoogleDriveServiceAccountKeyAction = saveGoogleDriveServiceAccountKeyAction;
+
+    async function testGoogleDriveConnectionAction() {
+      const input = document.getElementById('driveTestFolderInput');
+      const folderVal = input ? input.value.trim() : '';
+      const resultBox = document.getElementById('driveTestResultBox');
+
+      if (!folderVal) {
+        alert('Please enter a Google Drive folder URL or folder ID to test.');
+        return;
+      }
+
+      if (resultBox) {
+        resultBox.style.display = 'block';
+        resultBox.style.background = 'rgba(56, 189, 248, 0.1)';
+        resultBox.style.border = '1px solid #38bdf8';
+        resultBox.style.color = '#7dd3fc';
+        resultBox.innerText = '⏳ Connecting to Google Drive API & scanning folder...';
+      }
+
+      try {
+        const res = await fetch('/api/settings/drive/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderId: folderVal }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (resultBox) {
+            resultBox.style.background = 'rgba(16, 185, 129, 0.15)';
+            resultBox.style.border = '1px solid #10b981';
+            resultBox.style.color = '#6ee7b7';
+            resultBox.innerHTML = '<strong>✅ Connection Successful!</strong><br>' +
+              'Service Account: <code>' + escapeHtml(data.clientEmail) + '</code><br>' +
+              'Image Files Found: <strong>' + data.imageFilesCount + '</strong> image(s) (.jpg, .png, .webp)';
+          }
+        } else {
+          if (resultBox) {
+            resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
+            resultBox.style.border = '1px solid #ef4444';
+            resultBox.style.color = '#fca5a5';
+            resultBox.innerHTML = '<strong>❌ Connection Failed:</strong> ' + escapeHtml(data.error || 'Unknown error');
+          }
         }
-      } else {
-        if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Sync failed') + '</span>';
-        alert('Drive sync failed: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      if (statusEl) statusEl.innerText = '⚠️ Error: ' + err.message;
-    }
-  }
-  window.syncDriveImagesAction = syncDriveImagesAction;
-
-  async function promptUnmatchItem(itemId) {
-    if (!confirm('Unmatch this image from the row?')) return;
-    try {
-      const res = await fetch('/api/library/match', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'unmatch', itemId: itemId }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast('Unmatched image successfully.', 'success');
-        loadContentLibraryForPage(window.currentLibraryPageId);
-      } else {
-        alert('Unmatch failed: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      alert('Error unmatching: ' + err.message);
-    }
-  }
-  window.promptUnmatchItem = promptUnmatchItem;
-
-  async function promptSwapItems(itemId) {
-    const targetRow = prompt('Enter the row number (#) you want to swap photos with:');
-    if (!targetRow) return;
-    const targetIdx = parseInt(targetRow, 10);
-    if (isNaN(targetIdx) || !currentLibraryData || !currentLibraryData.items) {
-      alert('Invalid row number.');
-      return;
-    }
-    const targetItem = currentLibraryData.items.find(function (i) { return i.row_index === targetIdx; });
-    if (!targetItem) {
-      alert('Row #' + targetIdx + ' not found in library.');
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/library/match', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'swap',
-          pageId: window.currentLibraryPageId,
-          itemId: itemId,
-          targetItemId: targetItem.id,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast('Swapped photos between rows successfully!', 'success');
-        loadContentLibraryForPage(window.currentLibraryPageId);
-      } else {
-        alert('Swap failed: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      alert('Error swapping: ' + err.message);
-    }
-  }
-  window.promptSwapItems = promptSwapItems;
-
-  async function toggleSkipItem(itemId, isUnskip) {
-    const action = isUnskip ? 'unskip' : 'skip';
-    try {
-      const res = await fetch('/api/library/match', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: action, itemId: itemId, pageId: window.currentLibraryPageId }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast(isUnskip ? 'Row restored to pending.' : 'Row marked as skipped.', 'info');
-        loadContentLibraryForPage(window.currentLibraryPageId);
-      }
-    } catch (err) {
-      alert('Error: ' + err.message);
-    }
-  }
-  window.toggleSkipItem = toggleSkipItem;
-
-  async function saveGoogleDriveServiceAccountKeyAction() {
-    const textarea = document.getElementById('driveServiceAccountJson');
-    const statusEl = document.getElementById('driveKeySaveStatus');
-    const rawVal = textarea ? textarea.value.trim() : '';
-
-    if (!rawVal) {
-      alert('Please paste a Google Cloud Service Account JSON key.');
-      return;
-    }
-
-    if (statusEl) statusEl.innerText = '⏳ Encrypting & saving key to Supabase vault...';
-
-    try {
-      const res = await fetch('/api/settings/drive', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serviceAccountJson: rawVal }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        if (textarea) textarea.value = '';
-        if (statusEl) statusEl.innerHTML = '<span style="color: #34d399;">✅ Connected as ' + escapeHtml(data.clientEmail) + '</span>';
-        showToast('Google Drive service account saved encrypted!', 'success');
-        loadGoogleDriveSettingsStatus();
-      } else {
-        if (statusEl) statusEl.innerHTML = '<span style="color: #f87171;">⚠️ ' + escapeHtml(data.error || 'Failed to save') + '</span>';
-        alert('Could not save service account: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      if (statusEl) statusEl.innerText = '⚠️ Error: ' + err.message;
-    }
-  }
-  window.saveGoogleDriveServiceAccountKeyAction = saveGoogleDriveServiceAccountKeyAction;
-
-  async function testGoogleDriveConnectionAction() {
-    const input = document.getElementById('driveTestFolderInput');
-    const folderVal = input ? input.value.trim() : '';
-    const resultBox = document.getElementById('driveTestResultBox');
-
-    if (!folderVal) {
-      alert('Please enter a Google Drive folder URL or folder ID to test.');
-      return;
-    }
-
-    if (resultBox) {
-      resultBox.style.display = 'block';
-      resultBox.style.background = 'rgba(56, 189, 248, 0.1)';
-      resultBox.style.border = '1px solid #38bdf8';
-      resultBox.style.color = '#7dd3fc';
-      resultBox.innerText = '⏳ Connecting to Google Drive API & scanning folder...';
-    }
-
-    try {
-      const res = await fetch('/api/settings/drive/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId: folderVal }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        if (resultBox) {
-          resultBox.style.background = 'rgba(16, 185, 129, 0.15)';
-          resultBox.style.border = '1px solid #10b981';
-          resultBox.style.color = '#6ee7b7';
-          resultBox.innerHTML = '<strong>✅ Connection Successful!</strong><br>' +
-            'Service Account: <code>' + escapeHtml(data.clientEmail) + '</code><br>' +
-            'Image Files Found: <strong>' + data.imageFilesCount + '</strong> image(s) (.jpg, .png, .webp)';
-        }
-      } else {
+      } catch (err) {
         if (resultBox) {
           resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
           resultBox.style.border = '1px solid #ef4444';
           resultBox.style.color = '#fca5a5';
-          resultBox.innerHTML = '<strong>❌ Connection Failed:</strong> ' + escapeHtml(data.error || 'Unknown error');
+          resultBox.innerText = 'Network error: ' + err.message;
         }
-      }
-    } catch (err) {
-      if (resultBox) {
-        resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
-        resultBox.style.border = '1px solid #ef4444';
-        resultBox.style.color = '#fca5a5';
-        resultBox.innerText = 'Network error: ' + err.message;
       }
     }
-  }
-  window.testGoogleDriveConnectionAction = testGoogleDriveConnectionAction;
+    window.testGoogleDriveConnectionAction = testGoogleDriveConnectionAction;
 
-  async function loadGoogleDriveSettingsStatus() {
-    try {
-      const badge = document.getElementById('driveSettingsBadge');
-      if (!badge) return;
-      const res = await fetch('/api/settings/drive');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.connected && data.client_email) {
-          badge.style.background = 'rgba(16, 185, 129, 0.15)';
-          badge.style.color = '#34d399';
-          badge.innerText = '● Connected: ' + data.client_email;
-        } else {
-          badge.style.background = 'rgba(245, 158, 11, 0.15)';
-          badge.style.color = '#fbbf24';
-          badge.innerText = '● Not Connected';
+    async function loadGoogleDriveSettingsStatus() {
+      try {
+        const badge = document.getElementById('driveSettingsBadge');
+        if (!badge) return;
+        const res = await fetch('/api/settings/drive');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.connected && data.client_email) {
+            badge.style.background = 'rgba(16, 185, 129, 0.15)';
+            badge.style.color = '#34d399';
+            badge.innerText = '● Connected: ' + data.client_email;
+          } else {
+            badge.style.background = 'rgba(245, 158, 11, 0.15)';
+            badge.style.color = '#fbbf24';
+            badge.innerText = '● Not Connected';
+          }
         }
+      } catch (_) { }
+    }
+    window.loadGoogleDriveSettingsStatus = loadGoogleDriveSettingsStatus;
+
+    async function runVisionSuggestAction() {
+      const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
+      if (!pageId) return;
+
+      try {
+        const res = await fetch('/api/library/match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'vision_suggest', pageId: pageId }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const count = (data.suggestions || []).length;
+          if (count > 0) {
+            showToast('👁️ Vision AI found ' + count + ' suggested visual match(es)!', 'success');
+            for (let s of data.suggestions) {
+              await fetch('/api/library/match', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'manual', itemId: s.itemId, assetId: s.assetId }),
+              });
+            }
+            loadContentLibraryForPage(pageId);
+          } else {
+            showToast('No vision matches suggested for unmatched items.', 'info');
+          }
+        }
+      } catch (err) {
+        alert('Vision suggest error: ' + err.message);
       }
-    } catch (_) {}
-  }
-  window.loadGoogleDriveSettingsStatus = loadGoogleDriveSettingsStatus;
+    }
+    window.runVisionSuggestAction = runVisionSuggestAction;
 
-  async function runVisionSuggestAction() {
-    const pageId = window.currentLibraryPageId || (document.getElementById('libPageSelector') ? document.getElementById('libPageSelector').value : null);
-    if (!pageId) return;
+    function promptManualMatch(itemId) {
+      if (!currentLibraryData || !currentLibraryData.assets || currentLibraryData.assets.length === 0) {
+        alert('No uploaded image assets found. Please upload photos first.');
+        return;
+      }
+      const assetOptions = currentLibraryData.assets.map(function (a, idx) {
+        return (idx + 1) + '. ' + a.filename + ' (' + (a.aspect_ratio || 'photo') + ')';
+      }).join('\n');
 
-    try {
-      const res = await fetch('/api/library/match', {
+      const choice = prompt('Select an image number to match with this item:\n\n' + assetOptions);
+      if (!choice) return;
+      const chosenIdx = parseInt(choice, 10) - 1;
+      if (isNaN(chosenIdx) || chosenIdx < 0 || chosenIdx >= currentLibraryData.assets.length) {
+        alert('Invalid selection.');
+        return;
+      }
+      const selectedAsset = currentLibraryData.assets[chosenIdx];
+      fetch('/api/library/match', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'vision_suggest', pageId: pageId }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        const count = (data.suggestions || []).length;
-        if (count > 0) {
-          showToast('👁️ Vision AI found ' + count + ' suggested visual match(es)!', 'success');
-          for (let s of data.suggestions) {
-            await fetch('/api/library/match', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'manual', itemId: s.itemId, assetId: s.assetId }),
-            });
-          }
-          loadContentLibraryForPage(pageId);
-        } else {
-          showToast('No vision matches suggested for unmatched items.', 'info');
-        }
-      }
-    } catch (err) {
-      alert('Vision suggest error: ' + err.message);
-    }
-  }
-  window.runVisionSuggestAction = runVisionSuggestAction;
-
-  function promptManualMatch(itemId) {
-    if (!currentLibraryData || !currentLibraryData.assets || currentLibraryData.assets.length === 0) {
-      alert('No uploaded image assets found. Please upload photos first.');
-      return;
-    }
-    const assetOptions = currentLibraryData.assets.map(function (a, idx) {
-      return (idx + 1) + '. ' + a.filename + ' (' + (a.aspect_ratio || 'photo') + ')';
-    }).join('\n');
-
-    const choice = prompt('Select an image number to match with this item:\n\n' + assetOptions);
-    if (!choice) return;
-    const chosenIdx = parseInt(choice, 10) - 1;
-    if (isNaN(chosenIdx) || chosenIdx < 0 || chosenIdx >= currentLibraryData.assets.length) {
-      alert('Invalid selection.');
-      return;
-    }
-    const selectedAsset = currentLibraryData.assets[chosenIdx];
-    fetch('/api/library/match', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'manual', itemId: itemId, assetId: selectedAsset.id }),
-    }).then(function (r) { return r.json(); }).then(function (res) {
-      if (res.success) {
-        showToast('Matched with ' + selectedAsset.filename, 'success');
-        loadContentLibraryForPage(window.currentLibraryPageId);
-      }
-    });
-  }
-  window.promptManualMatch = promptManualMatch;
-
-  // --- Master Initialization Routine ---
-  function initDashboard() {
-    try {
-      const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (browserTz && !document.cookie.includes('user_tz=')) {
-        document.cookie = 'user_tz=' + encodeURIComponent(browserTz) + '; path=/; max-age=31536000; SameSite=Lax';
-      }
-    } catch (_) {}
-    safeParseInitialData();
-    checkMissingTablesBanner();
-    loadGoogleDriveSettingsStatus();
-
-    // Bind event listeners to all navigation buttons (resilient architecture)
-    document.querySelectorAll('.nav-list .nav-item button').forEach(function (btn) {
-      btn.addEventListener('click', function (e) {
-        const tabId = btn.getAttribute('data-tab');
-        if (tabId) {
-          e.preventDefault();
-          showTab(tabId, btn);
+        body: JSON.stringify({ action: 'manual', itemId: itemId, assetId: selectedAsset.id }),
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        if (res.success) {
+          showToast('Matched with ' + selectedAsset.filename, 'success');
+          loadContentLibraryForPage(window.currentLibraryPageId);
         }
       });
-    });
-
-    // Check URL parameters (e.g. ?connected=true, ?error=..., ?tab=...)
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const banner = document.getElementById('urlAlertBanner');
-      if (banner) {
-        if (params.get('connected') === 'true') {
-          const count = params.get('count') || '0';
-          const account = params.get('account') || '';
-          const found = params.get('found') || count;
-          const newCount = params.get('new') || '0';
-          const updatedCount = params.get('updated') || '0';
-          const publishable = params.get('publishable');
-
-          banner.style.display = 'block';
-          banner.style.background = '#064e3b';
-          banner.style.border = '1px solid #059669';
-          banner.style.color = '#a7f3d0';
-
-          let msg = '🎉 <strong>Facebook Connected Successfully!</strong> ';
-          if (account) {
-            msg += 'Connected account <strong>' + escapeHtml(account) + '</strong>: found ' + escapeHtml(found) + ' Pages (' + escapeHtml(newCount) + ' new, ' + escapeHtml(updatedCount) + ' updated).';
-          } else {
-            msg += 'Synced ' + escapeHtml(found) + ' Facebook Page(s) with encrypted tokens stored safely in the Supabase vault.';
-          }
-          if (publishable !== null && Number(publishable) < Number(found)) {
-            msg += ' <span style="color: #fde68a;">(Notice: ' + (Number(found) - Number(publishable)) + ' page(s) lack content creation tasks and cannot auto-publish).</span>';
-          }
-          banner.innerHTML = msg;
-        } else if (params.get('error')) {
-          banner.style.display = 'flex';
-          banner.style.justifyContent = 'space-between';
-          banner.style.alignItems = 'center';
-          banner.style.background = '#7f1d1d';
-          banner.style.border = '1px solid #dc2626';
-          banner.style.color = '#fecaca';
-          banner.innerHTML = '<div>⚠️ <strong>Facebook Connection Notice:</strong> ' + escapeHtml(params.get('error')) + '</div><button onclick="this.parentElement.style.display=\'none\';" style="background:none;border:none;color:#fecaca;cursor:pointer;font-size:18px;font-weight:bold;padding:0 8px;" title="Dismiss">&times;</button>';
-        } else if (params.get('warning')) {
-          banner.style.display = 'flex';
-          banner.style.justifyContent = 'space-between';
-          banner.style.alignItems = 'center';
-          banner.style.background = '#78350f';
-          banner.style.border = '1px solid #d97706';
-          banner.style.color = '#fde68a';
-          banner.innerHTML = '<div>⚠️ <strong>Notice:</strong> ' + escapeHtml(params.get('warning')) + '</div><button onclick="this.parentElement.style.display=\'none\';" style="background:none;border:none;color:#fde68a;cursor:pointer;font-size:18px;font-weight:bold;padding:0 8px;" title="Dismiss">&times;</button>';
-        }
-      }
-
-      if (params.get('connected') === 'true' || params.get('error') || params.get('warning')) {
-        try {
-          const cleanParams = new URLSearchParams(window.location.search);
-          cleanParams.delete('connected');
-          cleanParams.delete('count');
-          cleanParams.delete('account');
-          cleanParams.delete('found');
-          cleanParams.delete('new');
-          cleanParams.delete('updated');
-          cleanParams.delete('publishable');
-          cleanParams.delete('error');
-          cleanParams.delete('warning');
-          const cleanSearch = cleanParams.toString() ? ('?' + cleanParams.toString()) : '';
-          history.replaceState(null, '', window.location.pathname + cleanSearch);
-        } catch (_) {}
-      }
-
-      const path = window.location.pathname;
-      const initialTab = (window.__INITIAL_ROUTE__ && window.__INITIAL_ROUTE__.tabId) || ROUTE_TO_TAB[path] || params.get('tab') || sessionStorage.getItem('last_active_tab') || 'overview';
-      const targetBtn = document.querySelector('.nav-list .nav-item button[data-tab="' + initialTab + '"]');
-      showTab(initialTab, targetBtn, false);
-      restoreSubStateFromUrl();
-    } catch (e) {
-      console.warn('[Dashboard] Error parsing URL parameters:', e);
     }
-  }
+    window.promptManualMatch = promptManualMatch;
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initDashboard);
-  } else {
-    initDashboard();
-  }
-})();
+    // --- Master Initialization Routine ---
+    function initDashboard() {
+      try {
+        const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (browserTz && !document.cookie.includes('user_tz=')) {
+          document.cookie = 'user_tz=' + encodeURIComponent(browserTz) + '; path=/; max-age=31536000; SameSite=Lax';
+        }
+      } catch (_) { }
+      safeParseInitialData();
+      checkMissingTablesBanner();
+      loadGoogleDriveSettingsStatus();
+
+      // Bind event listeners to all navigation buttons (resilient architecture)
+      document.querySelectorAll('.nav-list .nav-item button').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          const tabId = btn.getAttribute('data-tab');
+          if (tabId) {
+            e.preventDefault();
+            showTab(tabId, btn);
+          }
+        });
+      });
+
+      // Check URL parameters (e.g. ?connected=true, ?error=..., ?tab=...)
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const banner = document.getElementById('urlAlertBanner');
+        if (banner) {
+          if (params.get('connected') === 'true') {
+            const count = params.get('count') || '0';
+            const account = params.get('account') || '';
+            const found = params.get('found') || count;
+            const newCount = params.get('new') || '0';
+            const updatedCount = params.get('updated') || '0';
+            const publishable = params.get('publishable');
+
+            banner.style.display = 'block';
+            banner.style.background = '#064e3b';
+            banner.style.border = '1px solid #059669';
+            banner.style.color = '#a7f3d0';
+
+            let msg = '🎉 <strong>Facebook Connected Successfully!</strong> ';
+            if (account) {
+              msg += 'Connected account <strong>' + escapeHtml(account) + '</strong>: found ' + escapeHtml(found) + ' Pages (' + escapeHtml(newCount) + ' new, ' + escapeHtml(updatedCount) + ' updated).';
+            } else {
+              msg += 'Synced ' + escapeHtml(found) + ' Facebook Page(s) with encrypted tokens stored safely in the Supabase vault.';
+            }
+            if (publishable !== null && Number(publishable) < Number(found)) {
+              msg += ' <span style="color: #fde68a;">(Notice: ' + (Number(found) - Number(publishable)) + ' page(s) lack content creation tasks and cannot auto-publish).</span>';
+            }
+            banner.innerHTML = msg;
+          } else if (params.get('error')) {
+            banner.style.display = 'flex';
+            banner.style.justifyContent = 'space-between';
+            banner.style.alignItems = 'center';
+            banner.style.background = '#7f1d1d';
+            banner.style.border = '1px solid #dc2626';
+            banner.style.color = '#fecaca';
+            banner.innerHTML = '<div>⚠️ <strong>Facebook Connection Notice:</strong> ' + escapeHtml(params.get('error')) + '</div><button onclick="this.parentElement.style.display=\'none\';" style="background:none;border:none;color:#fecaca;cursor:pointer;font-size:18px;font-weight:bold;padding:0 8px;" title="Dismiss">&times;</button>';
+          } else if (params.get('warning')) {
+            banner.style.display = 'flex';
+            banner.style.justifyContent = 'space-between';
+            banner.style.alignItems = 'center';
+            banner.style.background = '#78350f';
+            banner.style.border = '1px solid #d97706';
+            banner.style.color = '#fde68a';
+            banner.innerHTML = '<div>⚠️ <strong>Notice:</strong> ' + escapeHtml(params.get('warning')) + '</div><button onclick="this.parentElement.style.display=\'none\';" style="background:none;border:none;color:#fde68a;cursor:pointer;font-size:18px;font-weight:bold;padding:0 8px;" title="Dismiss">&times;</button>';
+          }
+        }
+
+        if (params.get('connected') === 'true' || params.get('error') || params.get('warning')) {
+          try {
+            const cleanParams = new URLSearchParams(window.location.search);
+            cleanParams.delete('connected');
+            cleanParams.delete('count');
+            cleanParams.delete('account');
+            cleanParams.delete('found');
+            cleanParams.delete('new');
+            cleanParams.delete('updated');
+            cleanParams.delete('publishable');
+            cleanParams.delete('error');
+            cleanParams.delete('warning');
+            const cleanSearch = cleanParams.toString() ? ('?' + cleanParams.toString()) : '';
+            history.replaceState(null, '', window.location.pathname + cleanSearch);
+          } catch (_) { }
+        }
+
+        const path = window.location.pathname;
+        const initialTab = (window.__INITIAL_ROUTE__ && window.__INITIAL_ROUTE__.tabId) || ROUTE_TO_TAB[path] || params.get('tab') || sessionStorage.getItem('last_active_tab') || 'overview';
+        const targetBtn = document.querySelector('.nav-list .nav-item button[data-tab="' + initialTab + '"]');
+        showTab(initialTab, targetBtn, false);
+        restoreSubStateFromUrl();
+      } catch (e) {
+        console.warn('[Dashboard] Error parsing URL parameters:', e);
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initDashboard);
+    } else {
+      initDashboard();
+    }
+  }) ();
 

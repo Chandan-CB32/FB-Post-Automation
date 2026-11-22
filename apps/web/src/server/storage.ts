@@ -1276,11 +1276,19 @@ export class SystemStore {
         }
 
         if (!profileExists) {
-          if (
+          const fuzzyMatch = getAllNicheProfiles().find((p) =>
+            p.id.toLowerCase().includes(updates.profile_id!.toLowerCase()) ||
+            p.name.toLowerCase().includes(updates.profile_id!.toLowerCase())
+          );
+          if (fuzzyMatch) {
+            updates.profile_id = fuzzyMatch.id;
+            profileExists = true;
+          } else if (
             options?.force ||
             updates.custom_niche ||
             updates.custom_niche_text ||
-            updates.content_source_mode === 'excel_library'
+            updates.content_source_mode === 'excel_library' ||
+            updates.publishing_mode
           ) {
             console.warn(`[SystemStore] Profile ${updates.profile_id} not found. Gracefully resetting profile_id to null.`);
             updates.profile_id = null;

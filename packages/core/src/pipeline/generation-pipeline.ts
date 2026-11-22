@@ -75,8 +75,8 @@ export function resolveEffectiveModel(
   }
 
   // Text generation:
-  if (kind === 'gemini_native' || kind === 'gemini' || name.includes('gemini')) return 'gemini-2.5-flash';
-  if (name.includes('groq')) return 'meta-llama/llama-3.3-70b-versatile';
+  if (kind === 'gemini_native' || kind === 'gemini' || name.includes('gemini')) return 'gemini-3.5-flash-lite';
+  if (name.includes('groq')) return 'openai/gpt-oss-120b';
   if (name.includes('openrouter')) return 'nvidia/nemotron-3-nano-30b-a3b:free';
   if (name.includes('nvidia')) return 'meta/llama-3.3-70b-instruct';
   if (kind === 'cloudflare_workers_ai' || name.includes('cloudflare')) return '@cf/meta/llama-3.1-8b-instruct';
@@ -1145,7 +1145,7 @@ Write and return the complete, finished post directly.`;
 CONTENT IDEA: ${topicTitle}
 ${options.libraryItem?.imageIdea ? `IMAGE IDEA: ${options.libraryItem.imageIdea}\n` : ""}${options.libraryItem?.hiddenClue ? `HIDDEN CLUE / TWIST: ${options.libraryItem.hiddenClue}\n` : ""}${options.libraryVisionFacts && options.libraryVisionFacts.length > 0 ? `IMAGE VISIBLE FACTS: ${options.libraryVisionFacts.join("; ")}\n` : ""}${factItemsWithUrls.length > 0 ? `KEY FACTS:\n${factItemsWithUrls.map((f) => `- ${f.text}`).join("\n")}\n` : ""}
 [LENGTH & FORMAT CONSTRAINTS]
-- Write approximately ${targetWords} words (min: ${minWords}, max: ${maxWords}).
+- IMPORTANT LENGTH: You MUST write a complete, detailed narrative of at least ${minWords} words (Target: ${targetWords} words, maximum: ${maxWords} words). Do NOT stop early or write a short snippet. Build full atmosphere, dialogue, and suspense across multiple paragraphs so word count comfortably reaches ${minWords}-${maxWords} words.
 - Paragraphs: Keep paragraphs short (maximum ${maxSentencesPerParagraph} sentences each) with blank lines between them.
 - Format: Plain text only.
 
@@ -1250,6 +1250,7 @@ FORMAT INSTRUCTIONS:
             ""
           ).toLowerCase();
           const effectiveTextModel = resolveEffectiveModel(candidate, "text");
+          const generationMaxTokens = Math.max(2500, Math.ceil(maxWords * 2.5));
           if (kind === "gemini_native" || kind === "gemini") {
             const adapter = new GeminiNativeAdapter();
             const res = await adapter.generateText({
@@ -1258,7 +1259,8 @@ FORMAT INSTRUCTIONS:
               model: effectiveTextModel,
               baseUrl: candidate.base_url,
               temperature: 0.7,
-              timeoutMs: 20000,
+              maxTokens: generationMaxTokens,
+              timeoutMs: 40000,
             });
             if (res.text && res.text.trim()) {
               draft = res.text.trim();
@@ -1288,7 +1290,7 @@ FORMAT INSTRUCTIONS:
               model: effectiveTextModel,
               baseUrl: candidate.base_url,
               extraBody: { accountId },
-              timeoutMs: 20000,
+              timeoutMs: 40000,
             });
             if (res.text && res.text.trim()) {
               draft = res.text.trim();
@@ -1310,8 +1312,8 @@ FORMAT INSTRUCTIONS:
               model: effectiveTextModel,
               baseUrl: candidate.base_url,
               temperature: 0.7,
-              maxTokens: 800,
-              timeoutMs: 20000,
+              maxTokens: generationMaxTokens,
+              timeoutMs: 40000,
             });
             if (res.text && res.text.trim()) {
               draft = res.text.trim();

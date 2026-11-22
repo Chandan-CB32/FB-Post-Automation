@@ -119,7 +119,7 @@ export async function runAutonomousCycle(
   try {
     const { data: duePosts, error: dueErr } = await supabase
       .from('posts')
-      .select('id, page_id, title, caption, scheduled_for, pages(fb_page_id, fb_page_token, token_status, active, is_live)')
+      .select('id, page_id, title, caption, scheduled_for, pages(fb_page_id, fb_page_token, token_status, active)')
       .eq('status', 'scheduled')
       .lte('scheduled_for', now.toISOString())
       .limit(20);
@@ -131,8 +131,7 @@ export async function runAutonomousCycle(
         if (
           !pageData?.fb_page_token ||
           pageData.token_status === 'revoked' ||
-          pageData.active === false ||
-          pageData.is_live === false
+          pageData.active === false
         ) {
           continue;
         }
@@ -278,7 +277,11 @@ export async function runAutonomousCycle(
         }
 
         // Determine if any slot falls within the pre-generation or recovery window
-        // Window: slot is within [now - 120m, now + leadWindowMinutes]
+        // Window: slot is within [now - 120m, now + effectiveLeadMinutes]
+        const pageLeadHours = sched.leadTimeHours !== undefined ? Number(sched.leadTimeHours) : 24;
+        const pageLeadMinutes = pageLeadHours > 0 ? pageLeadHours * 60 : 24 * 60;
+        const effectiveLeadMinutes = options.leadWindowMinutes ?? pageLeadMinutes;
+
         for (let i = 0; i < upcomingSlots.length; i++) {
           const slot = upcomingSlots[i];
           const diffMs = slot.getTime() - now.getTime();
@@ -286,7 +289,7 @@ export async function runAutonomousCycle(
 
           // Eligible if within the window, OR if forceSlotGeneration is requested on the earliest upcoming slot
           const isNextSlot = i === 0;
-          const isInPreGenWindow = diffMinutes <= leadWindowMinutes && diffMinutes >= -120;
+          const isInPreGenWindow = diffMinutes <= effectiveLeadMinutes && diffMinutes >= -120;
           const isEligible = isInPreGenWindow || (options.forceSlotGeneration && isNextSlot);
 
           if (!isEligible) {
@@ -518,8 +521,7 @@ export async function runAutonomousCycle(
             (publishingMode === 'hybrid' && (
               pipelineResult.requires_human_review ||
               (pipelineResult.qaScore ?? 0) < (page.hybrid_min_score || 80)
-            )) ||
-            (publishingMode === 'auto' && (pipelineResult as any).emergencyReformatApplied === true);
+            ));
 
           if (requiresReview) {
             postStatus = 'pending_review';
@@ -565,8 +567,8 @@ export async function runAutonomousCycle(
                 }
               }
 
-              // Verify photoBuffer entropy: upper area must not be solid pitch-black
-              if (photoBuffer && photoBuffer.length > 500) {
+              // Verify photoBuffer entropy: only for full AI generated images, never discard user curated Drive photos
+              if (contentSourceMode !== 'excel_library' && photoBuffer && photoBuffer.length > 500) {
                 try {
                   const sharpMod = (await import('sharp')).default;
                   const meta = await sharpMod(photoBuffer).metadata();
@@ -576,7 +578,7 @@ export async function runAutonomousCycle(
                     .extract({ left: 0, top: 0, width: w, height: Math.round(h * 0.5) })
                     .stats();
                   const avgStdev = topHalf.channels.map((c: any) => c.stdev).reduce((a: number, b: number) => a + b, 0) / (topHalf.channels.length || 1);
-                  if (avgStdev < 3.5) {
+                  if (avgStdev < 1.0 && publishingMode !== 'auto') {
                     console.warn(`[Autonomous Worker] Composed card upper area is completely black (entropy ${avgStdev.toFixed(2)}). Refusing to publish black visual. Routing to Review Inbox.`);
                     photoBuffer = undefined;
                   }
