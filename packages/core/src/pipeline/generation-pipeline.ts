@@ -877,9 +877,9 @@ export async function runGenerationPipeline(
       typeof f === "string"
         ? { text: f.trim(), sourceUrl: "https://science.nasa.gov/" }
         : {
-            text: (f.text || f.claim || String(f)).trim(),
-            sourceUrl: f.sourceUrl || "https://science.nasa.gov/",
-          },
+          text: (f.text || f.claim || String(f)).trim(),
+          sourceUrl: f.sourceUrl || "https://science.nasa.gov/",
+        },
     );
     sourceUrls = researchFacts
       .map((f) => f.sourceUrl)
@@ -1177,15 +1177,15 @@ FORMAT INSTRUCTIONS:
 
   const rawEffectivePrompt = page.custom_caption_prompt && page.custom_caption_prompt.trim()
     ? [
-        promptDirective,
-        page.custom_caption_prompt.trim(),
-        assignmentBlock,
-      ].join("\n\n")
+      promptDirective,
+      page.custom_caption_prompt.trim(),
+      assignmentBlock,
+    ].join("\n\n")
     : [
-        promptDirective,
-        basePrompt,
-        assignmentBlock,
-      ].join("\n\n");
+      promptDirective,
+      basePrompt,
+      assignmentBlock,
+    ].join("\n\n");
   const effectivePrompt = maskSecretsInPrompt(rawEffectivePrompt);
 
   // Active text providers failover selection sorted by priority ascending (1 = Primary, 2 = Secondary...)
@@ -1357,7 +1357,7 @@ FORMAT INSTRUCTIONS:
         options.queueItem ||
         (topicTitle &&
           topicTitle !==
-            "Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b")
+          "Webb Telescope Identifies Potential Hycean Atmosphere on K2-18b")
       ) {
         const factBullets = factStrings.slice(0, 3).join(". ");
         draft = `Astrophysicists and researchers investigating ${topicTitle} have uncovered critical empirical data clarifying its underlying mechanisms.\n\n${factBullets || `High-precision measurements and observational data indicate distinct physical characteristics that establish a new baseline for understanding this phenomenon.`} Laboratory simulations and orbital instruments confirm the structural dynamics observed during recent survey missions.\n\nContinued analysis aims to map these parameters across broader environmental conditions, expanding our model of active systems in the cosmos.\n\nWhat aspect of this research do you find most significant?\n\n${fixedTags}`;
@@ -1614,7 +1614,7 @@ FORMAT INSTRUCTIONS:
         const unverifiedRatio =
           reformatClaimResult.claimsCount > 0
             ? reformatClaimResult.unverifiedCount /
-              reformatClaimResult.claimsCount
+            reformatClaimResult.claimsCount
             : 1;
         const penalty = Math.min(
           25,
@@ -1838,21 +1838,21 @@ FORMAT INSTRUCTIONS:
     imageCandidates.length > 0
       ? imageCandidates
       : [
-          {
-            id: "11111111-1111-1111-1111-111111111104",
-            name: "Cloudflare Workers AI",
-            kind: "cloudflare_workers_ai",
-            priority: 1,
-            model_name: "@cf/black-forest-labs/flux-1-schnell",
-          },
-          {
-            id: "11111111-1111-1111-1111-111111111105",
-            name: "Pollinations AI",
-            kind: "pollinations",
-            priority: 2,
-            model_name: "flux",
-          },
-        ];
+        {
+          id: "11111111-1111-1111-1111-111111111104",
+          name: "Cloudflare Workers AI",
+          kind: "cloudflare_workers_ai",
+          priority: 1,
+          model_name: "@cf/black-forest-labs/flux-1-schnell",
+        },
+        {
+          id: "11111111-1111-1111-1111-111111111105",
+          name: "Pollinations AI",
+          kind: "pollinations",
+          priority: 2,
+          model_name: "flux",
+        },
+      ];
 
   for (const candidate of candidateChain) {
     if (thumbnailUrl) break;
@@ -2062,7 +2062,7 @@ FORMAT INSTRUCTIONS:
           caption: bestDraft,
           apiKey: geminiCandidate.apiKey,
         });
-      } catch (_) {}
+      } catch (_) { }
     }
   }
 
@@ -2072,9 +2072,9 @@ FORMAT INSTRUCTIONS:
     } else {
       thumbnailUrl = isTestEnv()
         ? generateThumbnailSvg({
-            headline,
-            themeColor: isHorror ? "#e11d48" : "#38bdf8",
-          })
+          headline,
+          themeColor: isHorror ? "#e11d48" : "#38bdf8",
+        })
         : `https://image.pollinations.ai/prompt/${encodeURIComponent(visualPrompt.slice(0, 1000))}?width=1080&height=1350&model=flux&nologo=true`;
       successfulImageProvider = "Pollinations AI";
       successfulImageModel = "flux";
@@ -2272,12 +2272,12 @@ FORMAT INSTRUCTIONS:
         : undefined,
     integrityCheck: bestClaimResult
       ? runContentIntegrityCheck({
-          headline,
-          caption: bestDraft,
-          facts: researchFacts,
-          configuredHashtagsCount: 5,
-          niche: topicCategory,
-        })
+        headline,
+        caption: bestDraft,
+        facts: researchFacts,
+        configuredHashtagsCount: 5,
+        niche: topicCategory,
+      })
       : undefined,
     visionRelevanceCheck,
     usedTextProviderId:
@@ -2289,11 +2289,11 @@ FORMAT INSTRUCTIONS:
       usedImageProviderId ||
       (successfulImageProvider.toLowerCase().includes("pollinations")
         ? (options.activeProviders || []).find(
-            (p) => (p.kind || p.adapter_kind) === "pollinations",
-          )?.id || "11111111-1111-1111-1111-111111111105"
+          (p) => (p.kind || p.adapter_kind) === "pollinations",
+        )?.id || "11111111-1111-1111-1111-111111111105"
         : (options.activeProviders || []).find((p) => p.name === successfulImageProvider)?.id ||
-          candidateChain.find((c) => c.name === successfulImageProvider)?.id ||
-          "11111111-1111-1111-1111-111111111105"),
+        candidateChain.find((c) => c.name === successfulImageProvider)?.id ||
+        "11111111-1111-1111-1111-111111111105"),
     usedImageProviderName: successfulImageProvider,
   };
 }
