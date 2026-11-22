@@ -5365,7 +5365,7 @@ async function generateDashboardHtml(
   const reachDisplay = totalReach >= 1000 ? `${(totalReach / 1000).toFixed(1)}K` : `${totalReach}`;
 
   // Content Mix & Variety Engine Analytics
-  const primaryPage = pages[0];
+  const primaryPage = pages.find((p) => p.active === true || (p.schedule as any)?.is_live === true) || pages[0];
   const primaryPagePosts = primaryPage ? posts.filter((p) => p.page_id === primaryPage.id) : posts;
   const primaryNiche = (primaryPage as any)?.niche || primaryPage?.overrides?.niche || (primaryPage as any)?.content_profile?.niche || 'science';
   const contentMixReport = calculateContentMixReport(
@@ -6785,7 +6785,11 @@ async function generateDashboardHtml(
             <p style="color: var(--text-muted); font-size: 13px;">Multi-page posting time slots optimized for Facebook algorithm audience peaks.</p>
           </div>
           <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
-            ${pages.length > 0 ? `<button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.08); padding: 5px 12px; cursor: pointer;" onclick="openDailyContentStudio('${pages[0].id}', '${escapeHtml(pages[0].name)}')">💡 Daily Content & Image Ideas</button>` : ''}
+            ${(() => {
+              const activePages = pages.filter((pg) => pg.active === true || (pg.schedule as any)?.is_live === true);
+              const calPage = activePages[0] || pages[0];
+              return calPage ? `<button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.08); padding: 5px 12px; cursor: pointer;" onclick="openDailyContentStudio('${calPage.id}', '${escapeHtml(calPage.name)}')">💡 Daily Content & Image Ideas</button>` : '';
+            })()}
             <span class="badge" style="background: #064e3b; color: #34d399;">● Published</span>
             <span class="badge" style="background: #1e3a8a; color: #60a5fa;">● Scheduled on FB</span>
             <span class="badge" style="background: #78350f; color: #f59e0b;">● Review Required</span>
@@ -6796,8 +6800,9 @@ async function generateDashboardHtml(
         <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; overflow-x: auto;">
           ${(() => {
             const userTz = 'Asia/Kolkata';
-            const defaultTz = pages[0]?.schedule?.timezone || 'America/New_York';
-            const pageTz = defaultTz;
+            const activePages = pages.filter((pg) => pg.active === true || (pg.schedule as any)?.is_live === true);
+            const pageForSlots = activePages[0] || pages[0];
+            const pageTz = pageForSlots?.schedule?.timezone || 'America/New_York';
             const now = new Date();
             const todayPageStr = new Intl.DateTimeFormat('en-CA', {
               timeZone: pageTz,
@@ -6806,6 +6811,37 @@ async function generateDashboardHtml(
               day: '2-digit',
             }).format(now);
             const [pYear, pMonth, pDay] = todayPageStr.split('-').map(Number);
+
+            function getTimeInZone(ymd: string, timeStr: string, fromTz: string, toTz: string): string {
+              try {
+                const [y, m, d] = ymd.split('-').map(Number);
+                const [h, min] = timeStr.split(':').map(Number);
+                const refUtc = new Date(Date.UTC(y, m - 1, d, h, min, 0));
+                const parts = new Intl.DateTimeFormat('en-US', {
+                  timeZone: fromTz,
+                  year: 'numeric', month: 'numeric', day: 'numeric',
+                  hour: 'numeric', minute: 'numeric', hour12: false
+                }).formatToParts(refUtc);
+                const fromH = Number(parts.find(p => p.type === 'hour')?.value || 0);
+                const fromM = Number(parts.find(p => p.type === 'minute')?.value || 0);
+                const diffMinutes = (h * 60 + min) - (fromH * 60 + fromM);
+                const exactUtc = new Date(refUtc.getTime() + diffMinutes * 60000);
+                const toParts = new Intl.DateTimeFormat('en-US', {
+                  timeZone: toTz,
+                  hour: 'numeric', minute: 'numeric', hour12: true
+                }).formatToParts(exactUtc);
+                const toHour = toParts.find(p => p.type === 'hour')?.value || '12';
+                const toMinute = toParts.find(p => p.type === 'minute')?.value || '00';
+                const toDayPeriod = toParts.find(p => p.type === 'dayPeriod')?.value || 'AM';
+                return `${toHour}:${toMinute} ${toDayPeriod.toUpperCase()}`;
+              } catch (_) {
+                const [tH, tM] = timeStr.split(':').map(Number);
+                const istMinutes = (tH * 60 + tM + 630) % 1440;
+                const istH = Math.floor(istMinutes / 60);
+                const istM = istMinutes % 60;
+                return `${istH % 12 || 12}:${istM.toString().padStart(2, '0')} ${istH >= 12 ? 'PM' : 'AM'}`;
+              }
+            }
 
             return Array.from({ length: 7 })
               .map((_, idx) => {
@@ -6819,12 +6855,14 @@ async function generateDashboardHtml(
                 const dayName = slotDate.toLocaleDateString('en-US', { timeZone: pageTz, weekday: 'short' });
                 const dayMonthStr = slotDate.toLocaleDateString('en-US', { timeZone: pageTz, month: 'short', day: 'numeric' });
 
-                // Find all posts scheduled for this day in audience timezone (pageTz)
+                // Find all posts scheduled for this day in audience timezone (postPageTz)
                 const dayPosts = posts.filter((p) => {
                   if (!p.scheduled_for) return false;
                   try {
+                    const pg = pages.find((page) => page.id === p.page_id) || pageForSlots;
+                    const postPageTz = pg?.schedule?.timezone || pageTz;
                     const pTzDate = new Intl.DateTimeFormat('en-CA', {
-                      timeZone: pageTz,
+                      timeZone: postPageTz,
                       year: 'numeric',
                       month: '2-digit',
                       day: '2-digit',
@@ -6835,9 +6873,7 @@ async function generateDashboardHtml(
                   }
                 });
 
-                // Build chronological list of cards for this day (all actual posts + remaining unfilled planned slots)
-                const activePages = pages.filter((pg) => pg.active === true || (pg.schedule as any)?.is_live === true);
-                const pageForSlots = activePages[0] || pages[0];
+                // Slot times configured for the page
                 const rawSlotTimes: string[] = pageForSlots?.schedule?.postingTimes || (pageForSlots?.schedule as any)?.times || [];
                 const times: string[] = Array.isArray(rawSlotTimes)
                   ? rawSlotTimes.filter((t: any) => typeof t === 'string' && t.includes(':')).sort()
@@ -6856,9 +6892,22 @@ async function generateDashboardHtml(
                 // 1. Add all posts scheduled for this day
                 for (const p of dayPosts) {
                   try {
+                    const pg = pages.find((page) => page.id === p.page_id) || pageForSlots;
+                    const postPageTz = pg?.schedule?.timezone || pageTz;
                     const dpDate = new Date(p.scheduled_for);
+
+                    const audTzAbbr = (() => {
+                      try {
+                        return new Intl.DateTimeFormat('en-US', { timeZone: postPageTz, timeZoneName: 'short' })
+                          .formatToParts(dpDate)
+                          .find((x) => x.type === 'timeZoneName')?.value || 'EST';
+                      } catch (_) {
+                        return 'EST';
+                      }
+                    })();
+
                     const dpParts = new Intl.DateTimeFormat('en-US', {
-                      timeZone: pageTz,
+                      timeZone: postPageTz,
                       hour: 'numeric',
                       minute: 'numeric',
                       hour12: false,
@@ -6867,7 +6916,7 @@ async function generateDashboardHtml(
                     const pMin = Number(dpParts.find((x) => x.type === 'minute')?.value || 0);
                     const pTotalMin = pHour * 60 + pMin;
 
-                    // Check if this post fulfills any of the 5 slots (within 60m)
+                    // Check if this post fulfills any of the configured slots (within 60m)
                     for (const t of times) {
                       const [tH, tM] = t.split(':').map(Number);
                       const sTotalMin = tH * 60 + tM;
@@ -6889,7 +6938,6 @@ async function generateDashboardHtml(
                     const istMin = Number(istParts.find((x) => x.type === 'minute')?.value || 0);
                     const locTime = `${istHour % 12 || 12}:${istMin.toString().padStart(2, '0')} ${istHour >= 12 ? 'PM' : 'AM'}`;
 
-                    const pg = pages.find((page) => page.id === p.page_id);
                     const isPub = p.status === 'published';
                     const isSched = p.status === 'scheduled_on_fb';
                     const bg = isPub ? '#064e3b' : isSched ? '#1e3a8a' : '#78350f';
@@ -6910,14 +6958,14 @@ async function generateDashboardHtml(
                     >
                       <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
                         <div>
-                          <span style="font-weight: 700; color: ${textC}; font-size: 12px;">${audTime} EST</span>
+                          <span style="font-weight: 700; color: ${textC}; font-size: 12px;">${audTime} ${audTzAbbr}</span>
                           <div style="font-size: 9px; color: #94a3b8;">${locTime} IST</div>
                         </div>
                         <span style="font-size: 9px; background: ${bg}; color: white; padding: 2px 5px; border-radius: 4px; font-weight: 700; border: 1px solid ${borderC};">${badgeLabel}</span>
                       </div>
                       <div style="font-weight: 600; color: #f3f4f6; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(p.title || '')}">${escapeHtml(p.title || 'Scheduled Post')}</div>
                       <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px; border-top: 1px solid #1f2937; padding-top: 3px;">
-                        <span style="color: var(--text-muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px;">${escapeHtml(pg?.name?.split('&')[0] || 'Beyond the Known')}</span>
+                        <span style="color: var(--text-muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px;">${escapeHtml(pg?.name?.split('&')[0] || pageForSlots?.name || 'Hollow Hours')}</span>
                         <span style="color: #38bdf8; font-size: 10px; font-weight: 600;">View &rarr;</span>
                       </div>
                     </div>`,
@@ -6927,15 +6975,22 @@ async function generateDashboardHtml(
 
                 // 2. Add unfilled planned slots for active pages
                 if (pageForSlots) {
+                  const plannedAudTzAbbr = (() => {
+                    try {
+                      return new Intl.DateTimeFormat('en-US', { timeZone: pageTz, timeZoneName: 'short' })
+                        .formatToParts(slotDate)
+                        .find((x) => x.type === 'timeZoneName')?.value || 'EST';
+                    } catch (_) {
+                      return 'EST';
+                    }
+                  })();
+
                   for (const t of times) {
                     if (fulfilledSlots.has(t)) continue;
                     const [tHour, tMin] = t.split(':').map(Number);
                     const sTotalMin = tHour * 60 + tMin;
                     const audTimeFmt = `${tHour % 12 || 12}:${tMin.toString().padStart(2, '0')} ${tHour >= 12 ? 'PM' : 'AM'}`;
-                    const istMinutes = (tHour * 60 + tMin + 630) % 1440;
-                    const istH = Math.floor(istMinutes / 60);
-                    const istM = istMinutes % 60;
-                    const istTimeFmt = `${istH % 12 || 12}:${istM.toString().padStart(2, '0')} ${istH >= 12 ? 'PM' : 'AM'}`;
+                    const istTimeFmt = getTimeInZone(dayDateStr, t, pageTz, userTz);
 
                     dayCards.push({
                       totalMinutes: sTotalMin,
@@ -6943,12 +6998,12 @@ async function generateDashboardHtml(
                     <div style="background: rgba(15, 23, 42, 0.6); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 6px; padding: 8px; font-size: 11px;">
                       <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
                         <div>
-                          <span style="font-weight: 700; color: #38bdf8; font-size: 12px;">${audTimeFmt} EST</span>
+                          <span style="font-weight: 700; color: #38bdf8; font-size: 12px;">${audTimeFmt} ${plannedAudTzAbbr}</span>
                           <div style="font-size: 9px; color: #94a3b8;">${istTimeFmt} IST</div>
                         </div>
                         <span style="font-size: 9px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 5px; border-radius: 4px; font-weight: 700; border: 1px solid rgba(56, 189, 248, 0.3);">PLANNED</span>
                       </div>
-                      <div style="font-weight: 600; color: #cbd5e1; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(pageForSlots?.name || 'Beyond the Known')}</div>
+                      <div style="font-weight: 600; color: #cbd5e1; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(pageForSlots?.name || 'Hollow Hours')}</div>
                       <div style="font-size: 10px; color: #64748b; margin-top: 4px;">Pre-generates T-30m</div>
                     </div>`,
                     });

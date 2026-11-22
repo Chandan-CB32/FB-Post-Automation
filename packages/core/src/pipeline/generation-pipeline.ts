@@ -2286,14 +2286,16 @@ FORMAT INSTRUCTIONS:
       "11111111-1111-1111-1111-111111111101",
     usedTextProviderName: successfulTextProviderName,
     usedImageProviderId:
-      usedImageProviderId ||
-      (successfulImageProvider.toLowerCase().includes("pollinations")
-        ? (options.activeProviders || []).find(
-          (p) => (p.kind || p.adapter_kind) === "pollinations",
-        )?.id || "11111111-1111-1111-1111-111111111105"
-        : (options.activeProviders || []).find((p) => p.name === successfulImageProvider)?.id ||
-        candidateChain.find((c) => c.name === successfulImageProvider)?.id ||
-        "11111111-1111-1111-1111-111111111105"),
+      (isExcelLibrary || Boolean(options.libraryImageBuffer) || successfulImageProvider === "Content Library Asset")
+        ? undefined
+        : (usedImageProviderId ||
+          (successfulImageProvider.toLowerCase().includes("pollinations")
+            ? (options.activeProviders || []).find(
+              (p) => (p.kind || p.adapter_kind) === "pollinations",
+            )?.id || "11111111-1111-1111-1111-111111111105"
+            : (options.activeProviders || []).find((p) => p.name === successfulImageProvider)?.id ||
+            candidateChain.find((c) => c.name === successfulImageProvider)?.id ||
+            undefined)),
     usedImageProviderName: successfulImageProvider,
   };
 }

@@ -830,7 +830,8 @@ export async function runAutonomousCycle(
             try {
               const todayStr = new Date().toISOString().slice(0, 10);
               const textProvId = (pipelineResult as any).usedTextProviderId || '11111111-1111-1111-1111-111111111101';
-              const imgProvId = (pipelineResult as any).usedImageProviderId || '11111111-1111-1111-1111-111111111105';
+              const imgProvId = (pipelineResult as any).usedImageProviderId;
+              const isExcelLib = contentSourceMode === 'excel_library' || (page as any).content_source_mode === 'excel_library';
 
               // Text generation provider
               const { data: textData } = await supabase
@@ -857,28 +858,30 @@ export async function runAutonomousCycle(
                 });
               }
 
-              // Image generation provider
-              const { data: imgData } = await supabase
-                .from('provider_usage_daily')
-                .select('id, requests_count')
-                .eq('provider_id', imgProvId)
-                .eq('date', todayStr)
-                .maybeSingle();
-
-              if (imgData?.id) {
-                await supabase
+              // Image generation provider - strictly record only when an actual AI image provider was invoked
+              if (!isExcelLib && imgProvId && imgProvId !== 'library') {
+                const { data: imgData } = await supabase
                   .from('provider_usage_daily')
-                  .update({
-                    requests_count: (imgData.requests_count || 0) + 1,
-                  })
-                  .eq('id', imgData.id);
-              } else {
-                await supabase.from('provider_usage_daily').insert({
-                  provider_id: imgProvId,
-                  date: todayStr,
-                  requests_count: 1,
-                  tokens_count: 0,
-                });
+                  .select('id, requests_count')
+                  .eq('provider_id', imgProvId)
+                  .eq('date', todayStr)
+                  .maybeSingle();
+
+                if (imgData?.id) {
+                  await supabase
+                    .from('provider_usage_daily')
+                    .update({
+                      requests_count: (imgData.requests_count || 0) + 1,
+                    })
+                    .eq('id', imgData.id);
+                } else {
+                  await supabase.from('provider_usage_daily').insert({
+                    provider_id: imgProvId,
+                    date: todayStr,
+                    requests_count: 1,
+                    tokens_count: 0,
+                  });
+                }
               }
             } catch (_) {}
 
