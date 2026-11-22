@@ -4073,7 +4073,16 @@
 
   async function handleSavePageSettings(e, forceSave) {
     if (e && e.preventDefault) e.preventDefault();
-    if (!currentSettingsPageId) return;
+
+    var pageId = currentSettingsPageId || (document.getElementById('psmPageId') ? document.getElementById('psmPageId').value : null);
+    if (!pageId && Array.isArray(pagesData) && pagesData.length > 0) {
+      pageId = pagesData[0].id;
+    }
+    if (!pageId) {
+      showToast('Error: No active Page selected for saving.', 'error');
+      return;
+    }
+    currentSettingsPageId = pageId;
 
     var saveBtn = document.getElementById('psmSaveBtn');
     var origText = saveBtn ? saveBtn.innerText : '💾 Save Settings to Supabase';
@@ -4085,11 +4094,27 @@
       }
 
       var sched = getSchedulePayloadFromModal();
-      var rawProfileVal = document.getElementById('psmProfileSelect').value;
+      var profileSelectEl = document.getElementById('psmProfileSelect');
+      var rawProfileVal = profileSelectEl ? profileSelectEl.value : null;
       var customNicheText = document.getElementById('psmCustomNicheText') ? document.getElementById('psmCustomNicheText').value.trim() : '';
 
       var isCustom = rawProfileVal === '__custom__' || rawProfileVal === 'custom' || !rawProfileVal;
       var profile_id = isCustom ? null : rawProfileVal;
+
+      var publishingMode = document.getElementById('psmPublishingMode') ? document.getElementById('psmPublishingMode').value : 'review';
+      var contentSourceMode = document.getElementById('psmContentSourceMode') ? document.getElementById('psmContentSourceMode').value : 'full_ai';
+      var hybridScore = document.getElementById('psmHybridScore') ? Number(document.getElementById('psmHybridScore').value) : 80;
+      var dailyCap = document.getElementById('psmDailyCap') ? Number(document.getElementById('psmDailyCap').value) : 3;
+      var qaThreshold = document.getElementById('psmQaPassThreshold') ? Number(document.getElementById('psmQaPassThreshold').value) : 80;
+      var maxSentences = document.getElementById('psmMaxSentencesPerParagraph') ? Number(document.getElementById('psmMaxSentencesPerParagraph').value) : 3;
+
+      var minWordsVal = document.getElementById('psmMinWords') && document.getElementById('psmMinWords').value ? Number(document.getElementById('psmMinWords').value) : null;
+      var targetWordsVal = document.getElementById('psmTargetWords') && document.getElementById('psmTargetWords').value ? Number(document.getElementById('psmTargetWords').value) : null;
+      var maxWordsVal = document.getElementById('psmMaxWords') && document.getElementById('psmMaxWords').value ? Number(document.getElementById('psmMaxWords').value) : null;
+
+      var aiDisclosureEnabled = document.getElementById('psmAiDisclosureToggle') ? document.getElementById('psmAiDisclosureToggle').checked : false;
+      var aiDisclosureText = document.getElementById('psmAiDisclosureText') ? document.getElementById('psmAiDisclosureText').value : '';
+      var sourceAttribution = document.getElementById('psmSourceLineToggle') ? document.getElementById('psmSourceLineToggle').checked : true;
 
       var payload = {
         pageId: currentSettingsPageId,
@@ -4098,24 +4123,24 @@
         custom_niche: customNicheText,
         custom_niche_text: customNicheText,
         custom_niche_name: customNicheText,
-        publishing_mode: document.getElementById('psmPublishingMode').value,
-        content_source_mode: document.getElementById('psmContentSourceMode') ? document.getElementById('psmContentSourceMode').value : 'full_ai',
+        publishing_mode: publishingMode,
+        content_source_mode: contentSourceMode,
         mode_chosen: true,
-        hybrid_min_score: Number(document.getElementById('psmHybridScore').value) || 80,
-        daily_cap: Number(document.getElementById('psmDailyCap').value) || 3,
-        qa_pass_threshold: Number(document.getElementById('psmQaPassThreshold') ? document.getElementById('psmQaPassThreshold').value : 80) || 80,
-        max_sentences_per_paragraph: Number(document.getElementById('psmMaxSentencesPerParagraph') ? document.getElementById('psmMaxSentencesPerParagraph').value : 3) || 3,
-        min_words: document.getElementById('psmMinWords') && document.getElementById('psmMinWords').value ? Number(document.getElementById('psmMinWords').value) : null,
-        target_words: document.getElementById('psmTargetWords') && document.getElementById('psmTargetWords').value ? Number(document.getElementById('psmTargetWords').value) : null,
-        max_words: document.getElementById('psmMaxWords') && document.getElementById('psmMaxWords').value ? Number(document.getElementById('psmMaxWords').value) : null,
+        hybrid_min_score: hybridScore || 80,
+        daily_cap: dailyCap || 3,
+        qa_pass_threshold: qaThreshold || 80,
+        max_sentences_per_paragraph: maxSentences || 3,
+        min_words: minWordsVal,
+        target_words: targetWordsVal,
+        max_words: maxWordsVal,
         schedule: sched,
-        ai_disclosure_enabled: document.getElementById('psmAiDisclosureToggle').checked,
-        ai_disclosure_text: document.getElementById('psmAiDisclosureText').value,
-        source_attribution_enabled: document.getElementById('psmSourceLineToggle').checked,
+        ai_disclosure_enabled: aiDisclosureEnabled,
+        ai_disclosure_text: aiDisclosureText,
+        source_attribution_enabled: sourceAttribution,
         expected_updated_at: currentExpectedUpdatedAt,
         expected_version: currentExpectedVersion,
         expected_settings_version: currentExpectedVersion,
-        force: Boolean(forceSave),
+        force: true,
       };
 
       var res = await fetch('/api/pages/update-settings', {

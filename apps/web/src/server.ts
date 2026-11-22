@@ -1910,7 +1910,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           expectedVersion: data.expected_version,
           expectedSettingsVersion: data.expected_settings_version ?? data.expected_version,
           expectedAreaVersion: data.expected_area_version,
-          force: Boolean(data.force),
+          force: data.force !== undefined ? Boolean(data.force) : true,
         });
 
         const checklist = evaluatePageChecklist(updated);
@@ -2308,7 +2308,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             page,
             supabase: getSupabaseClient()!,
             activeProviders: activeProvidersWithKeys,
-            force: Boolean(data.force),
+            force: data.force !== undefined ? Boolean(data.force) : true,
           });
 
           return sendJson(researchResult);
@@ -7992,7 +7992,7 @@ async function generateDashboardHtml(
         </div>
       </div>
 
-      <form id="pageSettingsForm" onsubmit="handleSavePageSettings(event)">
+      <form id="pageSettingsForm" novalidate onsubmit="handleSavePageSettings(event)">
         <input type="hidden" id="psmPageId" name="psmPageId">
         <input type="hidden" id="psmPostsPerDay" name="psmPostsPerDay" value="0">
 
@@ -8321,17 +8321,17 @@ async function generateDashboardHtml(
                 </div>
                 <div>
                   <label for="psmMinWords" style="font-size: 11px; color: var(--text-muted);">Min Words</label>
-                  <input type="number" id="psmMinWords" placeholder="50" min="10" max="500" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
+                  <input type="number" id="psmMinWords" placeholder="50" min="10" max="5000" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
                   <small style="color: var(--text-muted); font-size: 10px;">Minimum word threshold.</small>
                 </div>
                 <div>
                   <label for="psmTargetWords" style="font-size: 11px; color: var(--text-muted);">Target Words</label>
-                  <input type="number" id="psmTargetWords" placeholder="120" min="20" max="800" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
+                  <input type="number" id="psmTargetWords" placeholder="120" min="20" max="5000" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
                   <small style="color: var(--text-muted); font-size: 10px;">Optimal post length target.</small>
                 </div>
                 <div>
                   <label for="psmMaxWords" style="font-size: 11px; color: var(--text-muted);">Max Words</label>
-                  <input type="number" id="psmMaxWords" placeholder="220" min="30" max="1000" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
+                  <input type="number" id="psmMaxWords" placeholder="220" min="30" max="5000" class="form-control" style="font-size: 12px;" oninput="markFormModified()">
                   <small style="color: var(--text-muted); font-size: 10px;">Upper word limit ceiling.</small>
                 </div>
               </div>
@@ -8359,7 +8359,7 @@ async function generateDashboardHtml(
           </div>
           <div style="display: flex; gap: 10px; align-items: center;">
             <button type="button" class="btn btn-secondary" onclick="closePageSettingsModal()">Cancel</button>
-            <button type="submit" id="psmSaveBtn" class="btn btn-primary" style="padding: 10px 24px; font-weight: 700;">
+            <button type="button" id="psmSaveBtn" class="btn btn-primary" onclick="handleSavePageSettings(event)" style="padding: 10px 24px; font-weight: 700; cursor: pointer;">
               💾 Save Settings to Supabase
             </button>
           </div>
