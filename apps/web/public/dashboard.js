@@ -2381,8 +2381,11 @@
       document.getElementById('pdwTotalReach').innerText = Number(stats.totalReach || 0).toLocaleString() + ' reach';
       document.getElementById('pdwEngagement').innerText = (stats.avgEngagement || 0) + '% Avg Engagement (' + Number(stats.totalImpressions || 0).toLocaleString() + ' imp)';
 
-      document.getElementById('pdwCadenceTitle').innerText = (page.schedule?.postsPerDay || 3) + ' posts / day';
-      document.getElementById('pdwNextSlot').innerText = 'Times: ' + (page.schedule?.postingTimes || ['09:00', '15:00', '21:00']).join(', ');
+      var schedTimesList = (page.schedule?.postingTimes && page.schedule.postingTimes.length > 0)
+        ? page.schedule.postingTimes
+        : [];
+      document.getElementById('pdwCadenceTitle').innerText = (page.schedule?.postsPerDay || schedTimesList.length) + ' posts / day';
+      document.getElementById('pdwNextSlot').innerText = 'Times: ' + (schedTimesList.length > 0 ? schedTimesList.join(', ') : 'None configured');
 
       document.getElementById('pdwQaScore').innerText = stats.avgQaScore > 0 ? (stats.avgQaScore + ' / 100') : 'N/A';
       document.getElementById('pdwQaStatus').innerText = 'Threshold: ' + (page.hybrid_min_score || 85) + ' (Strict)';
@@ -2408,21 +2411,25 @@
         ? '[Mode: ' + String(page.custom_image_prompt_mode || 'append').toUpperCase() + ']\n' + page.custom_image_prompt
         : '(No custom image override set - using default cinematic visual composition)';
 
-      document.getElementById('pdwSchedTarget').innerText = (page.schedule?.postsPerDay || 3) + ' posts / day';
+      document.getElementById('pdwSchedTarget').innerText = (page.schedule?.postsPerDay || schedTimesList.length) + ' posts / day';
       document.getElementById('pdwSchedTz').innerText = page.schedule?.timezone || 'UTC';
-      document.getElementById('pdwSchedTimes').innerText = (page.schedule?.postingTimes || []).join(', ');
+      document.getElementById('pdwSchedTimes').innerText = schedTimesList.length > 0 ? schedTimesList.join(', ') : 'None configured';
       document.getElementById('pdwSchedMode').innerText = String(page.publishing_mode || '').toUpperCase() + ' (Min Score: ' + (page.hybrid_min_score || 85) + ')';
 
       const upcomingContainer = document.getElementById('pdwUpcomingSlots');
-      const times = page.schedule?.postingTimes || ['09:00', '15:00', '21:00'];
-      upcomingContainer.innerHTML = times.map(function (t, idx) {
-        return (
-          '<div style="background: #111827; padding: 10px 14px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #1f2937;">' +
-          '<div><strong style="color: #60a5fa;">Posting Run #' + (idx + 1) + ': ' + escapeHtml(t) + '</strong>' +
-          '<span style="color: var(--text-muted); font-size: 12px; margin-left: 10px;">' + escapeHtml(page.schedule?.timezone || 'UTC') + '</span></div>' +
-          '<span class="badge" style="background: #1e3a8a; color: #93c5fd; font-size: 11px;">Active Automated Schedule</span></div>'
-        );
-      }).join('');
+      const times = schedTimesList;
+      if (times.length === 0) {
+        upcomingContainer.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; padding: 8px;">No scheduled time slots configured. Add times in Edit Page Settings.</div>';
+      } else {
+        upcomingContainer.innerHTML = times.map(function (t, idx) {
+          return (
+            '<div style="background: #111827; padding: 10px 14px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #1f2937;">' +
+            '<div><strong style="color: #60a5fa;">Posting Run #' + (idx + 1) + ': ' + escapeHtml(t) + '</strong>' +
+            '<span style="color: var(--text-muted); font-size: 12px; margin-left: 10px;">' + escapeHtml(page.schedule?.timezone || 'UTC') + '</span></div>' +
+            '<span class="badge" style="background: #1e3a8a; color: #93c5fd; font-size: 11px;">Active Automated Schedule</span></div>'
+          );
+        }).join('');
+      }
 
       const logsContainer = document.getElementById('pdwLogsContainer');
       if (auditLogs && auditLogs.length > 0) {
@@ -3986,20 +3993,21 @@
   function getSchedulePayloadFromModal() {
     var fixedTimes = [];
     document.querySelectorAll('.psm-fixed-time-input').forEach(function (inp) {
-      if (inp.value) fixedTimes.push(inp.value);
+      if (inp.value && inp.value.trim()) fixedTimes.push(inp.value.trim());
     });
 
-    var postsPerDay = fixedTimes.length;
+    var uniqueTimes = Array.from(new Set(fixedTimes)).sort();
+    var postsPerDay = uniqueTimes.length;
     var timezone = document.getElementById('psmTimezone') ? document.getElementById('psmTimezone').value : 'America/New_York';
 
     return {
       postsPerDay: postsPerDay,
       mode: 'fixed',
-      postingTimes: fixedTimes,
+      postingTimes: uniqueTimes,
       daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
       timezone: timezone,
-      windowStart: '09:00',
-      windowEnd: '21:00',
+      windowStart: uniqueTimes[0] || '09:00',
+      windowEnd: uniqueTimes[uniqueTimes.length - 1] || '21:00',
       intervalHours: 3,
       jitterMinutes: Number(document.getElementById('psmJitter') ? document.getElementById('psmJitter').value : 10) || 10,
       minGapMinutes: Number(document.getElementById('psmMinGap') ? document.getElementById('psmMinGap').value : 60) || 60,

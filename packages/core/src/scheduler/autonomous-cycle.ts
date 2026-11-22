@@ -196,10 +196,23 @@ export async function runAutonomousCycle(
     for (const page of livePages) {
       try {
         const sched = page.schedule || {};
-        const postsPerDay = sched.postsPerDay || page.daily_cap || 5;
-        const postingTimes = sched.postingTimes || sched.times || ['08:00', '10:00', '12:00', '15:00', '17:00'];
+        const rawTimes: string[] = (Array.isArray(sched.postingTimes) && sched.postingTimes.length > 0)
+          ? sched.postingTimes
+          : (Array.isArray(sched.times) && sched.times.length > 0 ? sched.times : []);
+
+        const postingTimes: string[] = rawTimes
+          .filter((t: any) => typeof t === 'string' && t.includes(':'))
+          .sort();
+
+        const postsPerDay = postingTimes.length > 0 ? postingTimes.length : (sched.postsPerDay || 0);
+
+        if (postingTimes.length === 0 || postsPerDay === 0) {
+          console.log(`[Autonomous Worker] Page "${page.name}" (${page.id}) has no scheduled posting times configured. Skipping autonomous slot planning.`);
+          continue;
+        }
+
         const timezone = sched.timezone || 'America/New_York';
-        const minGapMinutes = sched.minGapMinutes || 60;
+        const minGapMinutes = sched.minGapMinutes || 30;
         const activeDays = sched.daysOfWeek || [1, 2, 3, 4, 5, 6, 7];
 
         const scheduleConfig: PageScheduleConfig = {

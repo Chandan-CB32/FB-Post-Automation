@@ -6838,7 +6838,10 @@ async function generateDashboardHtml(
                 // Build chronological list of cards for this day (all actual posts + remaining unfilled planned slots)
                 const activePages = pages.filter((pg) => pg.active === true || (pg.schedule as any)?.is_live === true);
                 const pageForSlots = activePages[0] || pages[0];
-                const times: string[] = pageForSlots?.schedule?.postingTimes || (pageForSlots?.schedule as any)?.times || ['08:00', '10:00', '12:00', '15:00', '17:00'];
+                const rawSlotTimes: string[] = pageForSlots?.schedule?.postingTimes || (pageForSlots?.schedule as any)?.times || [];
+                const times: string[] = Array.isArray(rawSlotTimes)
+                  ? rawSlotTimes.filter((t: any) => typeof t === 'string' && t.includes(':')).sort()
+                  : [];
 
                 interface DayCardItem {
                   totalMinutes: number;
@@ -7736,8 +7739,8 @@ async function generateDashboardHtml(
         </div>
 
         <div class="form-group">
-          <label for="newPostingTimes">Daily Posting Times (HH:mm comma-separated)</label>
-          <input type="text" id="newPostingTimes" name="newPostingTimes" class="form-control" value="10:00, 15:00, 20:00" autocomplete="off">
+          <label for="newPostingTimes">Daily Posting Times (HH:mm comma-separated, e.g. 12:00, 15:00)</label>
+          <input type="text" id="newPostingTimes" name="newPostingTimes" class="form-control" placeholder="e.g. 12:00, 15:00" value="" autocomplete="off">
         </div>
 
         <div class="form-group">
@@ -8463,8 +8466,8 @@ async function generateDashboardHtml(
         </div>
         <div class="card" style="padding: 14px; background: #0f172a; border: 1px solid #1e293b;">
           <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Cadence & Next Slot</div>
-          <div id="pdwCadenceTitle" style="font-size: 20px; font-weight: 700; color: #f59e0b; margin: 4px 0;">3 / day</div>
-          <div id="pdwNextSlot" style="font-size: 11px; color: var(--text-muted);">Times: 09:00, 15:00, 21:00</div>
+          <div id="pdwCadenceTitle" style="font-size: 20px; font-weight: 700; color: #f59e0b; margin: 4px 0;">-- / day</div>
+          <div id="pdwNextSlot" style="font-size: 11px; color: var(--text-muted);">Times: None configured</div>
         </div>
         <div class="card" style="padding: 14px; background: #0f172a; border: 1px solid #1e293b;">
           <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">QA Compliance Score</div>
@@ -8534,7 +8537,7 @@ async function generateDashboardHtml(
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; font-size: 13px; margin-bottom: 16px;">
             <div><strong>Daily Target:</strong> <span id="pdwSchedTarget">3 posts / day</span></div>
             <div><strong>Timezone:</strong> <span id="pdwSchedTz">UTC</span></div>
-            <div><strong>Posting Time Slots:</strong> <span id="pdwSchedTimes">09:00, 15:00, 21:00</span></div>
+            <div><strong>Posting Time Slots:</strong> <span id="pdwSchedTimes">None configured</span></div>
             <div><strong>Publishing Mode:</strong> <span id="pdwSchedMode">Autonomous (Auto-publish if score &gt;= 85)</span></div>
           </div>
           <h4 style="font-size: 14px; margin-bottom: 8px; color: #93c5fd;">Upcoming Posting Schedule Slots</h4>
@@ -9524,8 +9527,8 @@ async function generateStandalonePageDetailsHtml(pageId: string): Promise<string
       </div>
       <div class="card" style="margin: 0;">
         <div style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">Cadence & Next Slot</div>
-        <div style="font-size: 24px; font-weight: 700; color: #f59e0b; margin: 4px 0;">${page.schedule.postsPerDay} / day</div>
-        <div style="font-size: 12px; color: var(--text-muted);">Slots: ${page.schedule.postingTimes.join(', ')} (${page.schedule.timezone || 'UTC'})</div>
+        <div style="font-size: 24px; font-weight: 700; color: #f59e0b; margin: 4px 0;">${page.schedule?.postsPerDay || 0} / day</div>
+        <div style="font-size: 12px; color: var(--text-muted);">Slots: ${(page.schedule?.postingTimes || []).join(', ') || 'None'} (${page.schedule?.timezone || 'UTC'})</div>
       </div>
       <div class="card" style="margin: 0;">
         <div style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">QA Score & Quality</div>
@@ -9625,7 +9628,7 @@ async function generateStandalonePageDetailsHtml(pageId: string): Promise<string
 
         <h4 style="font-size: 14px; margin-bottom: 10px; color: #93c5fd;">Automated Daily Posting Runs</h4>
         <div style="display: flex; flex-direction: column; gap: 8px;">
-          ${page.schedule.postingTimes.map((t, idx) => `
+          ${(page.schedule?.postingTimes || []).map((t, idx) => `
             <div style="background: #111827; padding: 12px 16px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #1f2937;">
               <div>
                 <strong style="color: #60a5fa;">Run Slot #${idx + 1}: ${t}</strong>
