@@ -5857,6 +5857,25 @@
   window.regenerateTopicImage = regenerateTopicImage;
   window.deleteTopicItemAction = deleteTopicItemAction;
 
+  function handleCalendarPageFilter(selectedPageId) {
+    try {
+      const url = new URL(window.location.href);
+      if (!selectedPageId || selectedPageId === 'all') {
+        url.searchParams.delete('pageId');
+        url.searchParams.delete('calendar_page');
+        sessionStorage.removeItem('calendar_filter_page_id');
+      } else {
+        url.searchParams.set('pageId', selectedPageId);
+        sessionStorage.setItem('calendar_filter_page_id', selectedPageId);
+      }
+      url.pathname = '/calendar';
+      window.location.href = url.pathname + (url.search ? url.search : '');
+    } catch (err) {
+      console.warn('[Calendar] Error switching page filter:', err);
+    }
+  }
+  window.handleCalendarPageFilter = handleCalendarPageFilter;
+
 
   function copyExpectedRedirectUri() {
     const el = document.getElementById('expectedRedirectUriText');

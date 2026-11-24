@@ -516,9 +516,9 @@ export function extractAndCleanPostCaption(
     }
   }
 
-  // 4. Remove conversational preambles
+  // 4. Remove conversational preambles and instruction leaks
   draft = draft.replace(
-    /^(?:Here is a (?:sample )?(?:Facebook )?post[^\n]*|Sure, here is[^\n]*|Based on the (?:facts|provided|rules)[^\n]*|Never use[^\n]*|Below is the[^\n]*)\n+/im,
+    /^(?:Here is a (?:sample )?(?:Facebook )?post[^\n]*|Sure, here is[^\n]*|Based on the (?:facts|provided|rules)[^\n]*|Never use[^\n]*|Below is the[^\n]*|Ensure a clear[^\n]*|Here is the (?:rewritten )?caption[^\n]*)\n+/im,
     ""
   );
 
@@ -532,6 +532,15 @@ export function extractAndCleanPostCaption(
     const lower = line.toLowerCase();
 
     const isInstructionEcho =
+      lower.includes("ensure a clear") ||
+      lower.includes("concise narrative") ||
+      lower.includes("guidelines above") ||
+      lower.includes("rewritten caption") ||
+      lower.includes("rewrite the caption") ||
+      lower.includes("here is the rewritten") ||
+      lower.includes("here is your caption") ||
+      lower.includes("follow the guidelines") ||
+      lower.includes("clean output:") ||
       lower.includes("avoid sensational") ||
       lower.includes("clickbait") ||
       lower.includes("verified sources") ||
@@ -1191,11 +1200,13 @@ FORMAT INSTRUCTIONS:
   // Active text providers failover selection sorted by priority ascending (1 = Primary, 2 = Secondary...)
   const textCandidates = (options.activeProviders || [])
     .filter((p) => {
+      const chainType = ((p as any).config?.chain_type || (p as any).chain_type || "").toLowerCase();
+      if (chainType === "image") return false;
       const k = (p.kind || p.adapter_kind || "").toLowerCase();
       const n = (p.name || "").toLowerCase();
       const m = (p.model_name || "").toLowerCase();
-      if (k === "pollinations" || k === "openai_compatible_images") return false;
-      if (n.includes("image") || n.includes("flux") || n.includes("lucid") || n.includes("leonardo") || n.includes("wanx")) return false;
+      if (k === "pollinations" || k === "openai_compatible_images" || k === "cloudflare_workers_ai") return false;
+      if (n.includes("image") || n.includes("flux") || n.includes("lucid") || n.includes("leonardo") || n.includes("wanx") || n.includes("cloudflare")) return false;
       if (m.includes("flux") || m.includes("lucid") || m.includes("diffusion") || m.includes("sd-") || m.includes("wanx")) return false;
       return true;
     })
@@ -1290,6 +1301,8 @@ FORMAT INSTRUCTIONS:
               model: effectiveTextModel,
               baseUrl: candidate.base_url,
               extraBody: { accountId },
+              temperature: 0.7,
+              maxTokens: generationMaxTokens,
               timeoutMs: 40000,
             });
             if (res.text && res.text.trim()) {
@@ -1819,6 +1832,8 @@ FORMAT INSTRUCTIONS:
   // Filter image providers from options.activeProviders sorted by priority ascending (1 = Primary, 2 = Secondary...)
   const imageCandidates = (options.activeProviders || [])
     .filter((p) => {
+      const chainType = ((p as any).config?.chain_type || (p as any).chain_type || "").toLowerCase();
+      if (chainType === "text") return false;
       const k = (p.kind || p.adapter_kind || "").toLowerCase();
       const n = (p.name || "").toLowerCase();
       return (

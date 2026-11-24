@@ -254,6 +254,7 @@ export async function runAutonomousCycle(
                 id: p.id,
                 name: p.name,
                 kind: p.kind || p.adapter_kind,
+                chain_type: p.config?.chain_type || (p as any).chain_type,
                 model_name: resolveEffectiveModel(p, 'text'),
                 priority: p.priority || 1,
                 base_url: p.base_url,

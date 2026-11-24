@@ -1910,7 +1910,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           expectedVersion: data.expected_version,
           expectedSettingsVersion: data.expected_settings_version ?? data.expected_version,
           expectedAreaVersion: data.expected_area_version,
-          force: data.force !== undefined ? Boolean(data.force) : true,
+          force: Boolean(data.force),
         });
 
         const checklist = evaluatePageChecklist(updated);
@@ -6779,7 +6779,7 @@ async function generateDashboardHtml(
     <!-- TAB 6: SCHEDULE CALENDAR GRID -->
     <div id="tab-calendar" class="tab-content ${routeInfo.tabId === 'calendar' ? 'active' : ''}">
       <div class="card" style="margin-bottom: 24px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 12px;">
           <div>
             <h3 style="font-size: 18px; margin-bottom: 4px;">7-Day Autonomous Schedule Calendar</h3>
             <p style="color: var(--text-muted); font-size: 13px;">Multi-page posting time slots optimized for Facebook algorithm audience peaks.</p>
@@ -6787,9 +6787,25 @@ async function generateDashboardHtml(
           <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
             ${(() => {
               const activePages = pages.filter((pg) => pg.active === true || (pg.schedule as any)?.is_live === true);
-              const calPage = activePages[0] || pages[0];
-              return calPage ? `<button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.08); padding: 5px 12px; cursor: pointer;" onclick="openDailyContentStudio('${calPage.id}', '${escapeHtml(calPage.name)}')">💡 Daily Content & Image Ideas</button>` : '';
+              const selectedCalPageId = searchParams?.get('pageId') || searchParams?.get('calendar_page') || 'all';
+              return `
+              <div style="display: flex; align-items: center; gap: 8px; background: rgba(15, 23, 42, 0.6); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--card-border);">
+                <label for="calendarPageFilterSelect" style="font-size: 12px; font-weight: 700; color: #94a3b8; white-space: nowrap;">📄 Select Page:</label>
+                <select id="calendarPageFilterSelect" class="form-control" style="font-size: 12px; padding: 4px 8px; width: 230px; background: #111827; border: 1px solid #374151; color: #f3f4f6; border-radius: 4px; cursor: pointer;" onchange="handleCalendarPageFilter(this.value)">
+                  <option value="all" ${selectedCalPageId === 'all' ? 'selected' : ''}>🌐 All Active Pages (Combined)</option>
+                  ${pages.map((p) => `<option value="${p.id}" ${p.id === selectedCalPageId ? 'selected' : ''}>${escapeHtml(p.name)} (${(p.schedule as any)?.postingTimes?.length || (p.schedule as any)?.times?.length || 0}/day • ${(p.schedule as any)?.timezone || 'EST'})</option>`).join('')}
+                </select>
+              </div>`;
             })()}
+            <div id="calendarStudioButtonContainer">
+              ${(() => {
+                const activePages = pages.filter((pg) => pg.active === true || (pg.schedule as any)?.is_live === true);
+                const selectedCalPageId = searchParams?.get('pageId') || searchParams?.get('calendar_page') || 'all';
+                const targetPage = selectedCalPageId !== 'all' ? pages.find((p) => p.id === selectedCalPageId) : null;
+                const calPage = targetPage || activePages[0] || pages[0];
+                return calPage ? `<button class="btn btn-secondary" style="font-size: 12px; font-weight: 700; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.08); padding: 5px 12px; cursor: pointer;" onclick="openDailyContentStudio('${calPage.id}', '${escapeHtml(calPage.name)}')">💡 Daily Content & Image Ideas</button>` : '';
+              })()}
+            </div>
             <span class="badge" style="background: #064e3b; color: #34d399;">● Published</span>
             <span class="badge" style="background: #1e3a8a; color: #60a5fa;">● Scheduled on FB</span>
             <span class="badge" style="background: #78350f; color: #f59e0b;">● Review Required</span>
@@ -6797,12 +6813,16 @@ async function generateDashboardHtml(
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; overflow-x: auto;">
+        <div id="calendarGridContainer" style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; overflow-x: auto;">
           ${(() => {
             const userTz = 'Asia/Kolkata';
             const activePages = pages.filter((pg) => pg.active === true || (pg.schedule as any)?.is_live === true);
-            const pageForSlots = activePages[0] || pages[0];
-            const pageTz = pageForSlots?.schedule?.timezone || 'America/New_York';
+            const selectedCalPageId = searchParams?.get('pageId') || searchParams?.get('calendar_page') || 'all';
+            const pagesToShow = selectedCalPageId !== 'all'
+              ? pages.filter((p) => p.id === selectedCalPageId)
+              : (activePages.length > 0 ? activePages : pages);
+            const primaryPage = pagesToShow[0] || pages[0];
+            const pageTz = primaryPage?.schedule?.timezone || 'America/New_York';
             const now = new Date();
             const todayPageStr = new Intl.DateTimeFormat('en-CA', {
               timeZone: pageTz,
@@ -6855,11 +6875,12 @@ async function generateDashboardHtml(
                 const dayName = slotDate.toLocaleDateString('en-US', { timeZone: pageTz, weekday: 'short' });
                 const dayMonthStr = slotDate.toLocaleDateString('en-US', { timeZone: pageTz, month: 'short', day: 'numeric' });
 
-                // Find all posts scheduled for this day in audience timezone (postPageTz)
+                // Find all posts scheduled for this day matching pagesToShow
                 const dayPosts = posts.filter((p) => {
                   if (!p.scheduled_for) return false;
+                  if (!pagesToShow.some((pg) => pg.id === p.page_id)) return false;
                   try {
-                    const pg = pages.find((page) => page.id === p.page_id) || pageForSlots;
+                    const pg = pages.find((page) => page.id === p.page_id) || primaryPage;
                     const postPageTz = pg?.schedule?.timezone || pageTz;
                     const pTzDate = new Intl.DateTimeFormat('en-CA', {
                       timeZone: postPageTz,
@@ -6873,12 +6894,6 @@ async function generateDashboardHtml(
                   }
                 });
 
-                // Slot times configured for the page
-                const rawSlotTimes: string[] = pageForSlots?.schedule?.postingTimes || (pageForSlots?.schedule as any)?.times || [];
-                const times: string[] = Array.isArray(rawSlotTimes)
-                  ? rawSlotTimes.filter((t: any) => typeof t === 'string' && t.includes(':')).sort()
-                  : [];
-
                 interface DayCardItem {
                   totalMinutes: number;
                   html: string;
@@ -6886,13 +6901,16 @@ async function generateDashboardHtml(
 
                 const dayCards: DayCardItem[] = [];
 
-                // Track which slot times are fulfilled by day posts
-                const fulfilledSlots = new Set<string>();
+                // Track fulfilled slots per page
+                const fulfilledSlotsByPage = new Map<string, Set<string>>();
+                for (const pg of pagesToShow) {
+                  fulfilledSlotsByPage.set(pg.id, new Set<string>());
+                }
 
                 // 1. Add all posts scheduled for this day
                 for (const p of dayPosts) {
                   try {
-                    const pg = pages.find((page) => page.id === p.page_id) || pageForSlots;
+                    const pg = pages.find((page) => page.id === p.page_id) || primaryPage;
                     const postPageTz = pg?.schedule?.timezone || pageTz;
                     const dpDate = new Date(p.scheduled_for);
 
@@ -6916,14 +6934,20 @@ async function generateDashboardHtml(
                     const pMin = Number(dpParts.find((x) => x.type === 'minute')?.value || 0);
                     const pTotalMin = pHour * 60 + pMin;
 
-                    // Check if this post fulfills any of the configured slots (within 60m)
-                    for (const t of times) {
+                    // Mark fulfilled slot for this page
+                    const rawSlotTimes: string[] = pg?.schedule?.postingTimes || (pg?.schedule as any)?.times || [];
+                    const pageTimes: string[] = Array.isArray(rawSlotTimes)
+                      ? rawSlotTimes.filter((t: any) => typeof t === 'string' && t.includes(':')).sort()
+                      : [];
+                    const fulfilled = fulfilledSlotsByPage.get(pg.id) || new Set<string>();
+                    for (const t of pageTimes) {
                       const [tH, tM] = t.split(':').map(Number);
                       const sTotalMin = tH * 60 + tM;
                       if (Math.abs(pTotalMin - sTotalMin) <= 60) {
-                        fulfilledSlots.add(t);
+                        fulfilled.add(t);
                       }
                     }
+                    fulfilledSlotsByPage.set(pg.id, fulfilled);
 
                     const audTime = `${pHour % 12 || 12}:${pMin.toString().padStart(2, '0')} ${pHour >= 12 ? 'PM' : 'AM'}`;
 
@@ -6965,7 +6989,7 @@ async function generateDashboardHtml(
                       </div>
                       <div style="font-weight: 600; color: #f3f4f6; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(p.title || '')}">${escapeHtml(p.title || 'Scheduled Post')}</div>
                       <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px; border-top: 1px solid #1f2937; padding-top: 3px;">
-                        <span style="color: var(--text-muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px;">${escapeHtml(pg?.name?.split('&')[0] || pageForSlots?.name || 'Hollow Hours')}</span>
+                        <span style="color: #94a3b8; font-weight: 600; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px;" title="${escapeHtml(pg?.name || '')}">${escapeHtml(pg?.name?.split('&')[0] || 'Page')}</span>
                         <span style="color: #38bdf8; font-size: 10px; font-weight: 600;">View &rarr;</span>
                       </div>
                     </div>`,
@@ -6973,11 +6997,18 @@ async function generateDashboardHtml(
                   } catch (_) {}
                 }
 
-                // 2. Add unfilled planned slots for active pages
-                if (pageForSlots) {
+                // 2. Add unfilled planned slots for each page in pagesToShow
+                for (const pg of pagesToShow) {
+                  const targetTz = pg?.schedule?.timezone || pageTz;
+                  const rawSlotTimes: string[] = pg?.schedule?.postingTimes || (pg?.schedule as any)?.times || [];
+                  const times: string[] = Array.isArray(rawSlotTimes)
+                    ? rawSlotTimes.filter((t: any) => typeof t === 'string' && t.includes(':')).sort()
+                    : [];
+                  const fulfilled = fulfilledSlotsByPage.get(pg.id) || new Set<string>();
+
                   const plannedAudTzAbbr = (() => {
                     try {
-                      return new Intl.DateTimeFormat('en-US', { timeZone: pageTz, timeZoneName: 'short' })
+                      return new Intl.DateTimeFormat('en-US', { timeZone: targetTz, timeZoneName: 'short' })
                         .formatToParts(slotDate)
                         .find((x) => x.type === 'timeZoneName')?.value || 'EST';
                     } catch (_) {
@@ -6986,11 +7017,11 @@ async function generateDashboardHtml(
                   })();
 
                   for (const t of times) {
-                    if (fulfilledSlots.has(t)) continue;
+                    if (fulfilled.has(t)) continue;
                     const [tHour, tMin] = t.split(':').map(Number);
                     const sTotalMin = tHour * 60 + tMin;
                     const audTimeFmt = `${tHour % 12 || 12}:${tMin.toString().padStart(2, '0')} ${tHour >= 12 ? 'PM' : 'AM'}`;
-                    const istTimeFmt = getTimeInZone(dayDateStr, t, pageTz, userTz);
+                    const istTimeFmt = getTimeInZone(dayDateStr, t, targetTz, userTz);
 
                     dayCards.push({
                       totalMinutes: sTotalMin,
@@ -7003,7 +7034,7 @@ async function generateDashboardHtml(
                         </div>
                         <span style="font-size: 9px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 5px; border-radius: 4px; font-weight: 700; border: 1px solid rgba(56, 189, 248, 0.3);">PLANNED</span>
                       </div>
-                      <div style="font-weight: 600; color: #cbd5e1; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(pageForSlots?.name || 'Hollow Hours')}</div>
+                      <div style="font-weight: 600; color: #cbd5e1; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(pg.name)}">${escapeHtml(pg.name)}</div>
                       <div style="font-size: 10px; color: #64748b; margin-top: 4px;">Pre-generates T-30m</div>
                     </div>`,
                     });
