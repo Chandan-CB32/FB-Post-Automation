@@ -2436,6 +2436,27 @@ export class SystemStore {
         updated_at: row.updated_at,
       };
     });
+
+    // If ties exist in either chain, auto-normalize in the background so Supabase is always clean and contiguous
+    if (!isTestEnv()) {
+      const hasTies = ['text', 'image'].some((chain) => {
+        const chainProvs = providers.filter((p) => {
+          if (p.config?.chain_type === chain) return true;
+          if (p.config?.chain_type && p.config.chain_type !== chain) return false;
+          const k = (p.adapter_kind || '').toLowerCase();
+          const n = (p.name || '').toLowerCase();
+          const isImg = k.includes('cloudflare') || n.includes('cloudflare') || k === 'pollinations' || k === 'openai_compatible_images' || n.includes('image');
+          return chain === 'image' ? isImg : !isImg;
+        });
+        const priorities = chainProvs.map((p) => p.priority);
+        return new Set(priorities).size !== priorities.length;
+      });
+
+      if (hasTies) {
+        this.normalizeAllProviderPriorities().catch((err) => console.warn('[SystemStore] Auto-normalizing priorities in background:', err.message));
+      }
+    }
+
     this.setCached('providers', providers, 15000);
     return providers;
   }
@@ -2688,6 +2709,58 @@ export class SystemStore {
     this.invalidateCache('providers');
     this.invalidateCache('provider_keys');
     return true;
+  }
+
+  public async saveChainPriorityOrder(chainType: 'text' | 'image', orderedProviderIds: string[]): Promise<StoredProvider[]> {
+    if (isTestEnv() && !this.client) {
+      for (let i = 0; i < orderedProviderIds.length; i++) {
+        const p = this.memoryProviders.get(orderedProviderIds[i]);
+        if (p) {
+          p.priority = i + 1;
+          this.memoryProviders.set(p.id, p);
+        }
+      }
+      this.invalidateCache('providers');
+      return this.getProviders();
+    }
+
+    for (let i = 0; i < orderedProviderIds.length; i++) {
+      const pid = orderedProviderIds[i];
+      const newPriority = i + 1;
+      await this.getClient()
+        .from('providers')
+        .update({ priority: newPriority, updated_at: new Date().toISOString() })
+        .eq('id', pid);
+    }
+
+    this.invalidateCache('providers');
+    return this.getProviders();
+  }
+
+  public async normalizeAllProviderPriorities(): Promise<void> {
+    try {
+      const providers = await this.getProviders();
+      const chains: ('text' | 'image')[] = ['text', 'image'];
+      for (const chain of chains) {
+        const chainProviders = providers
+          .filter((p) => {
+            if (p.config?.chain_type === chain) return true;
+            if (p.config?.chain_type && p.config.chain_type !== chain) return false;
+            const k = (p.adapter_kind || '').toLowerCase();
+            const n = (p.name || '').toLowerCase();
+            const isImg = k.includes('cloudflare') || n.includes('cloudflare') || k === 'pollinations' || k === 'openai_compatible_images' || n.includes('image');
+            return chain === 'image' ? isImg : !isImg;
+          })
+          .sort((a, b) => a.priority - b.priority);
+
+        const needsFix = chainProviders.some((p, idx) => p.priority !== idx + 1);
+        if (needsFix && chainProviders.length > 0) {
+          await this.saveChainPriorityOrder(chain, chainProviders.map((p) => p.id));
+        }
+      }
+    } catch (e: any) {
+      console.warn('[SystemStore] normalizeAllProviderPriorities notice:', e.message);
+    }
   }
 
   public async autoConfigureAllFreeTier(): Promise<{ updated: number }> {

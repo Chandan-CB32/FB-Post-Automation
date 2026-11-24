@@ -4075,7 +4075,26 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             if (!data.id) {
               return sendJson({ error: 'Provider ID is required.' }, 400);
             }
-            const updated = await store.updateProvider(data.id, data);
+            let updated = await store.updateProvider(data.id, data);
+
+            // If priority was updated, re-sequence the whole chain in Supabase to eliminate ties and gaps!
+            if (data.priority !== undefined) {
+              const allProviders = await store.getProviders();
+              const target = allProviders.find((p) => p.id === data.id);
+              if (target) {
+                const targetChain = getProviderChain(target);
+                const desiredPriority = Math.max(1, Number(data.priority) || 1);
+                const otherProviders = allProviders
+                  .filter((p) => getProviderChain(p) === targetChain && p.id !== data.id)
+                  .sort((a, b) => a.priority - b.priority);
+
+                const insertIdx = Math.min(desiredPriority - 1, otherProviders.length);
+                otherProviders.splice(insertIdx, 0, target);
+                await store.saveChainPriorityOrder(targetChain, otherProviders.map((p) => p.id));
+                const refreshed = await store.getProviders();
+                updated = refreshed.find((p) => p.id === data.id) || updated;
+              }
+            }
 
             const rawNewKeys = data.new_keys || data.raw_key || data.key || '';
             const addedKeys: StoredProviderKey[] = [];
@@ -4124,6 +4143,9 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
               return sendJson({ error: 'Provider ID is required.' }, 400);
             }
             const deleted = await store.deleteProvider(providerId);
+            if (deleted) {
+              await store.normalizeAllProviderPriorities();
+            }
             return sendJson({ success: deleted });
           } catch (e: any) {
             return sendJson({ error: e.message }, 500);
@@ -4147,10 +4169,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const allProviders = await store.getProviders();
 
           if (Array.isArray(ordered_ids) && ordered_ids.length > 0) {
-            for (let i = 0; i < ordered_ids.length; i++) {
-              await store.updateProvider(ordered_ids[i], { priority: i + 1 });
-            }
-            const updated = await store.getProviders();
+            const updated = await store.saveChainPriorityOrder(chain || 'text', ordered_ids);
             return sendJson({ success: true, providers: updated });
           }
 
@@ -4183,11 +4202,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
             chainProviders[idx] = swapTarget;
           }
 
-          for (let i = 0; i < chainProviders.length; i++) {
-            await store.updateProvider(chainProviders[i].id, { priority: i + 1 });
-          }
-
-          const updated = await store.getProviders();
+          const updated = await store.saveChainPriorityOrder(targetChain, chainProviders.map((p) => p.id));
           return sendJson({ success: true, chain: targetChain, providers: updated });
         } catch (err: any) {
           return sendJson({ error: err.message }, 500);
@@ -5076,7 +5091,9 @@ function renderProviderChainRows(chainProviders: StoredProvider[], providerKeys:
     // Explicit position number #1 through #8
     const posColors = ['#064e3b', '#1e3a8a', '#78350f', '#3b0764', '#1e293b', '#374151', '#065f46', '#1e1b4b'];
     const textColors = ['#34d399', '#60a5fa', '#fbbf24', '#c084fc', '#93c5fd', '#d1d5db', '#6ee7b7', '#a5b4fc'];
-    const priorityBadge = `<span class="badge" style="background: ${posColors[idx % posColors.length]}; color: ${textColors[idx % textColors.length]}; font-weight: 800; padding: 4px 10px; font-size: 12px; border-radius: 6px;">#${idx + 1} Priority</span>`;
+    const effectivePriority = p.priority || (idx + 1);
+    const colorIdx = Math.max(0, effectivePriority - 1);
+    const priorityBadge = `<span class="badge" style="background: ${posColors[colorIdx % posColors.length]}; color: ${textColors[colorIdx % textColors.length]}; font-weight: 800; padding: 4px 10px; font-size: 12px; border-radius: 6px;">#${effectivePriority} Priority</span>`;
 
     const isPollinations = p.adapter_kind === 'pollinations';
     const isNeedsKey = (p.config as any)?.status === 'needs_key' || (activeKeys.length === 0 && !isPollinations);
@@ -5948,7 +5965,7 @@ async function generateDashboardHtml(
             if (textProvs.length === 0) {
               return `<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 13px;">No text generation providers configured yet. <a href="/providers" style="color: #60a5fa; text-decoration: underline;">Add Text Provider</a></div>`;
             }
-            return `<div style="display: flex; flex-direction: column; gap: 14px;">
+            return `<div id="overviewTextQuotasContainer" style="display: flex; flex-direction: column; gap: 14px;">
               ${textProvs.map((p) => {
                 const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
                 const pKeys = (providerKeys || []).filter((k) => k.provider_id === p.id && k.is_active);
@@ -5986,7 +6003,7 @@ async function generateDashboardHtml(
             if (imgProvs.length === 0) {
               return `<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 13px;">No image generation providers configured yet. <a href="/providers" style="color: #34d399; text-decoration: underline;">Add Image Provider</a></div>`;
             }
-            return `<div style="display: flex; flex-direction: column; gap: 14px;">
+            return `<div id="overviewImageQuotasContainer" style="display: flex; flex-direction: column; gap: 14px;">
               ${imgProvs.map((p) => {
                 const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
                 const pKeys = (providerKeys || []).filter((k) => k.provider_id === p.id && k.is_active);

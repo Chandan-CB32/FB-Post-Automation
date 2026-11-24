@@ -417,7 +417,9 @@
 
       const posColors = ['#064e3b', '#1e3a8a', '#78350f', '#3b0764', '#1e293b', '#374151', '#065f46', '#1e1b4b'];
       const textColors = ['#34d399', '#60a5fa', '#fbbf24', '#c084fc', '#93c5fd', '#d1d5db', '#6ee7b7', '#a5b4fc'];
-      const priorityBadge = '<span class="badge" style="background: ' + posColors[idx % posColors.length] + '; color: ' + textColors[idx % textColors.length] + '; font-weight: 800; padding: 4px 10px; font-size: 12px; border-radius: 6px;">#' + (idx + 1) + ' Priority</span>';
+      const effectivePriority = p.priority || (idx + 1);
+      const colorIdx = Math.max(0, effectivePriority - 1);
+      const priorityBadge = '<span class="badge" style="background: ' + posColors[colorIdx % posColors.length] + '; color: ' + textColors[colorIdx % textColors.length] + '; font-weight: 800; padding: 4px 10px; font-size: 12px; border-radius: 6px;">#' + effectivePriority + ' Priority</span>';
 
       const isPollinations = (p.adapter_kind || p.kind) === 'pollinations';
       const isNeedsKey = (p.config && p.config.status === 'needs_key') || (p.status === 'needs_key') || (activeKeys.length === 0 && !isPollinations);
@@ -543,6 +545,66 @@
     });
   }
 
+  function renderOverviewQuotas(providers) {
+    if (!Array.isArray(providers)) providers = providersData;
+    const textContainer = document.getElementById('overviewTextQuotasContainer');
+    const imgContainer = document.getElementById('overviewImageQuotasContainer');
+    if (!textContainer && !imgContainer) return;
+
+    const textProvs = providers.filter(function (p) { return !isImageProvider(p); }).sort(function (a, b) { return (a.priority || 1) - (b.priority || 1); });
+    const imgProvs = providers.filter(function (p) { return isImageProvider(p); }).sort(function (a, b) { return (a.priority || 1) - (b.priority || 1); });
+
+    if (textContainer) {
+      if (textProvs.length === 0) {
+        textContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 13px;">No text generation providers configured yet. <a href="/providers" style="color: #60a5fa; text-decoration: underline;">Add Text Provider</a></div>';
+      } else {
+        textContainer.innerHTML = textProvs.map(function (p) {
+          const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+          const pKeys = (Array.isArray(providerKeysData) ? providerKeysData : []).filter(function (k) { return k.provider_id === p.id && k.is_active; });
+          return '<div>' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 4px;">' +
+              '<div style="display: flex; align-items: center; gap: 6px;">' +
+                '<span style="font-weight: 600; color: #f3f4f6;">' + escapeHtml(p.name) + '</span>' +
+                '<span class="badge" style="background: #1e293b; color: #94a3b8; font-size: 10px; padding: 1px 5px;">#' + p.priority + ' Priority</span>' +
+                (pKeys.length > 0 ? '<span class="badge" style="background: #064e3b; color: #34d399; font-size: 10px; padding: 1px 5px;">● ' + pKeys.length + ' active key(s)</span>' : '<span class="badge" style="background: #7f1d1d; color: #f87171; font-size: 10px; padding: 1px 5px;">No active key</span>') +
+              '</div>' +
+              '<strong style="color: ' + (pct > 85 ? '#ef4444' : '#93c5fd') + '; font-size: 12px;">' + (p.used_today || 0) + ' / ' + (p.daily_limit || 1).toLocaleString() + ' reqs (' + pct + '%)</strong>' +
+            '</div>' +
+            '<div style="height: 7px; background: #374151; border-radius: 4px; overflow: hidden;">' +
+              '<div style="height: 100%; width: ' + pct + '%; background: ' + (pct > 85 ? '#ef4444' : '#3b82f6') + ';"></div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+      }
+    }
+
+    if (imgContainer) {
+      if (imgProvs.length === 0) {
+        imgContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 13px;">No image generation providers configured yet. <a href="/providers" style="color: #34d399; text-decoration: underline;">Add Image Provider</a></div>';
+      } else {
+        imgContainer.innerHTML = imgProvs.map(function (p) {
+          const pct = Math.min(100, Math.round(((p.used_today || 0) / (p.daily_limit || 1)) * 100));
+          const pKeys = (Array.isArray(providerKeysData) ? providerKeysData : []).filter(function (k) { return k.provider_id === p.id && k.is_active; });
+          const isKeyless = (p.adapter_kind || p.kind || '').toLowerCase() === 'pollinations';
+          return '<div>' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 4px;">' +
+              '<div style="display: flex; align-items: center; gap: 6px;">' +
+                '<span style="font-weight: 600; color: #f3f4f6;">' + escapeHtml(p.name) + '</span>' +
+                '<span class="badge" style="background: #1e293b; color: #94a3b8; font-size: 10px; padding: 1px 5px;">#' + p.priority + ' Priority</span>' +
+                (isKeyless ? '<span class="badge" style="background: #064e3b; color: #34d399; font-size: 10px; padding: 1px 5px;">Keyless Free</span>' : (pKeys.length > 0 ? '<span class="badge" style="background: #064e3b; color: #34d399; font-size: 10px; padding: 1px 5px;">● ' + pKeys.length + ' active key(s)</span>' : '<span class="badge" style="background: #7f1d1d; color: #f87171; font-size: 10px; padding: 1px 5px;">No active key</span>')) +
+              '</div>' +
+              '<strong style="color: ' + (pct > 85 ? '#ef4444' : '#34d399') + '; font-size: 12px;">' + (p.used_today || 0) + ' / ' + (p.daily_limit || 1).toLocaleString() + ' reqs (' + pct + '%)</strong>' +
+            '</div>' +
+            '<div style="height: 7px; background: #374151; border-radius: 4px; overflow: hidden;">' +
+              '<div style="height: 100%; width: ' + pct + '%; background: ' + (pct > 85 ? '#ef4444' : '#10b981') + ';"></div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+      }
+    }
+  }
+  window.renderOverviewQuotas = renderOverviewQuotas;
+
   function renderProvidersTables() {
     const textProvs = providersData.filter(function (p) { return !isImageProvider(p); }).sort(function (a, b) { return a.priority - b.priority; });
     const imageProvs = providersData.filter(function (p) { return isImageProvider(p); }).sort(function (a, b) { return a.priority - b.priority; });
@@ -550,6 +612,7 @@
     renderChainTableBody('imageProvidersTableBody', imageProvs, 'image');
     setupDragAndDrop('textProvidersTableBody', 'text');
     setupDragAndDrop('imageProvidersTableBody', 'image');
+    renderOverviewQuotas(providersData);
   }
   window.renderProvidersTables = renderProvidersTables;
 

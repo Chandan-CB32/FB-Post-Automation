@@ -129,4 +129,35 @@ describe('Provider Chains & Cloudflare Workers AI Image Separation', () => {
       })
     ).toBe('text');
   });
+
+  it('guarantees saveChainPriorityOrder strictly updates memory and Supabase providers to sequential 1..N priorities with zero ties', async () => {
+    const { SystemStore } = await import('../apps/web/src/server/storage.js');
+    const store = SystemStore.getInstance();
+
+    const provA = await store.createProvider({
+      name: 'Test Chain Provider A',
+      adapter_kind: 'gemini_native',
+      priority: 1,
+    });
+    const provB = await store.createProvider({
+      name: 'Test Chain Provider B',
+      adapter_kind: 'openai_compatible_chat',
+      priority: 1, // Intentional duplicate tie
+    });
+    const provC = await store.createProvider({
+      name: 'Test Chain Provider C',
+      adapter_kind: 'openai_compatible_chat',
+      priority: 5, // Intentional gap
+    });
+
+    // Reorder sequence: C then A then B
+    const updated = await store.saveChainPriorityOrder('text', [provC.id, provA.id, provB.id]);
+    const finalC = updated.find((p) => p.id === provC.id);
+    const finalA = updated.find((p) => p.id === provA.id);
+    const finalB = updated.find((p) => p.id === provB.id);
+
+    expect(finalC?.priority).toBe(1);
+    expect(finalA?.priority).toBe(2);
+    expect(finalB?.priority).toBe(3);
+  });
 });
